@@ -449,9 +449,21 @@ export function createNotificationHelpers(deps: CreateNotificationHelpersDeps) {
         return { title: 'Dropoff updated', message: `${actorLabel} cancelled the dropoff arrival update.` }
       }
       if (action === 'complete_contract') {
-        return { title: 'Contract completed', message: `${actorLabel} completed the contract.` }
+        return { title: 'Ride completed', message: `${actorLabel} completed your ride.` }
       }
       return { title: 'Ride update', message: `${actorLabel} updated the ride contract.` }
+    }
+    if (record.type === 'drive_ride_tip_received') {
+      const payload = readPayloadRecord(record.payload)
+      const amountCents = typeof payload?.amountCents === 'number' ? payload.amountCents : null
+      const amountLabel =
+        typeof amountCents === 'number'
+          ? new Intl.NumberFormat('en-CA', { style: 'currency', currency: 'CAD' }).format(amountCents / 100)
+          : ''
+      return {
+        title: 'Tip received',
+        message: amountLabel ? `${actorLabel} sent you a ride tip of ${amountLabel}.` : `${actorLabel} sent you a ride tip.`,
+      }
     }
     if (record.type === 'drive_ride_complete_confirmation') {
       return {
@@ -514,6 +526,10 @@ export function createNotificationHelpers(deps: CreateNotificationHelpersDeps) {
 
   function getNotificationDeepLink(record: NotificationRecord): string | null {
     const payload = readPayloadRecord(record.payload)
+    if (record.type === 'drive_ride_contract_update') {
+      return '/drive'
+    }
+
     const candidates = record.type === COMMENT_NOTIFICATION_TYPES.REPLY
       ? [payload?.replyUrl, payload?.url, payload?.sourceUrl]
       : [payload?.url, payload?.sourceUrl, payload?.replyUrl]

@@ -17,7 +17,6 @@ import {
 } from 'react-icons/hi2'
 import CivilCard from '../_components/CivilCard'
 import DashboardShell from '../_components/DashboardShell'
-import Modal from '../_components/Modal'
 import { RightRail } from '../_components/RightRail'
 import { AddressDirectionsMap, type AddressDirectionsMapHandle } from '../_components/map/AddressDirectionsMap'
 import { pushToast } from '../_components/useToasts'
@@ -123,6 +122,7 @@ function isTerminalRideStatus(value: string | null | undefined) {
 }
 
 type ContractActionKey = 'arrived_pickup' | 'cancel_arrival' | 'picked_up' | 'cancel_pickup' | 'dropped_off' | 'cancel_dropoff' | 'complete'
+type FullscreenConfirmAction = ContractActionKey | 'message' | 'audio' | 'video'
 
 function getContractActionFallbackStatus(action: ContractActionKey, currentStatus: string | null | undefined) {
   const normalized = (currentStatus || '').trim().toLowerCase()
@@ -238,6 +238,19 @@ function getContractActionConfirmationLabel(action: ContractActionKey) {
   }
 }
 
+function getFullscreenConfirmationLabel(action: FullscreenConfirmAction) {
+  switch (action) {
+    case 'message':
+      return 'Open Messages'
+    case 'audio':
+      return 'Start Audio Call'
+    case 'video':
+      return 'Start Video Call'
+    default:
+      return getContractActionConfirmationLabel(action)
+  }
+}
+
 export default function DriveContractPageClient({ rideId }: { rideId: string }) {
   const router = useRouter()
   const directionsMapRef = useRef<AddressDirectionsMapHandle | null>(null)
@@ -262,7 +275,7 @@ export default function DriveContractPageClient({ rideId }: { rideId: string }) 
   const [messageLoading, setMessageLoading] = useState(false)
   const [callMode, setCallMode] = useState<'audio' | 'video' | null>(null)
   const [activeCallOverlay, setActiveCallOverlay] = useState<ActiveDriveCallOverlay | null>(null)
-  const [confirmContractAction, setConfirmContractAction] = useState<ContractActionKey | null>(null)
+  const [confirmFullscreenAction, setConfirmFullscreenAction] = useState<FullscreenConfirmAction | null>(null)
 
   useEffect(() => {
     let cancelled = false
@@ -671,6 +684,11 @@ export default function DriveContractPageClient({ rideId }: { rideId: string }) 
           void audio.play().catch((soundError) => {
             console.warn('drive_contract_money_sound_failed', soundError)
           })
+          window.setTimeout(() => {
+            router.push('/drive')
+          }, 300)
+        } else {
+          router.push('/drive')
         }
         return
       }
@@ -700,7 +718,14 @@ export default function DriveContractPageClient({ rideId }: { rideId: string }) 
   const riderProfileHref = riderHandle ? `/u/${encodeURIComponent(riderHandle)}` : undefined
   const contractActions = getContractActions(ride?.status)
   const payoutSettled = ride?.status === 'completed' && ride.escrowStatus === 'released'
-  const confirmContractActionLabel = confirmContractAction ? getContractActionConfirmationLabel(confirmContractAction) : ''
+  const confirmFullscreenActionLabel = confirmFullscreenAction ? getFullscreenConfirmationLabel(confirmFullscreenAction) : ''
+  const fullscreenConfirmationBusy =
+    (confirmFullscreenAction === 'message' && messageLoading) ||
+    (confirmFullscreenAction === 'audio' && callMode === 'audio') ||
+    (confirmFullscreenAction === 'video' && callMode === 'video') ||
+    (confirmFullscreenAction !== null && confirmFullscreenAction !== 'message' && confirmFullscreenAction !== 'audio' && confirmFullscreenAction !== 'video'
+      ? contractActionLoading === confirmFullscreenAction
+      : false)
   const fullscreenRiderOverlay = ride ? (
     <div className="w-full rounded-[1.6rem] border border-white/60 bg-white/94 p-4 text-slate-950 shadow-[0_22px_60px_rgba(15,23,42,0.24)] backdrop-blur md:max-w-sm">
       <div className="hidden items-start justify-between gap-3 md:flex">
@@ -729,7 +754,7 @@ export default function DriveContractPageClient({ rideId }: { rideId: string }) 
           <button
             type="button"
             onClick={() => {
-              void handleStartMessage()
+              setConfirmFullscreenAction('message')
             }}
             disabled={contactButtonsDisabled}
             aria-label={messageLoading ? 'Opening messages' : 'Open messages'}
@@ -740,7 +765,7 @@ export default function DriveContractPageClient({ rideId }: { rideId: string }) 
           <button
             type="button"
             onClick={() => {
-              void handleStartCall('audio')
+              setConfirmFullscreenAction('audio')
             }}
             disabled={contactButtonsDisabled}
             aria-label={callMode === 'audio' ? 'Starting audio call' : 'Start audio call'}
@@ -751,7 +776,7 @@ export default function DriveContractPageClient({ rideId }: { rideId: string }) 
           <button
             type="button"
             onClick={() => {
-              void handleStartCall('video')
+              setConfirmFullscreenAction('video')
             }}
             disabled={contactButtonsDisabled}
             aria-label={callMode === 'video' ? 'Starting video call' : 'Start video call'}
@@ -763,7 +788,7 @@ export default function DriveContractPageClient({ rideId }: { rideId: string }) 
             <button
               type="button"
               onClick={() => {
-                setConfirmContractAction(contractActions.primary.key)
+                setConfirmFullscreenAction(contractActions.primary.key)
               }}
               disabled={Boolean(contractActionLoading)}
               aria-label={contractActions.primary.label}
@@ -795,7 +820,7 @@ export default function DriveContractPageClient({ rideId }: { rideId: string }) 
           <button
             type="button"
             onClick={() => {
-              void handleContractAction(contractActions.primary.key)
+              setConfirmFullscreenAction(contractActions.primary.key)
             }}
             disabled={Boolean(contractActionLoading)}
             className={`mt-3 hidden w-full items-center justify-center gap-2 rounded-full px-4 py-3 text-sm font-semibold transition disabled:cursor-not-allowed disabled:opacity-60 md:inline-flex ${getContractActionButtonClass(contractActions.primary.key)}`}
@@ -809,7 +834,7 @@ export default function DriveContractPageClient({ rideId }: { rideId: string }) 
         <button
           type="button"
           onClick={() => {
-            void handleStartCall('audio')
+            setConfirmFullscreenAction('audio')
           }}
           disabled={contactButtonsDisabled}
           className="inline-flex items-center justify-center gap-2 rounded-full border border-slate-300 bg-white px-4 py-3 text-sm font-semibold text-slate-900 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
@@ -820,7 +845,7 @@ export default function DriveContractPageClient({ rideId }: { rideId: string }) 
         <button
           type="button"
           onClick={() => {
-            void handleStartCall('video')
+            setConfirmFullscreenAction('video')
           }}
           disabled={contactButtonsDisabled}
           className="inline-flex items-center justify-center gap-2 rounded-full border border-slate-300 bg-white px-4 py-3 text-sm font-semibold text-slate-900 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
@@ -850,51 +875,54 @@ export default function DriveContractPageClient({ rideId }: { rideId: string }) 
         )
       : null
 
-  const fullscreenActionConfirmationModal = confirmContractAction ? (
-    <Modal
-      open
-      onClose={() => {
-        if (contractActionLoading) return
-        setConfirmContractAction(null)
-      }}
-      title="Confirm Contract Action"
-      maxWidthClassName="max-w-sm"
-      closeOnBackdrop={!contractActionLoading}
-      closeOnEscape={!contractActionLoading}
-    >
-      <div className="space-y-4">
-        <p className="text-base font-semibold text-slate-950">{`Confirm ${confirmContractActionLabel}?`}</p>
-        <div className="flex items-center justify-end gap-3">
-          <button
-            type="button"
-            onClick={() => setConfirmContractAction(null)}
-            disabled={Boolean(contractActionLoading)}
-            className="inline-flex items-center justify-center rounded-full border border-slate-300 bg-white px-4 py-2.5 text-sm font-semibold text-slate-900 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
-          >
-            Cancel
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              const action = confirmContractAction
-              if (!action) return
-              void handleContractAction(action).finally(() => {
-                setConfirmContractAction(null)
-              })
-            }}
-            disabled={Boolean(contractActionLoading)}
-            className="inline-flex items-center justify-center rounded-full bg-emerald-600 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-60"
-          >
-            {contractActionLoading === confirmContractAction ? 'Working…' : 'Yes'}
-          </button>
+  const fullscreenActionConfirmationModal = confirmFullscreenAction ? (
+    <div className="pointer-events-auto absolute inset-0 z-[6] flex items-center justify-center bg-slate-950/45 px-4 backdrop-blur-[2px]">
+      <div className="w-full max-w-sm rounded-[28px] border-4 border-black bg-white px-5 py-5 text-slate-900 shadow-2xl">
+        <div className="space-y-5 text-center">
+          <p className="text-lg font-semibold">{`${confirmFullscreenActionLabel}?`}</p>
+          <div className="flex items-center justify-center gap-3">
+            <button
+              type="button"
+              onClick={() => setConfirmFullscreenAction(null)}
+              disabled={fullscreenConfirmationBusy}
+              className="inline-flex items-center justify-center rounded-full border-2 border-black bg-white px-4 py-2.5 text-sm font-semibold text-slate-900 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                const action = confirmFullscreenAction
+                if (!action) return
+                if (action === 'message') {
+                  void handleStartMessage().finally(() => {
+                    setConfirmFullscreenAction(null)
+                  })
+                  return
+                }
+                if (action === 'audio' || action === 'video') {
+                  void handleStartCall(action).finally(() => {
+                    setConfirmFullscreenAction(null)
+                  })
+                  return
+                }
+                void handleContractAction(action).finally(() => {
+                  setConfirmFullscreenAction(null)
+                })
+              }}
+              disabled={fullscreenConfirmationBusy}
+              className="inline-flex items-center justify-center rounded-full border-2 border-black bg-emerald-600 px-4 py-2.5 text-sm font-semibold text-white transition hover:bg-emerald-500 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {fullscreenConfirmationBusy ? 'Working…' : 'Confirm'}
+            </button>
+          </div>
         </div>
       </div>
-    </Modal>
+    </div>
   ) : null
 
   return (
     <>
-      {fullscreenActionConfirmationModal}
       <DashboardShell
         rightRail={
           <div className="space-y-5">
@@ -959,6 +987,7 @@ export default function DriveContractPageClient({ rideId }: { rideId: string }) 
                     originAvatarFallbackLabel={getAvatarInitials(ride.driverVehicle?.name || 'Vehicle')}
                     onNavigationOriginChange={setNavigationOrigin}
                     fullscreenOverlay={fullscreenRiderOverlay}
+                    fullscreenModalOverlay={fullscreenActionConfirmationModal}
                   />
                 </div>
 

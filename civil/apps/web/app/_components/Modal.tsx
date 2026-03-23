@@ -104,7 +104,7 @@ export default function Modal({
 
   return createPortal(
     <div
-      className="cc-safe-modal-overlay fixed inset-0 z-50 overflow-hidden overscroll-none p-4 sm:p-6"
+      className="cc-safe-modal-overlay fixed inset-0 z-[130] overflow-hidden overscroll-none p-4 sm:p-6"
       onClick={closeOnBackdrop ? onClose : undefined}
       onClickCapture={onCaptureClick}
       data-cc-modal-root

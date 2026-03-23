@@ -2,6 +2,7 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 import { z } from 'zod'
 import { prisma } from '@civil/db'
 import { Prisma } from '@prisma/client'
+import { ensureCitizenWalletTables } from '../walletHelpers.js'
 
 const AdminIndustryInput = z.object({
   name: z.string().trim().min(2).max(120),
@@ -201,6 +202,51 @@ export function registerAdminSystemRoutes(app: FastifyInstance, deps: AdminSyste
           lastUpdatedAt: fsaStats._max?.updatedAt?.toISOString() ?? null,
         },
       ],
+    })
+  })
+
+  app.get('/admin/wallet', async (req: FastifyRequest, reply: FastifyReply) => {
+    let user: { id: string; email: string | null; name: string | null } | null
+    try {
+      user = await deps.loadAuthenticatedUser(req)
+    } catch {
+      return reply.code(401).send({ error: 'unauthorized' })
+    }
+
+    if (!user || !deps.isSuperAdminEmail(user.email)) {
+      return reply.code(403).send({ error: 'forbidden' })
+    }
+
+    await ensureCitizenWalletTables()
+
+    const [platformRows, escrowRows] = await Promise.all([
+      prisma.$queryRaw<Array<{ balance_cents: number }>>`
+        SELECT (
+          COALESCE(SUM(CASE WHEN to_entity_type = 'platform' AND status = 'completed' THEN amount_cents ELSE 0 END), 0)
+          - COALESCE(SUM(CASE WHEN from_entity_type = 'platform' AND status = 'completed' THEN amount_cents ELSE 0 END), 0)
+        )::int AS balance_cents
+        FROM civil_credit_ledger
+      `,
+      prisma.$queryRaw<Array<{ holding_cents: number; escrow_count: number }>>`
+        SELECT
+          COALESCE(SUM(amount_cents), 0)::int AS holding_cents,
+          COUNT(*)::int AS escrow_count
+        FROM citizen_wallet_transaction
+        WHERE kind = ${'drive_ride_escrow'}
+          AND status = ${'pending'}
+      `,
+    ])
+
+    const platform = platformRows[0] ?? { balance_cents: 0 }
+    const escrow = escrowRows[0] ?? { holding_cents: 0, escrow_count: 0 }
+
+    return reply.send({
+      wallet: {
+        balanceCents: Math.max(0, Number(platform.balance_cents) || 0),
+        inEscrowHoldingCents: Math.max(0, Number(escrow.holding_cents) || 0),
+        activeEscrowCount: Math.max(0, Number(escrow.escrow_count) || 0),
+      },
+      generatedAt: new Date().toISOString(),
     })
   })
 

@@ -48,6 +48,7 @@ type AddressDirectionsMapProps = {
   idleCameraMode?: 'always-fit' | 'fit-once-per-key'
   idleViewportKey?: string | null
   fullscreenOverlay?: ReactNode
+  fullscreenModalOverlay?: ReactNode
   onNavigationOriginChange?: ((origin: MapPoint | null) => void) | undefined
 }
 
@@ -429,6 +430,7 @@ export const AddressDirectionsMap = forwardRef<AddressDirectionsMapHandle, Addre
     idleCameraMode = 'always-fit',
     idleViewportKey = null,
     fullscreenOverlay = null,
+    fullscreenModalOverlay = null,
     onNavigationOriginChange,
   }: AddressDirectionsMapProps,
   ref,
@@ -1650,6 +1652,8 @@ export const AddressDirectionsMap = forwardRef<AddressDirectionsMapHandle, Addre
               </div>
             </div>
           ) : null}
+
+          {fullscreenActive && fullscreenModalOverlay ? fullscreenModalOverlay : null}
         </div>
       </div>
     </div>

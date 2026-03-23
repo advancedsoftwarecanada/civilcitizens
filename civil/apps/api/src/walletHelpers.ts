@@ -27,6 +27,7 @@ export type WalletSummary = {
 export type WalletTransactionSummary = {
   id: string
   entryType: 'deposit' | 'withdrawal' | 'transfer' | 'adjustment'
+  sourceType: string | null
   status: string
   amountCents: number
   currency: string
@@ -90,6 +91,7 @@ type WalletLedgerRow = {
   currency: string
   occurred_at: Date
   description: string | null
+  source_type: string | null
   processing_provider: string | null
   from_user_id: string | null
   from_user_handle: string | null
@@ -187,7 +189,13 @@ function buildWalletTransactionTitle(row: WalletLedgerRow, userId: string) {
   if (row.entry_type === 'deposit') return 'Added funds'
   if (row.entry_type === 'withdrawal') return 'Deposit to bank account'
   if (row.entry_type === 'transfer') {
+    if (row.source_type === 'drive_ride_tip') {
+      return row.to_user_id === userId ? 'Ride tip received' : 'Ride tip sent'
+    }
     return row.to_user_id === userId ? 'Received Civil Credits' : 'Sent Civil Credits'
+  }
+  if (row.entry_type === 'adjustment' && row.source_type === 'drive_ride_tip_civil_fee') {
+    return 'Ride tip fee'
   }
   return 'Wallet adjustment'
 }
@@ -196,10 +204,19 @@ function buildWalletTransactionDetail(row: WalletLedgerRow, userId: string) {
   if (row.entry_type === 'deposit') return row.from_entity_label ?? 'Stripe'
   if (row.entry_type === 'withdrawal') return row.to_entity_label ?? 'Linked bank account'
   if (row.entry_type === 'transfer') {
+    if (row.source_type === 'drive_ride_tip') {
+      if (row.to_user_id === userId) {
+        return row.from_user_name ?? row.from_user_handle ?? 'Ride requester'
+      }
+      return row.to_user_name ?? row.to_user_handle ?? 'Driver'
+    }
     if (row.to_user_id === userId) {
       return row.from_user_name ?? row.from_user_handle ?? row.from_entity_label ?? 'Civil Wallet'
     }
     return row.to_user_name ?? row.to_user_handle ?? row.to_entity_label ?? 'Civil Wallet'
+  }
+  if (row.entry_type === 'adjustment' && row.source_type === 'drive_ride_tip_civil_fee') {
+    return 'Civil fee applied to a ride tip'
   }
   return row.description ?? null
 }
@@ -212,6 +229,7 @@ function buildWalletTransactionSummary(row: WalletLedgerRow, userId: string, now
   return {
     id: row.id,
     entryType: row.entry_type,
+    sourceType: normalizeLedgerText(row.source_type),
     status: pendingDeposit ? 'pending' : row.entry_type === 'deposit' ? 'available' : row.status,
     amountCents: Math.max(0, Math.round(row.amount_cents || 0)),
     currency: normalizeLedgerText(row.currency)?.toLowerCase() ?? 'cad',
@@ -252,6 +270,7 @@ export async function buildWalletView(userId: string, communityMeta: any, transa
       currency,
       occurred_at,
       description,
+      source_type,
       processing_provider,
       from_user_id,
       from_user_handle,

@@ -4,6 +4,7 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 import { prisma } from '@civil/db'
 import { MessageParticipantRole, MessageThreadType, MessageType, Prisma } from '@prisma/client'
 import { z } from 'zod'
+import { computeCivilPayFeeCents } from '../civilPayFees.js'
 import { buildWalletMetaValue, insertCivilCreditLedgerEntry, readWalletSummary, walletHasConnectPayoutsEnabled } from '../walletHelpers.js'
 
 type MarketChatDeps = Record<string, any>
@@ -164,15 +165,6 @@ async function createMarketSystemMessage(args: {
   })
 
   return created
-}
-
-function computeCivilPayFeeCents(amountCents: number) {
-  if (amountCents <= 0) return 0
-  if (amountCents <= 10000) return 50
-  if (amountCents <= 20000) return 65
-  if (amountCents <= 50000) return 85
-  if (amountCents <= 100000) return 125
-  return 200
 }
 
 function buildCivilPayLink(listingId: string, threadId: string) {

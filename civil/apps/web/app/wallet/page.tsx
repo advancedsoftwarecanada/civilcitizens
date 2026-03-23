@@ -47,6 +47,7 @@ type WalletSummaryPayload = {
   recentTransactions?: Array<{
     id: string
     entryType: 'deposit' | 'withdrawal' | 'transfer' | 'adjustment'
+    sourceType?: string | null
     status: string
     amountCents: number
     currency: string
@@ -177,6 +178,10 @@ function getTransactionStatusLabel(status: string) {
   return 'Completed'
 }
 
+function isDriveWalletTransaction(sourceType: string | null | undefined) {
+  return typeof sourceType === 'string' && sourceType.startsWith('drive_ride_')
+}
+
 function normalizeConnectStatus(status: Partial<WalletConnectStatus> | null | undefined): WalletConnectStatus {
   return {
     accountId: typeof status?.accountId === 'string' ? status.accountId : null,
@@ -261,6 +266,8 @@ export default function WalletPage() {
   const pendingCreditsCents = wallet?.pendingCreditsCents ?? 0
   const settlementHoldDays = wallet?.settlementHoldDays ?? 7
   const recentTransactions = wallet?.recentTransactions ?? []
+  const driveTransactions = recentTransactions.filter((transaction) => isDriveWalletTransaction(transaction.sourceType))
+  const otherTransactions = recentTransactions.filter((transaction) => !isDriveWalletTransaction(transaction.sourceType))
   const normalizedInput = normalizeEmail(eTransferEmail)
   const hasChanges =
     normalizedInput !== storedEmail ||
@@ -594,42 +601,89 @@ export default function WalletPage() {
           </div>
         </div>
 
-        <div className="mt-5">
+        <div className="mt-5 space-y-4">
           {recentTransactions.length ? (
-            <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white">
-              <div className="overflow-x-auto">
-                <table className="min-w-full divide-y divide-slate-200 text-left">
-                  <thead className="bg-slate-50">
-                    <tr>
-                      <th className="px-4 py-3 text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Transaction</th>
-                      <th className="px-4 py-3 text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Status</th>
-                      <th className="px-4 py-3 text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Source</th>
-                      <th className="px-4 py-3 text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Date</th>
-                      <th className="px-4 py-3 text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Available</th>
-                      <th className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Amount</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-200 bg-white">
-                    {recentTransactions.map((transaction) => (
-                      <tr key={transaction.id}>
-                        <td className="px-4 py-3 text-sm font-semibold text-slate-900">{transaction.title}</td>
-                        <td className="px-4 py-3">
-                          <span className={`inline-flex rounded-full border px-2.5 py-1 text-[11px] font-semibold ${getTransactionStatusTone(transaction.status)}`}>
-                            {getTransactionStatusLabel(transaction.status)}
-                          </span>
-                        </td>
-                        <td className="px-4 py-3 text-sm text-slate-600">{transaction.detail ?? 'Civil Wallet'}</td>
-                        <td className="px-4 py-3 text-sm text-slate-600">{formatDateLabel(transaction.occurredAt) || ' '}</td>
-                        <td className="px-4 py-3 text-sm text-slate-600">{transaction.availableAt ? formatDateLabel(transaction.availableAt) : 'Now'}</td>
-                        <td className={`px-4 py-3 text-right text-sm font-semibold ${transaction.direction === 'credit' ? 'text-emerald-700' : 'text-slate-900'}`}>
-                          {transaction.direction === 'credit' ? '+' : '-'}{formatCredits(transaction.amountCents)}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
+            <>
+              {driveTransactions.length ? (
+                <div className="overflow-hidden rounded-2xl border border-emerald-200 bg-white">
+                  <div className="border-b border-emerald-200 bg-emerald-50 px-4 py-3">
+                    <p className="text-xs font-semibold uppercase tracking-[0.18em] text-emerald-700">Drive Activity</p>
+                  </div>
+                  <div className="overflow-x-auto">
+                    <table className="min-w-full divide-y divide-slate-200 text-left">
+                      <thead className="bg-slate-50">
+                        <tr>
+                          <th className="px-4 py-3 text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Transaction</th>
+                          <th className="px-4 py-3 text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Status</th>
+                          <th className="px-4 py-3 text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Source</th>
+                          <th className="px-4 py-3 text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Date</th>
+                          <th className="px-4 py-3 text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Available</th>
+                          <th className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Amount</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-200 bg-white">
+                        {driveTransactions.map((transaction) => (
+                          <tr key={transaction.id}>
+                            <td className="px-4 py-3 text-sm font-semibold text-slate-900">{transaction.title}</td>
+                            <td className="px-4 py-3">
+                              <span className={`inline-flex rounded-full border px-2.5 py-1 text-[11px] font-semibold ${getTransactionStatusTone(transaction.status)}`}>
+                                {getTransactionStatusLabel(transaction.status)}
+                              </span>
+                            </td>
+                            <td className="px-4 py-3 text-sm text-slate-600">{transaction.detail ?? 'Civil Wallet'}</td>
+                            <td className="px-4 py-3 text-sm text-slate-600">{formatDateLabel(transaction.occurredAt) || ' '}</td>
+                            <td className="px-4 py-3 text-sm text-slate-600">{transaction.availableAt ? formatDateLabel(transaction.availableAt) : 'Now'}</td>
+                            <td className={`px-4 py-3 text-right text-sm font-semibold ${transaction.direction === 'credit' ? 'text-emerald-700' : 'text-slate-900'}`}>
+                              {transaction.direction === 'credit' ? '+' : '-'}{formatCredits(transaction.amountCents)}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              ) : null}
+
+              {otherTransactions.length ? (
+                <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white">
+                  <div className="border-b border-slate-200 bg-slate-50 px-4 py-3">
+                    <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Other Activity</p>
+                  </div>
+                  <div className="overflow-x-auto">
+                    <table className="min-w-full divide-y divide-slate-200 text-left">
+                      <thead className="bg-slate-50">
+                        <tr>
+                          <th className="px-4 py-3 text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Transaction</th>
+                          <th className="px-4 py-3 text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Status</th>
+                          <th className="px-4 py-3 text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Source</th>
+                          <th className="px-4 py-3 text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Date</th>
+                          <th className="px-4 py-3 text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Available</th>
+                          <th className="px-4 py-3 text-right text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Amount</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-200 bg-white">
+                        {otherTransactions.map((transaction) => (
+                          <tr key={transaction.id}>
+                            <td className="px-4 py-3 text-sm font-semibold text-slate-900">{transaction.title}</td>
+                            <td className="px-4 py-3">
+                              <span className={`inline-flex rounded-full border px-2.5 py-1 text-[11px] font-semibold ${getTransactionStatusTone(transaction.status)}`}>
+                                {getTransactionStatusLabel(transaction.status)}
+                              </span>
+                            </td>
+                            <td className="px-4 py-3 text-sm text-slate-600">{transaction.detail ?? 'Civil Wallet'}</td>
+                            <td className="px-4 py-3 text-sm text-slate-600">{formatDateLabel(transaction.occurredAt) || ' '}</td>
+                            <td className="px-4 py-3 text-sm text-slate-600">{transaction.availableAt ? formatDateLabel(transaction.availableAt) : 'Now'}</td>
+                            <td className={`px-4 py-3 text-right text-sm font-semibold ${transaction.direction === 'credit' ? 'text-emerald-700' : 'text-slate-900'}`}>
+                              {transaction.direction === 'credit' ? '+' : '-'}{formatCredits(transaction.amountCents)}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              ) : null}
+            </>
           ) : (
             <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-4 py-6 text-sm text-slate-500">
               No wallet transactions yet.

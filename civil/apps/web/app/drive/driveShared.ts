@@ -25,6 +25,7 @@ export type DriveRideRequestItem = {
   acceptedOfferAmountCents: number | null
   acceptedOfferPerKmFeeCents: number | null
   acceptedOfferAt: string | null
+  tippedAmountCents: number | null
   contractStartedAt: string | null
   escrowStatus: string
   walletTransactionId: string | null
@@ -158,8 +159,10 @@ export type DriveFeedResponse<T> = {
 
 export type DriveDriverEarningsSummary = {
   todayEarningsCents: number
+  todayTipsCents: number
   todayHourlyEarningsCents: number
   thisWeekEarningsCents: number
+  thisWeekTipsCents: number
   thisWeekHourlyEarningsCents: number
   todayKm: number
   thisWeekKm: number

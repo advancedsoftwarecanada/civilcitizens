@@ -184,6 +184,10 @@ export default function DriveRideOffersPageClient({ rideId }: { rideId: string }
 
   const rideAccepted = Boolean(ride?.acceptedOfferId)
   const acceptedOffer = rideAccepted ? offers.find((offer) => offer.id === ride?.acceptedOfferId || offer.status === 'accepted') ?? null : null
+  const rideStatusNormalized = (ride?.status || '').trim().toLowerCase()
+  const rideCompleted = rideStatusNormalized === 'completed'
+  const rideTerminal = ['completed', 'cancelled', 'canceled', 'rejected', 'declined', 'failed'].includes(rideStatusNormalized)
+  const completedAt = ride?.riderConfirmedCompleteAt ?? ride?.autoCompletedAt ?? ride?.completionRequestedAt ?? null
 
   return (
     <>
@@ -231,7 +235,47 @@ export default function DriveRideOffersPageClient({ rideId }: { rideId: string }
             <div className="rounded-[1.8rem] border border-slate-200 bg-white px-5 py-6 text-sm text-slate-500 shadow-sm">Loading ride offers…</div>
           ) : null}
 
-          {!loading && ride && acceptedOffer ? <DriveAcceptedRideTracker ride={ride} acceptedOffer={acceptedOffer} /> : null}
+          {!loading && ride && acceptedOffer && !rideTerminal ? <DriveAcceptedRideTracker ride={ride} acceptedOffer={acceptedOffer} /> : null}
+
+          {!loading && ride && acceptedOffer && rideCompleted ? (
+            <section className="rounded-[1.8rem] border border-emerald-200 bg-emerald-50 px-5 py-5 shadow-sm sm:px-6">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-[0.22em] text-emerald-700">Ride Completed</p>
+                  <h2 className="mt-2 text-2xl font-semibold text-slate-950">This trip has been completed.</h2>
+                  <p className="mt-2 text-sm leading-6 text-slate-700">
+                    {completedAt
+                      ? `Completed ${formatDriveDateTime(completedAt)}.`
+                      : 'The ride is finished and no further contract actions are required.'}
+                  </p>
+                </div>
+                <span className="inline-flex items-center rounded-full border border-emerald-200 bg-white px-3 py-1 text-xs font-semibold text-emerald-700">
+                  Completed
+                </span>
+              </div>
+
+              <div className="mt-5 grid gap-3 md:grid-cols-3">
+                <div className="rounded-[1.35rem] border border-emerald-200 bg-white px-4 py-3">
+                  <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">Driver</p>
+                  <p className="mt-2 text-lg font-semibold text-slate-950">{formatDrivePersonName(acceptedOffer.driver)}</p>
+                </div>
+                <div className="rounded-[1.35rem] border border-emerald-200 bg-white px-4 py-3">
+                  <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">Vehicle</p>
+                  <p className="mt-2 text-lg font-semibold text-slate-950">{acceptedOffer.featuredVehicle?.name || 'Vehicle pending'}</p>
+                </div>
+                <div className="rounded-[1.35rem] border border-emerald-200 bg-white px-4 py-3">
+                  <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">Final Cost</p>
+                  <p className="mt-2 text-lg font-semibold text-slate-950">{formatDriveMoney((acceptedOffer.amountCents || 0) + 50)}</p>
+                </div>
+                {typeof ride.tippedAmountCents === 'number' && ride.tippedAmountCents > 0 ? (
+                  <div className="rounded-[1.35rem] border border-emerald-200 bg-white px-4 py-3">
+                    <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">Tip</p>
+                    <p className="mt-2 text-lg font-semibold text-emerald-700">{formatDriveMoney(ride.tippedAmountCents)}</p>
+                  </div>
+                ) : null}
+              </div>
+            </section>
+          ) : null}
 
           {!loading && ride && !offers.length ? (
             <div className="rounded-[1.8rem] border border-slate-200 bg-white px-5 py-6 text-sm text-slate-500 shadow-sm">No drivers have offered on this ride yet.</div>
@@ -242,7 +286,7 @@ export default function DriveRideOffersPageClient({ rideId }: { rideId: string }
               {offers.map((offer) => {
                 const driverLabel = formatDrivePersonName(offer.driver)
                 const customerPaysCents = offer.amountCents + 50
-                const isAcceptedOffer = ride?.acceptedOfferId === offer.id || offer.status === 'accepted'
+                const isAcceptedOffer = (ride?.acceptedOfferId === offer.id || offer.status === 'accepted') && !rideTerminal
                 const canAccept = Boolean(ride && !rideAccepted && offer.status === 'pending' && ride.viewerRole === 'requester')
 
                 return (
@@ -266,7 +310,11 @@ export default function DriveRideOffersPageClient({ rideId }: { rideId: string }
                             </div>
                           </div>
                           <div className="flex flex-wrap items-center gap-2">
-                            {isAcceptedOffer ? (
+                            {rideCompleted && (ride?.acceptedOfferId === offer.id || offer.status === 'accepted') ? (
+                              <span className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-700">
+                                Completed
+                              </span>
+                            ) : isAcceptedOffer ? (
                               <span className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-700">
                                 Accepted
                               </span>
@@ -301,6 +349,10 @@ export default function DriveRideOffersPageClient({ rideId }: { rideId: string }
                           >
                             {acceptingOfferId === offer.id ? 'Accepting…' : 'Accept Offer'}
                           </button>
+                        ) : rideCompleted && (ride?.acceptedOfferId === offer.id || offer.status === 'accepted') ? (
+                          <div className="rounded-[1.35rem] border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-900">
+                            This ride has been completed.
+                          </div>
                         ) : isAcceptedOffer ? (
                           <div className="rounded-[1.35rem] border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-900">
                             Civil is holding {formatDriveMoney(customerPaysCents)} in escrow until the driver marks the trip complete and you confirm it.
