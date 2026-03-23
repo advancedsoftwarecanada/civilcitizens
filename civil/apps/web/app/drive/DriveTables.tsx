@@ -314,13 +314,19 @@ function MineDeliveryHistoryCard({
   item,
   onCancel,
   cancelingId,
+  onManage,
+  managingId,
 }: {
   item: DriveDeliveryItem
   onCancel?: (item: DriveDeliveryItem) => void
   cancelingId?: string | null
+  onManage?: (item: DriveDeliveryItem) => void
+  managingId?: string | null
 }) {
-  const pickupLabel = [item.pickupCity?.trim(), item.pickupProvince?.trim()].filter(Boolean).join(', ') || 'Pickup pending'
+  const pickupLabel = item.pickupAddressLabel?.trim() || [item.pickupCity?.trim(), item.pickupProvince?.trim()].filter(Boolean).join(', ') || 'Pickup pending'
+  const dropoffLabel = item.dropoffAddressLabel?.trim() || 'Dropoff shared after acceptance'
   const canCancel = canCancelDriveStatus(item.status)
+  const canManage = Boolean(onManage) && ['assigned', 'picked_up'].includes((item.status || '').trim().toLowerCase())
 
   return (
     <article className="overflow-hidden rounded-[1.8rem] border border-slate-200 bg-white shadow-sm transition hover:-translate-y-0.5 hover:shadow-md">
@@ -333,8 +339,7 @@ function MineDeliveryHistoryCard({
               fallbackIcon={<HiOutlineCube className="h-9 w-9" />}
             />
             <div className="min-w-0">
-              <p className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-400">Marketplace delivery</p>
-              <h3 className="mt-1 text-xl font-semibold text-slate-950">{item.listingTitle}</h3>
+              <h3 className="text-xl font-semibold text-slate-950">{item.listingTitle}</h3>
               <p className="mt-2 text-sm leading-6 text-slate-500">{item.pickupInstructions?.trim() || 'Pickup details will appear here once handling notes are shared.'}</p>
               <div className="mt-3 text-xs text-slate-500">{formatDriveDateTime(item.createdAt)}</div>
             </div>
@@ -350,9 +355,22 @@ function MineDeliveryHistoryCard({
 
         <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
           <HistoryCardFact label="Pickup" icon={<HiOutlineMapPin className="h-4 w-4" />} value={pickupLabel} />
+          <HistoryCardFact label="Dropoff" icon={<HiOutlineMapPin className="h-4 w-4" />} value={dropoffLabel} />
+          <HistoryCardFact
+            label="Payout"
+            icon={<HiOutlineTruck className="h-4 w-4" />}
+            value={
+              item.bidAmountCents ? (
+                <div>
+                  <div>{formatDriveMoney(item.bidAmountCents)}</div>
+                  {item.bidPerKmFeeCents ? <div className="mt-1 text-xs font-semibold text-slate-500">{formatDriveMoney(item.bidPerKmFeeCents)}/km</div> : null}
+                </div>
+              ) : (
+                'No bid yet'
+              )
+            }
+          />
           <HistoryCardFact label="Role" icon={<HiOutlineUserCircle className="h-4 w-4" />} value={formatDriveDeliveryViewerRole(item.viewerRole)} />
-          <HistoryCardFact label="Bid" icon={<HiOutlineTruck className="h-4 w-4" />} value={item.bidAmountCents ? formatDriveMoney(item.bidAmountCents) : 'No bid yet'} />
-          <HistoryCardFact label="Posted" icon={<HiOutlineClock className="h-4 w-4" />} value={formatDriveDateTime(item.createdAt)} />
         </div>
 
         {item.itemTraits.length ? (
@@ -365,16 +383,28 @@ function MineDeliveryHistoryCard({
           </div>
         ) : null}
 
-        {canCancel && onCancel ? (
-          <div className="border-t border-slate-100 pt-1">
-            <button
-              type="button"
-              onClick={() => onCancel(item)}
-              disabled={cancelingId === item.id}
-              className="inline-flex rounded-full border border-rose-200 bg-white px-3 py-1.5 text-xs font-semibold text-rose-700 transition hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-60"
-            >
-              {cancelingId === item.id ? 'Cancelling…' : 'Cancel'}
-            </button>
+        {canManage || (canCancel && onCancel) ? (
+          <div className="flex flex-wrap gap-2 border-t border-slate-100 pt-1">
+            {canManage && onManage ? (
+              <button
+                type="button"
+                onClick={() => onManage(item)}
+                disabled={managingId === item.id}
+                className="inline-flex rounded-full bg-[var(--cc-primary)] px-4 py-2 text-sm font-semibold text-white transition hover:brightness-95 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {managingId === item.id ? 'Opening…' : 'Manage Delivery'}
+              </button>
+            ) : null}
+            {canCancel && onCancel ? (
+              <button
+                type="button"
+                onClick={() => onCancel(item)}
+                disabled={cancelingId === item.id}
+                className="inline-flex rounded-full border border-rose-200 bg-white px-3 py-1.5 text-xs font-semibold text-rose-700 transition hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {cancelingId === item.id ? 'Cancelling…' : 'Cancel'}
+              </button>
+            ) : null}
           </div>
         ) : null}
       </div>
@@ -482,31 +512,33 @@ function DriveRideQueueCard({
   )
 }
 
-function DriveDeliveryQueueCard({ item }: { item: DriveDeliveryItem }) {
+function DriveDeliveryQueueCard({
+  item,
+  onMakeOffer,
+  submittingOfferId,
+}: {
+  item: DriveDeliveryItem
+  onMakeOffer?: (item: DriveDeliveryItem) => void
+  submittingOfferId?: string | null
+}) {
+  const offerPending = item.bidPending && item.isBidByViewer
+  const actionLabel = offerPending ? 'Edit Bid' : 'Place Bid'
   return (
     <article className="overflow-hidden rounded-[1.8rem] border border-slate-200 bg-white shadow-sm transition hover:-translate-y-0.5 hover:shadow-md">
-      <div className="grid gap-0 xl:grid-cols-[16rem_minmax(0,1fr)]">
-        <div className="relative min-h-[15rem] bg-slate-100">
-          {item.listingPhotoUrl ? (
-            <img src={item.listingPhotoUrl} alt={item.listingTitle} className="h-full w-full object-cover" />
-          ) : (
-            <div className="flex h-full w-full items-center justify-center text-slate-400">
-              <HiOutlineCube className="h-12 w-12" />
-            </div>
-          )}
-        </div>
-
-        <div className="space-y-5 p-5 sm:p-6">
+      <div className="space-y-5 p-5 sm:p-6">
           <div className="flex flex-wrap items-start justify-between gap-3">
-            <div>
-              <p className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-400">Delivery request</p>
-              <h3 className="mt-1 text-xl font-semibold text-slate-950">{item.listingTitle}</h3>
+            <div className="flex min-w-0 items-start gap-4">
+              <HistorySquareMedia imageUrl={item.listingPhotoUrl} alt={item.listingTitle} fallbackIcon={<HiOutlineCube className="h-9 w-9" />} />
+              <div>
+                <h3 className="text-xl font-semibold text-slate-950">{item.listingTitle}</h3>
+                <p className="mt-2 text-sm leading-6 text-slate-500">{item.pickupInstructions?.trim() || 'Pickup details will appear here once the buyer shares handling notes.'}</p>
+              </div>
             </div>
             <div className="flex flex-wrap items-center gap-2">
               <StatusBadge value={item.status} />
-              {item.bidPending ? (
+              {offerPending && item.bidAmountCents ? (
                 <span className="rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-xs font-semibold text-amber-800">
-                  Bid pending
+                  Your bid {formatDriveMoney(item.bidAmountCents)}
                 </span>
               ) : null}
             </div>
@@ -516,7 +548,12 @@ function DriveDeliveryQueueCard({ item }: { item: DriveDeliveryItem }) {
             <QueueFact
               label="Pickup"
               icon={<HiOutlineMapPin className="h-4 w-4" />}
-              value={formatDriveLocation(item.pickupCity, item.pickupProvince)}
+              value={item.pickupAddressLabel?.trim() || formatDriveLocation(item.pickupCity, item.pickupProvince)}
+            />
+            <QueueFact
+              label="Dropoff"
+              icon={<HiOutlineCube className="h-4 w-4" />}
+              value={item.dropoffAddressLabel?.trim() || 'Shared after acceptance'}
             />
             <QueueFact
               label="Buyer"
@@ -529,14 +566,24 @@ function DriveDeliveryQueueCard({ item }: { item: DriveDeliveryItem }) {
               value={formatDrivePersonName(item.seller)}
             />
             <QueueFact
-              label="Posted"
-              icon={<HiOutlineClock className="h-4 w-4" />}
-              value={formatDriveDate(item.createdAt)}
-            />
-            <QueueFact
-              label="Bid"
+              label="Route"
               icon={<HiOutlineTruck className="h-4 w-4" />}
-              value={item.bidAmountCents ? formatDriveMoney(item.bidAmountCents) : 'No bid yet'}
+              value={item.routeDistanceKm ? `${item.routeDistanceKm.toFixed(1)} km` : item.distanceKm ? `${item.distanceKm.toFixed(1)} km away` : 'Distance pending'}
+            />
+            <QueueFact label="Posted" icon={<HiOutlineClock className="h-4 w-4" />} value={formatDriveDate(item.createdAt)} />
+            <QueueFact
+              label="Current bid"
+              icon={<HiOutlineTruck className="h-4 w-4" />}
+              value={
+                item.bidAmountCents ? (
+                  <div>
+                    <div>{formatDriveMoney(item.bidAmountCents)}</div>
+                    {item.bidPerKmFeeCents ? <div className="mt-1 text-xs font-semibold text-slate-500">{formatDriveMoney(item.bidPerKmFeeCents)}/km</div> : null}
+                  </div>
+                ) : (
+                  'No bid yet'
+                )
+              }
             />
           </div>
 
@@ -550,10 +597,28 @@ function DriveDeliveryQueueCard({ item }: { item: DriveDeliveryItem }) {
             </div>
           ) : null}
 
-          <p className="text-sm leading-6 text-slate-600">
-            {item.pickupInstructions?.trim() || 'Pickup details will appear here once the buyer shares handling notes.'}
-          </p>
-        </div>
+          {onMakeOffer ? (
+            <div className="rounded-[1.35rem] border border-slate-200 bg-white px-4 py-4">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <p className="text-sm font-semibold text-slate-950">{offerPending ? 'Your bid is waiting for the requester.' : 'Set your per km delivery rate.'}</p>
+                  <p className="mt-1 text-sm text-slate-500">
+                    {offerPending && item.bidPerKmFeeCents
+                      ? `${formatDriveMoney(item.bidPerKmFeeCents)}/km currently offered`
+                      : 'Use the same bid flow as rides, with your per km rate and projected payout.'}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => onMakeOffer(item)}
+                  disabled={submittingOfferId === item.id}
+                  className="inline-flex rounded-full bg-[var(--cc-primary)] px-5 py-2.5 text-sm font-semibold text-white transition hover:brightness-95 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {submittingOfferId === item.id ? 'Submitting…' : actionLabel}
+                </button>
+              </div>
+            </div>
+          ) : null}
       </div>
     </article>
   )
@@ -700,6 +765,10 @@ export function DriveDeliveryTable({
   variant,
   onCancel,
   cancelingId,
+  onMakeOffer,
+  submittingOfferId,
+  onManage,
+  managingId,
 }: {
   title: string
   items: DriveDeliveryItem[]
@@ -710,6 +779,10 @@ export function DriveDeliveryTable({
   variant: 'mine' | 'open'
   onCancel?: (item: DriveDeliveryItem) => void
   cancelingId?: string | null
+  onMakeOffer?: (item: DriveDeliveryItem) => void
+  submittingOfferId?: string | null
+  onManage?: (item: DriveDeliveryItem) => void
+  managingId?: string | null
 }) {
   const countLabel = !loading ? `${typeof total === 'number' ? total : items.length} ${variant === 'open' ? 'live' : 'total'}` : null
 
@@ -718,7 +791,7 @@ export function DriveDeliveryTable({
       {variant === 'open' && items.length ? (
         <OpenQueueStack>
           {items.map((item) => (
-            <DriveDeliveryQueueCard key={item.id} item={item} />
+            <DriveDeliveryQueueCard key={item.id} item={item} onMakeOffer={onMakeOffer} submittingOfferId={submittingOfferId} />
           ))}
         </OpenQueueStack>
       ) : null}
@@ -726,7 +799,14 @@ export function DriveDeliveryTable({
       {variant === 'mine' && items.length ? (
         <OpenQueueStack>
           {items.map((item) => (
-            <MineDeliveryHistoryCard key={item.id} item={item} onCancel={onCancel} cancelingId={cancelingId} />
+            <MineDeliveryHistoryCard
+              key={item.id}
+              item={item}
+              onCancel={onCancel}
+              cancelingId={cancelingId}
+              onManage={onManage}
+              managingId={managingId}
+            />
           ))}
         </OpenQueueStack>
       ) : null}

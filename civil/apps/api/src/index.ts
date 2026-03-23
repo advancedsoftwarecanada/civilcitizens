@@ -6631,6 +6631,11 @@ function ensureCitizenMarketplaceTables() {
 
       await prisma.$executeRawUnsafe(`
         ALTER TABLE citizen_market_delivery_contract
+        ADD COLUMN IF NOT EXISTS bid_per_km_fee_cents INTEGER;
+      `)
+
+      await prisma.$executeRawUnsafe(`
+        ALTER TABLE citizen_market_delivery_contract
         ADD COLUMN IF NOT EXISTS bid_requested_at TIMESTAMPTZ;
       `)
 

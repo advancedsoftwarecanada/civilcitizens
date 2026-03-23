@@ -45,6 +45,7 @@ export const PROFILE_INVITE_NOTIFICATION_TYPES = {
 export const DELIVERY_NOTIFICATION_TYPES = {
   BID: 'delivery_contract_bid',
   BID_RESPONSE: 'delivery_contract_bid_response',
+  UPDATE: 'delivery_contract_update',
 } as const
 
 export const PROFILE_FAMILY_RELATIONSHIP_LABELS = {
@@ -220,7 +221,7 @@ function mapNotificationPushType(type: string): PushPayloadType {
 
 function getNativeNotificationSound(type: string, platform: NativePushPlatform): string {
   const normalized = type.trim().toLowerCase()
-  if (normalized === 'drive_ride_contract_update') {
+  if (normalized === 'drive_ride_contract_update' || normalized === 'delivery_contract_update') {
     return platform === 'android' ? 'honk_honk' : 'honk-honk.caf'
   }
   return 'civil-general.caf'
@@ -229,7 +230,7 @@ function getNativeNotificationSound(type: string, platform: NativePushPlatform):
 function getNativeNotificationChannelId(type: string, platform: NativePushPlatform): string | undefined {
   if (platform !== 'android') return undefined
   const normalized = type.trim().toLowerCase()
-  if (normalized === 'drive_ride_contract_update') {
+  if (normalized === 'drive_ride_contract_update' || normalized === 'delivery_contract_update') {
     return 'drive_ride_updates'
   }
   return undefined
@@ -453,6 +454,17 @@ export function createNotificationHelpers(deps: CreateNotificationHelpersDeps) {
       }
       return { title: 'Ride update', message: `${actorLabel} updated the ride contract.` }
     }
+    if (record.type === 'delivery_contract_update') {
+      const payload = readPayloadRecord(record.payload)
+      const action = typeof payload?.action === 'string' ? payload.action.trim().toLowerCase() : ''
+      if (action === 'picked_up') {
+        return { title: 'Item picked up', message: `${actorLabel} picked up your delivery item.` }
+      }
+      if (action === 'delivered') {
+        return { title: 'Delivery completed', message: `${actorLabel} delivered your item.` }
+      }
+      return { title: 'Delivery update', message: `${actorLabel} updated your delivery.` }
+    }
     if (record.type === 'drive_ride_tip_received') {
       const payload = readPayloadRecord(record.payload)
       const amountCents = typeof payload?.amountCents === 'number' ? payload.amountCents : null
@@ -528,6 +540,10 @@ export function createNotificationHelpers(deps: CreateNotificationHelpersDeps) {
     const payload = readPayloadRecord(record.payload)
     if (record.type === 'drive_ride_contract_update') {
       return '/drive'
+    }
+    if (record.type === 'delivery_contract_update') {
+      const url = typeof payload?.url === 'string' ? payload.url.trim() : ''
+      return url.startsWith('/') ? url : '/delivery/my'
     }
 
     const candidates = record.type === COMMENT_NOTIFICATION_TYPES.REPLY

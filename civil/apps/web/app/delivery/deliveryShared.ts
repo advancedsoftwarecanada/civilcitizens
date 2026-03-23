@@ -22,6 +22,8 @@ export type DeliveryOpenContract = {
   listingId: string
   listingTitle: string
   listingPhotoUrl: string | null
+  pickupAddressLabel?: string | null
+  dropoffAddressLabel?: string | null
   pickupCity: string | null
   pickupProvince: string | null
   pickupInstructions: string | null
@@ -29,7 +31,10 @@ export type DeliveryOpenContract = {
   bidPending: boolean
   bidDriverUserId: string | null
   bidAmountCents: number | null
+  bidPerKmFeeCents?: number | null
   distanceKm: number | null
+  routeDistanceKm?: number | null
+  isBidByViewer?: boolean
   seller: {
     id: string
     handle: string | null
@@ -50,14 +55,19 @@ export type DeliveryDriverContract = {
   listingId: string
   listingTitle: string
   listingPhotoUrl: string | null
+  pickupAddressLabel?: string | null
+  dropoffAddressLabel?: string | null
   pickupCity: string | null
   pickupProvince: string | null
   pickupInstructions: string | null
   itemTraits: string[]
   bidAmountCents: number | null
+  bidPerKmFeeCents?: number | null
+  acceptedAt?: string | null
   estimatedDeliveryAt: string | null
   pickedUpAt: string | null
   deliveredAt: string | null
+  deliveryPhotoUrl?: string | null
   groupThreadId: string | null
   buyer: {
     id: string
@@ -79,14 +89,19 @@ export type DeliveryRequestedContract = {
   listingId: string
   listingTitle: string
   listingPhotoUrl: string | null
+  pickupAddressLabel?: string | null
+  dropoffAddressLabel?: string | null
   pickupCity: string | null
   pickupProvince: string | null
   pickupInstructions: string | null
   itemTraits: string[]
   bidAmountCents: number | null
+  bidPerKmFeeCents?: number | null
+  acceptedAt?: string | null
   estimatedDeliveryAt: string | null
   pickedUpAt: string | null
   deliveredAt: string | null
+  deliveryPhotoUrl?: string | null
   groupThreadId: string | null
   requesterRole: 'buyer' | 'seller'
   buyer: {

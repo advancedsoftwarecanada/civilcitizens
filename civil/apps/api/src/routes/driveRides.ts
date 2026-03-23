@@ -177,6 +177,8 @@ type DriveDeliveryRow = {
   listing_id: string
   listing_title: string
   listing_photo_urls: unknown
+  pickup_address_line1: string | null
+  pickup_postal_code: string | null
   pickup_city: string | null
   pickup_province: string | null
   pickup_instructions: string | null
@@ -184,6 +186,20 @@ type DriveDeliveryRow = {
   driver_user_id: string | null
   bid_driver_user_id: string | null
   bid_amount_cents: number | null
+  bid_per_km_fee_cents: number | null
+  route_distance_km: number | null
+  distance_meters: number | null
+  accepted_at: Date | null
+  estimated_delivery_at: Date | null
+  picked_up_at: Date | null
+  delivered_at: Date | null
+  delivery_photo_url: string | null
+  group_thread_id: string | null
+  buyer_billing_address1: string | null
+  buyer_billing_city: string | null
+  buyer_billing_state: string | null
+  buyer_billing_postal_code: string | null
+  buyer_community_meta: unknown
   created_at: Date
   seller_id: string
   seller_handle: string | null
@@ -867,6 +883,20 @@ function mapDriveRideOfferRow(row: DriveRideOfferRow) {
 }
 
 function mapDeliveryRequestRow(row: DriveDeliveryRow, deps: DriveRideDeps, viewerUserId: string | null) {
+  const preferred = readPreferredShippingAddress(row.buyer_community_meta, deps)
+  const dropoffParts = [
+    row.buyer_billing_address1,
+    [row.buyer_billing_city, row.buyer_billing_state].filter(Boolean).join(', '),
+    row.buyer_billing_postal_code,
+  ]
+    .map((value) => (typeof value === 'string' ? value.trim() : ''))
+    .filter(Boolean)
+  const dropoffAddressLabel = dropoffParts.length
+    ? dropoffParts.join(', ')
+    : [preferred?.line1, [preferred?.city, preferred?.province].filter(Boolean).join(', '), preferred?.postalCode]
+        .map((value) => (typeof value === 'string' ? value.trim() : ''))
+        .filter(Boolean)
+        .join(', ') || null
   const viewerRole =
     viewerUserId && row.driver_user_id === viewerUserId
       ? 'driver'
@@ -882,12 +912,28 @@ function mapDeliveryRequestRow(row: DriveDeliveryRow, deps: DriveRideDeps, viewe
     listingId: row.listing_id,
     listingTitle: row.listing_title,
     listingPhotoUrl: deps.readGalleryUrls(row.listing_photo_urls)[0] ?? null,
+    pickupAddressLabel: [row.pickup_address_line1, [row.pickup_city, row.pickup_province].filter(Boolean).join(', '), row.pickup_postal_code]
+      .map((value) => (typeof value === 'string' ? value.trim() : ''))
+      .filter(Boolean)
+      .join(', ') || null,
+    dropoffAddressLabel,
     pickupCity: row.pickup_city,
     pickupProvince: row.pickup_province,
     pickupInstructions: row.pickup_instructions,
     itemTraits: Array.isArray(row.item_traits) ? (row.item_traits as unknown[]).filter((entry: unknown): entry is string => typeof entry === 'string') : [],
     bidPending: Boolean(row.bid_driver_user_id),
+    bidDriverUserId: row.bid_driver_user_id,
     bidAmountCents: row.bid_amount_cents,
+    bidPerKmFeeCents: row.bid_per_km_fee_cents,
+    routeDistanceKm: typeof row.route_distance_km === 'number' && Number.isFinite(row.route_distance_km) ? row.route_distance_km : null,
+    distanceKm: typeof row.distance_meters === 'number' && Number.isFinite(row.distance_meters) ? Number((row.distance_meters / 1000).toFixed(1)) : null,
+    isBidByViewer: row.bid_driver_user_id === viewerUserId,
+    acceptedAt: row.accepted_at?.toISOString() ?? null,
+    estimatedDeliveryAt: row.estimated_delivery_at?.toISOString() ?? null,
+    pickedUpAt: row.picked_up_at?.toISOString() ?? null,
+    deliveredAt: row.delivered_at?.toISOString() ?? null,
+    deliveryPhotoUrl: row.delivery_photo_url,
+    groupThreadId: row.group_thread_id,
     createdAt: row.created_at.toISOString(),
     viewerRole,
     seller: {
@@ -1458,6 +1504,8 @@ export function registerDriveRideRoutes(app: FastifyInstance, deps: DriveRideDep
                 c.listing_id,
                 l.title AS listing_title,
                 l.photo_urls AS listing_photo_urls,
+                l.pickup_address_line1,
+                l.pickup_postal_code,
                 l.pickup_city,
                 l.pickup_province,
                 c.pickup_instructions,
@@ -1465,6 +1513,20 @@ export function registerDriveRideRoutes(app: FastifyInstance, deps: DriveRideDep
                 c.driver_user_id,
                 c.bid_driver_user_id,
                 c.bid_amount_cents,
+                c.bid_per_km_fee_cents,
+                NULL::double precision AS route_distance_km,
+                NULL::double precision AS distance_meters,
+                c.accepted_at,
+                c.estimated_delivery_at,
+                c.picked_up_at,
+                c.delivered_at,
+                c.delivery_photo_url,
+                c.group_thread_id,
+                buyer."billingAddress1" AS buyer_billing_address1,
+                buyer."billingCity" AS buyer_billing_city,
+                buyer."billingState" AS buyer_billing_state,
+                buyer."billingPostalCode" AS buyer_billing_postal_code,
+                buyer."communityMeta" AS buyer_community_meta,
                 c.created_at,
                 seller.id AS seller_id,
                 seller.handle AS seller_handle,
@@ -1479,18 +1541,35 @@ export function registerDriveRideRoutes(app: FastifyInstance, deps: DriveRideDep
               INNER JOIN "User" seller ON seller.id = c.seller_user_id
               INNER JOIN "User" buyer ON buyer.id = c.buyer_user_id
               WHERE c.seller_user_id = ${userId}
-                 OR c.buyer_user_id = ${userId}
                  OR c.driver_user_id = ${userId}
               ORDER BY c.updated_at DESC, c.id DESC
               LIMIT ${query.data.limit}
             `
           : await prisma.$queryRaw<DriveDeliveryRow[]>`
+              WITH driver_home AS (
+                SELECT u."billingPostalCode" AS postal_code, u."communityMeta" AS community_meta
+                FROM "User" u
+                WHERE u.id = ${userId}
+                LIMIT 1
+              ),
+              driver_origin AS (
+                SELECT COALESCE(
+                  fsa."pointGeom",
+                  ST_Transform(ST_SetSRID(ST_MakePoint(fsa."centroidLng", fsa."centroidLat"), 3347), 4326)
+                ) AS geom
+                FROM driver_home dh
+                LEFT JOIN "ForwardSortationArea" fsa
+                  ON fsa.code = LEFT(REGEXP_REPLACE(UPPER(COALESCE(dh.postal_code, '')), '[^A-Z0-9]', '', 'g'), 3)
+                LIMIT 1
+              )
               SELECT
                 c.id,
                 c.status,
                 c.listing_id,
                 l.title AS listing_title,
                 l.photo_urls AS listing_photo_urls,
+                l.pickup_address_line1,
+                l.pickup_postal_code,
                 l.pickup_city,
                 l.pickup_province,
                 c.pickup_instructions,
@@ -1498,6 +1577,38 @@ export function registerDriveRideRoutes(app: FastifyInstance, deps: DriveRideDep
                 c.driver_user_id,
                 c.bid_driver_user_id,
                 c.bid_amount_cents,
+                c.bid_per_km_fee_cents,
+                CASE
+                  WHEN pickup_fsa.code IS NULL OR buyer_fsa.code IS NULL THEN NULL
+                  ELSE ST_DistanceSphere(
+                    COALESCE(
+                      pickup_fsa."pointGeom",
+                      ST_Transform(ST_SetSRID(ST_MakePoint(pickup_fsa."centroidLng", pickup_fsa."centroidLat"), 3347), 4326)
+                    ),
+                    COALESCE(
+                      buyer_fsa."pointGeom",
+                      ST_Transform(ST_SetSRID(ST_MakePoint(buyer_fsa."centroidLng", buyer_fsa."centroidLat"), 3347), 4326)
+                    )
+                  ) / 1000.0
+                END AS route_distance_km,
+                ST_DistanceSphere(
+                  COALESCE(
+                    pickup_fsa."pointGeom",
+                    ST_Transform(ST_SetSRID(ST_MakePoint(pickup_fsa."centroidLng", pickup_fsa."centroidLat"), 3347), 4326)
+                  ),
+                  driver_origin.geom
+                ) AS distance_meters,
+                c.accepted_at,
+                c.estimated_delivery_at,
+                c.picked_up_at,
+                c.delivered_at,
+                c.delivery_photo_url,
+                c.group_thread_id,
+                buyer."billingAddress1" AS buyer_billing_address1,
+                buyer."billingCity" AS buyer_billing_city,
+                buyer."billingState" AS buyer_billing_state,
+                buyer."billingPostalCode" AS buyer_billing_postal_code,
+                buyer."communityMeta" AS buyer_community_meta,
                 c.created_at,
                 seller.id AS seller_id,
                 seller.handle AS seller_handle,
@@ -1511,9 +1622,16 @@ export function registerDriveRideRoutes(app: FastifyInstance, deps: DriveRideDep
               INNER JOIN citizen_market_listing l ON l.id = c.listing_id
               INNER JOIN "User" seller ON seller.id = c.seller_user_id
               INNER JOIN "User" buyer ON buyer.id = c.buyer_user_id
+              LEFT JOIN "ForwardSortationArea" pickup_fsa
+                ON pickup_fsa.code = LEFT(REGEXP_REPLACE(UPPER(COALESCE(l.pickup_postal_code, '')), '[^A-Z0-9]', '', 'g'), 3)
+              LEFT JOIN "ForwardSortationArea" buyer_fsa
+                ON buyer_fsa.code = LEFT(REGEXP_REPLACE(UPPER(COALESCE(buyer."billingPostalCode", '')), '[^A-Z0-9]', '', 'g'), 3)
+              LEFT JOIN driver_origin ON TRUE
               WHERE c.status IN ('open', 'bid_pending')
                 AND c.driver_user_id IS NULL
                 AND l.is_active = TRUE
+                AND c.seller_user_id <> ${userId}
+                AND c.buyer_user_id <> ${userId}
               ORDER BY c.updated_at DESC, c.id DESC
               LIMIT ${query.data.limit}
             `
@@ -1523,9 +1641,7 @@ export function registerDriveRideRoutes(app: FastifyInstance, deps: DriveRideDep
           ? await prisma.$queryRaw<CountRow[]>`
               SELECT COUNT(*)::int AS count
               FROM citizen_market_delivery_contract c
-              WHERE c.seller_user_id = ${userId}
-                 OR c.buyer_user_id = ${userId}
-                 OR c.driver_user_id = ${userId}
+              WHERE c.driver_user_id = ${userId}
             `
           : await prisma.$queryRaw<CountRow[]>`
               SELECT COUNT(*)::int AS count
@@ -1534,6 +1650,8 @@ export function registerDriveRideRoutes(app: FastifyInstance, deps: DriveRideDep
               WHERE c.status IN ('open', 'bid_pending')
                 AND c.driver_user_id IS NULL
                 AND l.is_active = TRUE
+                AND c.seller_user_id <> ${userId}
+                AND c.buyer_user_id <> ${userId}
             `
 
       return reply.send({
