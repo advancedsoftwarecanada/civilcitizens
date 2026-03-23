@@ -6,13 +6,21 @@ import { HiOutlineClock, HiOutlineMap, HiOutlineTruck, HiOutlineUserCircle } fro
 import DriveActiveRideLocationSync from './DriveActiveRideLocationSync'
 import { useDriveViewerState } from './useDriveViewerState'
 
-const REQUESTER_NAV_ITEMS = [
+type DriveNavItem = {
+  href: string
+  label: string
+  icon: typeof HiOutlineClock
+  aliases?: string[]
+  forceDriverMode?: boolean
+}
+
+const REQUESTER_NAV_ITEMS: DriveNavItem[] = [
   { href: '/drive', label: 'My Rides', icon: HiOutlineClock, aliases: ['/drive/ride/request', '/drive/myrides/'] },
   { href: '/delivery/my', label: 'My Deliveries', icon: HiOutlineTruck, aliases: ['/delivery/contracts/my'] },
   { href: '/drive/drivers', label: 'My Drivers', icon: HiOutlineUserCircle, aliases: ['/drive/driver/'] },
 ]
 
-const DRIVER_NAV_ITEMS = [
+const DRIVER_NAV_ITEMS: DriveNavItem[] = [
   { href: '/drive/ride', label: 'Open Ride Requests', icon: HiOutlineMap, forceDriverMode: true },
   { href: '/drive/delivery', label: 'Open Delivery Requests', icon: HiOutlineTruck, forceDriverMode: true },
   { href: '/drive/drivers', label: 'My Customers', icon: HiOutlineUserCircle },

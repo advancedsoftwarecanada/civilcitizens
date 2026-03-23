@@ -2574,7 +2574,7 @@ export function registerDriveRideRoutes(app: FastifyInstance, deps: DriveRideDep
       await settleExpiredDriveRideEscrows()
 
       try {
-        const result = await prisma.$transaction(async (tx) => {
+        const result = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
           const rows = await tx.$queryRaw<Array<{
             id: string
             requester_user_id: string

@@ -1004,17 +1004,19 @@ export function registerMarketChatRoutes(app: FastifyInstance, deps: MarketChatD
                 await prisma.$queryRaw<Array<{ thread_id: string }>>`
                   SELECT DISTINCT thread_id
                   FROM citizen_market_chat_interest
-                  WHERE thread_id IN (${Prisma.join(threads.map((thread) => thread.id))})
+                  WHERE thread_id IN (${Prisma.join(threads.map((thread: { id: string }) => thread.id))})
                     AND user_id <> ${userId}
                     AND interested = FALSE
                 `
               )
-                .map((row) => String(row.thread_id || ''))
+                .map((row: { thread_id: string }) => String(row.thread_id || ''))
                 .filter(Boolean),
             )
           : new Set<string>()
 
-        const eligibleThreads = threads.filter((thread) => !uninterestedThreadIds.has(thread.id))
+        const eligibleThreads = threads.filter((thread: { id: string; participants: Array<{ userId: string }> }) =>
+          !uninterestedThreadIds.has(thread.id),
+        )
 
         const bodyText = deps.sanitizePlainText('I have relisted this item for sale, if you were still interested').trim()
 
