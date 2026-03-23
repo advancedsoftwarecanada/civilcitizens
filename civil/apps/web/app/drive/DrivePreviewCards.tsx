@@ -8,6 +8,7 @@ import {
   formatDriveDate,
   formatDriveDateTime,
   formatDriveLocation,
+  formatDriveMoney,
   formatDrivePersonName,
   formatDriveRecurrence,
   getAvatarInitials,

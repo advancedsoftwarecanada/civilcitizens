@@ -65,6 +65,8 @@ type WalletSummaryPayload = {
   } | null
 } | null
 
+type WalletRecentTransaction = NonNullable<NonNullable<WalletSummaryPayload>['recentTransactions']>[number]
+
 const WALLET_TOP_UP_PRESETS = ['25.00', '50.00', '100.00', '250.00', '500.00', '1000.00'] as const
 
 function getAuthToken() {
@@ -265,7 +267,7 @@ export default function WalletPage() {
   const availableCreditsCents = wallet?.availableCreditsCents ?? balanceCents
   const pendingCreditsCents = wallet?.pendingCreditsCents ?? 0
   const settlementHoldDays = wallet?.settlementHoldDays ?? 7
-  const recentTransactions = wallet?.recentTransactions ?? []
+  const recentTransactions = (wallet?.recentTransactions ?? []) as WalletRecentTransaction[]
   const driveTransactions = recentTransactions.filter((transaction) => isDriveWalletTransaction(transaction.sourceType))
   const otherTransactions = recentTransactions.filter((transaction) => !isDriveWalletTransaction(transaction.sourceType))
   const normalizedInput = normalizeEmail(eTransferEmail)
