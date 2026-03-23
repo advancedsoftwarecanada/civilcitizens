@@ -419,6 +419,12 @@ export function getNotificationMessage(notification: NotificationItem) {
       if (action === 'complete_contract') return 'Completed your ride'
       return 'Updated the ride contract'
     }
+    case 'delivery_contract_update': {
+      const action = typeof notification.payload?.action === 'string' ? notification.payload.action.toLowerCase() : ''
+      if (action === 'picked_up') return 'Picked up your delivery item'
+      if (action === 'delivered') return 'Delivered your item'
+      return 'Updated your delivery'
+    }
     case 'drive_ride_complete_confirmation': {
       const status = typeof notification.payload?.status === 'string' ? notification.payload.status.toLowerCase() : ''
       if (status === 'confirmed') return 'trip completion was confirmed'
@@ -519,6 +525,7 @@ export function getNotificationOpenLabel(notification: NotificationItem): string
   if (notification.type === 'drive_ride_offer_accepted') return 'View ride'
   if (notification.type === 'drive_ride_tip_received') return 'View drive'
   if (notification.type === 'drive_ride_contract_update') return 'View ride'
+  if (notification.type === 'delivery_contract_update') return 'Open chat'
   if (notification.type === 'drive_ride_complete_confirmation') return 'View ride'
   if (notification.type === 'drive_ride_complete_response') return 'View ride'
   if (notification.type === 'delivery_contract_bid_response') {
@@ -549,6 +556,10 @@ export function getNotificationTargetUrl(notification: NotificationItem): string
 
   if (notification.type === 'drive_ride_contract_update') {
     return '/drive'
+  }
+  if (notification.type === 'delivery_contract_update') {
+    const url = typeof notification.payload?.url === 'string' ? notification.payload.url.trim() : ''
+    return url.startsWith('/') ? url : '/delivery/my'
   }
 
   const threadIdCandidates = [

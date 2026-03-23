@@ -2,9 +2,9 @@ import { randomUUID } from 'node:crypto'
 
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 import { prisma } from '@civil/db'
-import { MessageType, Prisma } from '@prisma/client'
+import { MessageParticipantRole, MessageThreadType, MessageType, Prisma } from '@prisma/client'
 import { z } from 'zod'
-import { readWalletSummary, walletHasConnectPayoutsEnabled } from '../walletHelpers.js'
+import { buildWalletMetaValue, ensureCitizenWalletTables, insertCivilCreditLedgerEntry, readWalletSummary, walletHasConnectPayoutsEnabled } from '../walletHelpers.js'
 
 type DeliveryDeps = Record<string, any>
 
@@ -14,13 +14,16 @@ const DRIVER_VEHICLE_PHOTO_LIMIT = 8
 const DRIVER_MIN_RIDE_AMOUNT_CENTS_MIN = 500
 const DRIVER_PER_KM_FEE_CENTS_MIN = 100
 const DRIVER_PER_KM_FEE_CENTS_MAX = 300
+const DELIVERY_GROUP_CONTEXT_TYPE = 'market_delivery'
 
 const DeliveryContractParams = z.object({ contractId: z.string().trim().min(1).max(128) })
 
 const DeliveryBidBody = z
   .object({
-    amountCents: z.number().int().refine((value) => DELIVERY_BID_OPTIONS.has(value), 'invalid_bid_amount'),
+    amountCents: z.number().int().positive().optional(),
+    perKmFeeCents: z.number().int().min(DRIVER_PER_KM_FEE_CENTS_MIN).max(500).optional(),
   })
+  .refine((value) => typeof value.amountCents === 'number' || typeof value.perKmFeeCents === 'number', 'missing_bid_value')
   .strict()
 
 const DeliveryPickupBody = z
@@ -31,7 +34,7 @@ const DeliveryPickupBody = z
 
 const DeliveryDeliverBody = z
   .object({
-    photoUrl: z.string().trim().url().max(2048),
+    photoUrl: z.string().trim().url().max(2048).optional(),
   })
   .strict()
 
@@ -241,6 +244,88 @@ function resolveDriverHomeAddress(
   return hasStructuredHomeAddress(shippingAddress) ? shippingAddress : null
 }
 
+function formatDeliveryAddressInline(address: {
+  line1?: string | null
+  city?: string | null
+  province?: string | null
+  postalCode?: string | null
+} | null | undefined) {
+  if (!address) return null
+  const cityProvince = [address.city, address.province]
+    .map((value) => (typeof value === 'string' ? value.trim() : ''))
+    .filter(Boolean)
+    .join(', ')
+  const parts = [address.line1, cityProvince, address.postalCode]
+    .map((value) => (typeof value === 'string' ? value.trim() : ''))
+    .filter(Boolean)
+  return parts.length ? parts.join(', ') : null
+}
+
+function calculateDeliveryBidAmountCents(args: { perKmFeeCents?: number | null; amountCents?: number | null; routeDistanceKm?: number | null }) {
+  if (typeof args.perKmFeeCents === 'number' && Number.isFinite(args.perKmFeeCents)) {
+    const distanceKm = typeof args.routeDistanceKm === 'number' && Number.isFinite(args.routeDistanceKm) && args.routeDistanceKm > 0 ? args.routeDistanceKm : 1
+    return Math.max(args.perKmFeeCents, Math.round(distanceKm * args.perKmFeeCents))
+  }
+  return Math.max(1, Number(args.amountCents) || 0)
+}
+
+async function ensureDeliveryGroupThread(args: {
+  tx: Prisma.TransactionClient
+  deps: DeliveryDeps
+  contractId: string
+  sellerUserId: string
+  buyerUserId: string
+  driverUserId: string
+  driverName: string | null
+  listingTitle: string
+}) {
+  const uniqueKey = `delivery_contract:${args.contractId}`
+  let thread = await args.tx.messageThread.findUnique({
+    where: { uniqueKey },
+    include: { participants: { select: { userId: true, mutedUntil: true } } },
+  })
+
+  if (!thread) {
+    const now = new Date()
+    thread = await args.tx.messageThread.create({
+      data: {
+        type: MessageThreadType.group,
+        uniqueKey,
+        contextType: DELIVERY_GROUP_CONTEXT_TYPE,
+        contextId: args.contractId,
+        lastMessageAt: now,
+        participants: {
+          create: [
+            { userId: args.sellerUserId, role: MessageParticipantRole.member, lastActivityAt: now },
+            { userId: args.buyerUserId, role: MessageParticipantRole.member, lastActivityAt: now },
+            { userId: args.driverUserId, role: MessageParticipantRole.member, lastReadAt: now, lastActivityAt: now },
+          ],
+        },
+      },
+      include: { participants: { select: { userId: true, mutedUntil: true } } },
+    })
+  }
+
+  const joinMessage = await args.tx.message.create({
+    data: {
+      threadId: thread.id,
+      senderId: args.driverUserId,
+      body: `${args.driverName?.trim() || 'Your delivery driver'} has joined the chat as your delivery driver for ${args.listingTitle}.`,
+      messageType: MessageType.text,
+    },
+    select: args.deps.MESSAGE_SELECT,
+  })
+
+  await args.tx.messageThread.update({ where: { id: thread.id }, data: { lastMessageAt: joinMessage.createdAt } })
+  await args.tx.messageParticipant.updateMany({ where: { threadId: thread.id }, data: { lastActivityAt: joinMessage.createdAt } })
+  await args.tx.messageParticipant.update({
+    where: { threadId_userId: { threadId: thread.id, userId: args.driverUserId } },
+    data: { lastReadAt: joinMessage.createdAt, lastActivityAt: joinMessage.createdAt },
+  })
+
+  return { thread, joinMessage }
+}
+
 async function loadDriverEligibility(userId: string, deps: DeliveryDeps) {
   const user = await prisma.user.findUnique({
     where: { id: userId },
@@ -432,13 +517,16 @@ export function registerDeliveryRoutes(app: FastifyInstance, deps: DeliveryDeps)
         listing_id: string
         listing_title: string
         listing_photo_urls: unknown
+        pickup_postal_code: string | null
         pickup_city: string | null
         pickup_province: string | null
         pickup_instructions: string | null
         item_traits: unknown
         bid_driver_user_id: string | null
         bid_amount_cents: number | null
+        bid_per_km_fee_cents: number | null
         distance_meters: number | null
+        route_distance_meters: number | null
         seller_id: string
         seller_handle: string | null
         seller_name: string | null
@@ -465,12 +553,14 @@ export function registerDeliveryRoutes(app: FastifyInstance, deps: DeliveryDeps)
           c.listing_id,
           l.title AS listing_title,
           l.photo_urls AS listing_photo_urls,
+          l.pickup_postal_code,
           l.pickup_city,
           l.pickup_province,
           c.pickup_instructions,
           c.item_traits,
           c.bid_driver_user_id,
           c.bid_amount_cents,
+          c.bid_per_km_fee_cents,
           ST_DistanceSphere(
             COALESCE(
               fsa."pointGeom",
@@ -478,6 +568,16 @@ export function registerDeliveryRoutes(app: FastifyInstance, deps: DeliveryDeps)
             ),
             driver_origin.geom
           ) AS distance_meters,
+          ST_DistanceSphere(
+            COALESCE(
+              fsa."pointGeom",
+              ST_Transform(ST_SetSRID(ST_MakePoint(fsa."centroidLng", fsa."centroidLat"), 3347), 4326)
+            ),
+            COALESCE(
+              buyer_fsa."pointGeom",
+              ST_Transform(ST_SetSRID(ST_MakePoint(buyer_fsa."centroidLng", buyer_fsa."centroidLat"), 3347), 4326)
+            )
+          ) AS route_distance_meters,
           seller.id AS seller_id,
           seller.handle AS seller_handle,
           seller.name AS seller_name,
@@ -492,6 +592,8 @@ export function registerDeliveryRoutes(app: FastifyInstance, deps: DeliveryDeps)
         INNER JOIN "User" buyer ON buyer.id = c.buyer_user_id
         LEFT JOIN "ForwardSortationArea" fsa
           ON fsa.code = LEFT(REGEXP_REPLACE(UPPER(COALESCE(l.pickup_postal_code, '')), '[^A-Z0-9]', '', 'g'), 3)
+        LEFT JOIN "ForwardSortationArea" buyer_fsa
+          ON buyer_fsa.code = LEFT(REGEXP_REPLACE(UPPER(COALESCE(buyer."billingPostalCode", '')), '[^A-Z0-9]', '', 'g'), 3)
         LEFT JOIN driver_origin ON TRUE
         WHERE c.status IN ('open', 'bid_pending')
           AND c.driver_user_id IS NULL
@@ -516,7 +618,10 @@ export function registerDeliveryRoutes(app: FastifyInstance, deps: DeliveryDeps)
           bidPending: Boolean(row.bid_driver_user_id),
           bidDriverUserId: row.bid_driver_user_id,
           bidAmountCents: row.bid_amount_cents,
+          bidPerKmFeeCents: row.bid_per_km_fee_cents,
           distanceKm: typeof row.distance_meters === 'number' && Number.isFinite(row.distance_meters) ? Number((row.distance_meters / 1000).toFixed(1)) : null,
+          routeDistanceKm: typeof row.route_distance_meters === 'number' && Number.isFinite(row.route_distance_meters) ? Number((row.route_distance_meters / 1000).toFixed(1)) : null,
+          isBidByViewer: row.bid_driver_user_id === userId,
           seller: {
             id: row.seller_id,
             handle: row.seller_handle,
@@ -548,19 +653,30 @@ export function registerDeliveryRoutes(app: FastifyInstance, deps: DeliveryDeps)
         listing_id: string
         listing_title: string
         listing_photo_urls: unknown
+        pickup_address_line1: string | null
+        pickup_address_line2: string | null
+        pickup_postal_code: string | null
         pickup_city: string | null
         pickup_province: string | null
         pickup_instructions: string | null
         item_traits: unknown
         bid_amount_cents: number | null
+        bid_per_km_fee_cents: number | null
+        accepted_at: Date | null
         estimated_delivery_at: Date | null
         picked_up_at: Date | null
         delivered_at: Date | null
+        delivery_photo_url: string | null
         group_thread_id: string | null
         buyer_id: string
         buyer_handle: string | null
         buyer_name: string | null
         buyer_avatar_url: string | null
+        buyer_billing_address1: string | null
+        buyer_billing_city: string | null
+        buyer_billing_state: string | null
+        buyer_billing_postal_code: string | null
+        buyer_community_meta: unknown
         seller_id: string
         seller_handle: string | null
         seller_name: string | null
@@ -574,19 +690,30 @@ export function registerDeliveryRoutes(app: FastifyInstance, deps: DeliveryDeps)
           c.listing_id,
           l.title AS listing_title,
           l.photo_urls AS listing_photo_urls,
+          l.pickup_address_line1,
+          l.pickup_address_line2,
+          l.pickup_postal_code,
           l.pickup_city,
           l.pickup_province,
           c.pickup_instructions,
           c.item_traits,
           c.bid_amount_cents,
+          c.bid_per_km_fee_cents,
+          c.accepted_at,
           c.estimated_delivery_at,
           c.picked_up_at,
           c.delivered_at,
+          c.delivery_photo_url,
           c.group_thread_id,
           buyer.id AS buyer_id,
           buyer.handle AS buyer_handle,
           buyer.name AS buyer_name,
           buyer."avatarUrl" AS buyer_avatar_url,
+          buyer."billingAddress1" AS buyer_billing_address1,
+          buyer."billingCity" AS buyer_billing_city,
+          buyer."billingState" AS buyer_billing_state,
+          buyer."billingPostalCode" AS buyer_billing_postal_code,
+          buyer."communityMeta" AS buyer_community_meta,
           seller.id AS seller_id,
           seller.handle AS seller_handle,
           seller.name AS seller_name,
@@ -601,34 +728,57 @@ export function registerDeliveryRoutes(app: FastifyInstance, deps: DeliveryDeps)
       `
 
       return reply.send({
-        items: rows.map((row: DriverContractRow) => ({
-          id: row.id,
-          status: row.status,
-          listingId: row.listing_id,
-          listingTitle: row.listing_title,
-          listingPhotoUrl: deps.readGalleryUrls(row.listing_photo_urls)[0] ?? null,
-          pickupCity: row.pickup_city,
-          pickupProvince: row.pickup_province,
-          pickupInstructions: row.pickup_instructions,
-          itemTraits: Array.isArray(row.item_traits) ? (row.item_traits as unknown[]).filter((entry: unknown): entry is string => typeof entry === 'string') : [],
-          bidAmountCents: row.bid_amount_cents,
-          estimatedDeliveryAt: row.estimated_delivery_at?.toISOString() ?? null,
-          pickedUpAt: row.picked_up_at?.toISOString() ?? null,
-          deliveredAt: row.delivered_at?.toISOString() ?? null,
-          groupThreadId: row.group_thread_id,
-          buyer: {
-            id: row.buyer_id,
-            handle: row.buyer_handle,
-            name: row.buyer_name,
-            avatarUrl: row.buyer_avatar_url,
-          },
-          seller: {
-            id: row.seller_id,
-            handle: row.seller_handle,
-            name: row.seller_name,
-            avatarUrl: row.seller_avatar_url,
-          },
-        })),
+        items: rows.map((row: DriverContractRow) => {
+          const dropoffAddress = resolveDriverHomeAddress(
+            {
+              billingAddress1: row.buyer_billing_address1,
+              billingCity: row.buyer_billing_city,
+              billingState: row.buyer_billing_state,
+              billingPostalCode: row.buyer_billing_postal_code,
+              communityMeta: row.buyer_community_meta,
+            },
+            deps,
+          )
+
+          return {
+            id: row.id,
+            status: row.status,
+            listingId: row.listing_id,
+            listingTitle: row.listing_title,
+            listingPhotoUrl: deps.readGalleryUrls(row.listing_photo_urls)[0] ?? null,
+            pickupAddressLabel: formatDeliveryAddressInline({
+              line1: row.pickup_address_line1 ?? row.pickup_address_line2,
+              city: row.pickup_city,
+              province: row.pickup_province,
+              postalCode: row.pickup_postal_code,
+            }),
+            dropoffAddressLabel: formatDeliveryAddressInline(dropoffAddress),
+            pickupCity: row.pickup_city,
+            pickupProvince: row.pickup_province,
+            pickupInstructions: row.pickup_instructions,
+            itemTraits: Array.isArray(row.item_traits) ? (row.item_traits as unknown[]).filter((entry: unknown): entry is string => typeof entry === 'string') : [],
+            bidAmountCents: row.bid_amount_cents,
+            bidPerKmFeeCents: row.bid_per_km_fee_cents,
+            acceptedAt: row.accepted_at?.toISOString() ?? null,
+            estimatedDeliveryAt: row.estimated_delivery_at?.toISOString() ?? null,
+            pickedUpAt: row.picked_up_at?.toISOString() ?? null,
+            deliveredAt: row.delivered_at?.toISOString() ?? null,
+            deliveryPhotoUrl: row.delivery_photo_url,
+            groupThreadId: row.group_thread_id,
+            buyer: {
+              id: row.buyer_id,
+              handle: row.buyer_handle,
+              name: row.buyer_name,
+              avatarUrl: row.buyer_avatar_url,
+            },
+            seller: {
+              id: row.seller_id,
+              handle: row.seller_handle,
+              name: row.seller_name,
+              avatarUrl: row.seller_avatar_url,
+            },
+          }
+        }),
       })
     }),
   )
@@ -646,19 +796,30 @@ export function registerDeliveryRoutes(app: FastifyInstance, deps: DeliveryDeps)
         listing_id: string
         listing_title: string
         listing_photo_urls: unknown
+        pickup_address_line1: string | null
+        pickup_address_line2: string | null
+        pickup_postal_code: string | null
         pickup_city: string | null
         pickup_province: string | null
         pickup_instructions: string | null
         item_traits: unknown
         bid_amount_cents: number | null
+        bid_per_km_fee_cents: number | null
+        accepted_at: Date | null
         estimated_delivery_at: Date | null
         picked_up_at: Date | null
         delivered_at: Date | null
+        delivery_photo_url: string | null
         group_thread_id: string | null
         buyer_id: string
         buyer_handle: string | null
         buyer_name: string | null
         buyer_avatar_url: string | null
+        buyer_billing_address1: string | null
+        buyer_billing_city: string | null
+        buyer_billing_state: string | null
+        buyer_billing_postal_code: string | null
+        buyer_community_meta: unknown
         seller_id: string
         seller_handle: string | null
         seller_name: string | null
@@ -676,19 +837,30 @@ export function registerDeliveryRoutes(app: FastifyInstance, deps: DeliveryDeps)
           c.listing_id,
           l.title AS listing_title,
           l.photo_urls AS listing_photo_urls,
+          l.pickup_address_line1,
+          l.pickup_address_line2,
+          l.pickup_postal_code,
           l.pickup_city,
           l.pickup_province,
           c.pickup_instructions,
           c.item_traits,
           c.bid_amount_cents,
+          c.bid_per_km_fee_cents,
+          c.accepted_at,
           c.estimated_delivery_at,
           c.picked_up_at,
           c.delivered_at,
+          c.delivery_photo_url,
           c.group_thread_id,
           buyer.id AS buyer_id,
           buyer.handle AS buyer_handle,
           buyer.name AS buyer_name,
           buyer."avatarUrl" AS buyer_avatar_url,
+          buyer."billingAddress1" AS buyer_billing_address1,
+          buyer."billingCity" AS buyer_billing_city,
+          buyer."billingState" AS buyer_billing_state,
+          buyer."billingPostalCode" AS buyer_billing_postal_code,
+          buyer."communityMeta" AS buyer_community_meta,
           seller.id AS seller_id,
           seller.handle AS seller_handle,
           seller.name AS seller_name,
@@ -709,43 +881,66 @@ export function registerDeliveryRoutes(app: FastifyInstance, deps: DeliveryDeps)
       `
 
       return reply.send({
-        items: rows.map((row: RequestedContractRow) => ({
-          id: row.id,
-          status: row.status,
-          listingId: row.listing_id,
-          listingTitle: row.listing_title,
-          listingPhotoUrl: deps.readGalleryUrls(row.listing_photo_urls)[0] ?? null,
-          pickupCity: row.pickup_city,
-          pickupProvince: row.pickup_province,
-          pickupInstructions: row.pickup_instructions,
-          itemTraits: Array.isArray(row.item_traits) ? (row.item_traits as unknown[]).filter((entry: unknown): entry is string => typeof entry === 'string') : [],
-          bidAmountCents: row.bid_amount_cents,
-          estimatedDeliveryAt: row.estimated_delivery_at?.toISOString() ?? null,
-          pickedUpAt: row.picked_up_at?.toISOString() ?? null,
-          deliveredAt: row.delivered_at?.toISOString() ?? null,
-          groupThreadId: row.group_thread_id,
-          requesterRole: row.buyer_id === userId ? 'buyer' : 'seller',
-          buyer: {
-            id: row.buyer_id,
-            handle: row.buyer_handle,
-            name: row.buyer_name,
-            avatarUrl: row.buyer_avatar_url,
-          },
-          seller: {
-            id: row.seller_id,
-            handle: row.seller_handle,
-            name: row.seller_name,
-            avatarUrl: row.seller_avatar_url,
-          },
-          driver: row.driver_id
-            ? {
-                id: row.driver_id,
-                handle: row.driver_handle,
-                name: row.driver_name,
-                avatarUrl: row.driver_avatar_url,
-              }
-            : null,
-        })),
+        items: rows.map((row: RequestedContractRow) => {
+          const dropoffAddress = resolveDriverHomeAddress(
+            {
+              billingAddress1: row.buyer_billing_address1,
+              billingCity: row.buyer_billing_city,
+              billingState: row.buyer_billing_state,
+              billingPostalCode: row.buyer_billing_postal_code,
+              communityMeta: row.buyer_community_meta,
+            },
+            deps,
+          )
+
+          return {
+            id: row.id,
+            status: row.status,
+            listingId: row.listing_id,
+            listingTitle: row.listing_title,
+            listingPhotoUrl: deps.readGalleryUrls(row.listing_photo_urls)[0] ?? null,
+            pickupAddressLabel: formatDeliveryAddressInline({
+              line1: row.pickup_address_line1 ?? row.pickup_address_line2,
+              city: row.pickup_city,
+              province: row.pickup_province,
+              postalCode: row.pickup_postal_code,
+            }),
+            dropoffAddressLabel: formatDeliveryAddressInline(dropoffAddress),
+            pickupCity: row.pickup_city,
+            pickupProvince: row.pickup_province,
+            pickupInstructions: row.pickup_instructions,
+            itemTraits: Array.isArray(row.item_traits) ? (row.item_traits as unknown[]).filter((entry: unknown): entry is string => typeof entry === 'string') : [],
+            bidAmountCents: row.bid_amount_cents,
+            bidPerKmFeeCents: row.bid_per_km_fee_cents,
+            acceptedAt: row.accepted_at?.toISOString() ?? null,
+            estimatedDeliveryAt: row.estimated_delivery_at?.toISOString() ?? null,
+            pickedUpAt: row.picked_up_at?.toISOString() ?? null,
+            deliveredAt: row.delivered_at?.toISOString() ?? null,
+            deliveryPhotoUrl: row.delivery_photo_url,
+            groupThreadId: row.group_thread_id,
+            requesterRole: row.buyer_id === userId ? 'buyer' : 'seller',
+            buyer: {
+              id: row.buyer_id,
+              handle: row.buyer_handle,
+              name: row.buyer_name,
+              avatarUrl: row.buyer_avatar_url,
+            },
+            seller: {
+              id: row.seller_id,
+              handle: row.seller_handle,
+              name: row.seller_name,
+              avatarUrl: row.seller_avatar_url,
+            },
+            driver: row.driver_id
+              ? {
+                  id: row.driver_id,
+                  handle: row.driver_handle,
+                  name: row.driver_name,
+                  avatarUrl: row.driver_avatar_url,
+                }
+              : null,
+          }
+        }),
       })
     }),
   )
@@ -848,11 +1043,40 @@ export function registerDeliveryRoutes(app: FastifyInstance, deps: DeliveryDeps)
         buyer_user_id: string
         driver_user_id: string | null
         bid_driver_user_id: string | null
+        bid_per_km_fee_cents: number | null
         listing_title: string
+        route_distance_km: number | null
       }>>`
-        SELECT c.id, c.status, c.listing_id, c.seller_user_id, c.buyer_user_id, c.driver_user_id, c.bid_driver_user_id, l.title AS listing_title
+        SELECT
+          c.id,
+          c.status,
+          c.listing_id,
+          c.seller_user_id,
+          c.buyer_user_id,
+          c.driver_user_id,
+          c.bid_driver_user_id,
+          c.bid_per_km_fee_cents,
+          l.title AS listing_title,
+          CASE
+            WHEN pickup_fsa.code IS NULL OR buyer_fsa.code IS NULL THEN NULL
+            ELSE ST_DistanceSphere(
+              COALESCE(
+                pickup_fsa."pointGeom",
+                ST_Transform(ST_SetSRID(ST_MakePoint(pickup_fsa."centroidLng", pickup_fsa."centroidLat"), 3347), 4326)
+              ),
+              COALESCE(
+                buyer_fsa."pointGeom",
+                ST_Transform(ST_SetSRID(ST_MakePoint(buyer_fsa."centroidLng", buyer_fsa."centroidLat"), 3347), 4326)
+              )
+            ) / 1000.0
+          END AS route_distance_km
         FROM citizen_market_delivery_contract c
         INNER JOIN citizen_market_listing l ON l.id = c.listing_id
+        INNER JOIN "User" buyer ON buyer.id = c.buyer_user_id
+        LEFT JOIN "ForwardSortationArea" pickup_fsa
+          ON pickup_fsa.code = LEFT(REGEXP_REPLACE(UPPER(COALESCE(l.pickup_postal_code, '')), '[^A-Z0-9]', '', 'g'), 3)
+        LEFT JOIN "ForwardSortationArea" buyer_fsa
+          ON buyer_fsa.code = LEFT(REGEXP_REPLACE(UPPER(COALESCE(buyer."billingPostalCode", '')), '[^A-Z0-9]', '', 'g'), 3)
         WHERE c.id = ${params.data.contractId}
         LIMIT 1
       `
@@ -864,11 +1088,19 @@ export function registerDeliveryRoutes(app: FastifyInstance, deps: DeliveryDeps)
       if (contract.status !== 'open' && contract.status !== 'bid_pending') return reply.code(409).send({ error: 'contract_not_open' })
       if (contract.bid_driver_user_id && contract.bid_driver_user_id !== userId) return reply.code(409).send({ error: 'contract_bid_pending' })
 
+      const bidPerKmFeeCents = typeof body.data.perKmFeeCents === 'number' ? body.data.perKmFeeCents : contract.bid_per_km_fee_cents
+      const bidAmountCents = calculateDeliveryBidAmountCents({
+        perKmFeeCents: bidPerKmFeeCents,
+        amountCents: body.data.amountCents,
+        routeDistanceKm: contract.route_distance_km,
+      })
+
       await prisma.$executeRaw`
         UPDATE citizen_market_delivery_contract
         SET status = 'bid_pending',
             bid_driver_user_id = ${userId},
-            bid_amount_cents = ${body.data.amountCents},
+            bid_amount_cents = ${bidAmountCents},
+            bid_per_km_fee_cents = ${bidPerKmFeeCents ?? null},
             bid_requested_at = NOW(),
             bid_responded_at = NULL,
             updated_at = NOW()
@@ -883,13 +1115,265 @@ export function registerDeliveryRoutes(app: FastifyInstance, deps: DeliveryDeps)
           contractId: contract.id,
           listingId: contract.listing_id,
           listingTitle: contract.listing_title,
-          amountCents: body.data.amountCents,
+          amountCents: bidAmountCents,
+          perKmFeeCents: bidPerKmFeeCents ?? null,
           status: 'pending',
           url: '/notifications',
         },
       })
 
-      return reply.send({ success: true, amountCents: body.data.amountCents })
+      return reply.send({ success: true, amountCents: bidAmountCents, perKmFeeCents: bidPerKmFeeCents ?? null })
+    }),
+  )
+
+  app.post('/delivery/contracts/:contractId/reject-bid', async (req: FastifyRequest, reply: FastifyReply) =>
+    deps.withSchemaGuard(req, reply, async () => {
+      const userId = (await deps.resolveUserId(req)) ?? undefined
+      if (!userId) return reply.code(401).send({ error: 'unauthorized' })
+
+      const params = DeliveryContractParams.safeParse(req.params)
+      if (!params.success) return reply.code(400).send({ error: params.error.flatten() })
+
+      await deps.ensureCitizenMarketplaceTables()
+
+      const contractRows = await prisma.$queryRaw<Array<{
+        id: string
+        listing_id: string
+        buyer_user_id: string
+        driver_user_id: string | null
+        bid_driver_user_id: string | null
+        bid_amount_cents: number | null
+        listing_title: string
+        status: string
+      }>>`
+        SELECT c.id, c.listing_id, c.buyer_user_id, c.driver_user_id, c.bid_driver_user_id, c.bid_amount_cents, c.status, l.title AS listing_title
+        FROM citizen_market_delivery_contract c
+        INNER JOIN citizen_market_listing l ON l.id = c.listing_id
+        WHERE c.id = ${params.data.contractId}
+        LIMIT 1
+      `
+
+      const contract = contractRows[0]
+      if (!contract || contract.buyer_user_id !== userId) return reply.code(404).send({ error: 'contract_not_found' })
+      if (!contract.bid_driver_user_id || !contract.bid_amount_cents) return reply.code(409).send({ error: 'contract_not_open' })
+      if (contract.driver_user_id) return reply.code(409).send({ error: 'contract_already_assigned' })
+      if (contract.status !== 'bid_pending' && contract.status !== 'open') return reply.code(409).send({ error: 'contract_not_open' })
+
+      const nowIso = new Date().toISOString()
+
+      await prisma.$executeRaw`
+        UPDATE citizen_market_delivery_contract
+        SET status = 'open',
+            bid_driver_user_id = NULL,
+            bid_amount_cents = NULL,
+            bid_per_km_fee_cents = NULL,
+            bid_requested_at = NULL,
+            bid_responded_at = NOW(),
+            updated_at = NOW()
+        WHERE id = ${contract.id}
+      `
+
+      await deps.createNotificationRecord({
+        userId: contract.bid_driver_user_id,
+        actorId: userId,
+        type: deps.DELIVERY_NOTIFICATION_TYPES.BID_RESPONSE,
+        payload: {
+          contractId: contract.id,
+          listingId: contract.listing_id,
+          listingTitle: contract.listing_title,
+          amountCents: contract.bid_amount_cents,
+          status: 'rejected',
+          respondedAt: nowIso,
+          url: '/drive/delivery',
+        },
+      })
+
+      return reply.send({ success: true, status: 'rejected' })
+    }),
+  )
+
+  app.post('/delivery/contracts/:contractId/accept-bid', async (req: FastifyRequest, reply: FastifyReply) =>
+    deps.withSchemaGuard(req, reply, async () => {
+      const userId = (await deps.resolveUserId(req)) ?? undefined
+      if (!userId) return reply.code(401).send({ error: 'unauthorized' })
+
+      const params = DeliveryContractParams.safeParse(req.params)
+      if (!params.success) return reply.code(400).send({ error: params.error.flatten() })
+
+      await ensureCitizenWalletTables()
+      await deps.ensureCitizenMarketplaceTables()
+
+      const contractRows = await prisma.$queryRaw<Array<{
+        id: string
+        listing_id: string
+        seller_user_id: string
+        buyer_user_id: string
+        status: string
+        driver_user_id: string | null
+        bid_driver_user_id: string | null
+        bid_amount_cents: number | null
+        bid_per_km_fee_cents: number | null
+        group_thread_id: string | null
+        listing_title: string
+      }>>`
+        SELECT c.id, c.listing_id, c.seller_user_id, c.buyer_user_id, c.status, c.driver_user_id, c.bid_driver_user_id, c.bid_amount_cents, c.bid_per_km_fee_cents, c.group_thread_id, l.title AS listing_title
+        FROM citizen_market_delivery_contract c
+        INNER JOIN citizen_market_listing l ON l.id = c.listing_id
+        WHERE c.id = ${params.data.contractId}
+        LIMIT 1
+      `
+
+      const contract = contractRows[0]
+      if (!contract || contract.buyer_user_id !== userId) return reply.code(404).send({ error: 'contract_not_found' })
+      if (!contract.bid_driver_user_id || !contract.bid_amount_cents) return reply.code(409).send({ error: 'contract_not_open' })
+      if (contract.driver_user_id) return reply.code(409).send({ error: 'contract_already_assigned' })
+      if (contract.status !== 'bid_pending' && contract.status !== 'open') return reply.code(409).send({ error: 'contract_not_open' })
+
+      const [buyer, driver] = await Promise.all([
+        prisma.user.findUnique({ where: { id: userId }, select: { id: true, handle: true, name: true, communityMeta: true } }),
+        prisma.user.findUnique({ where: { id: contract.bid_driver_user_id }, select: { id: true, handle: true, name: true, communityMeta: true } }),
+      ])
+      if (!buyer || !driver) return reply.code(404).send({ error: 'user_not_found' })
+
+      const buyerMeta = deps.readBaseCommunityMeta(buyer.communityMeta ?? null)
+      const driverMeta = deps.readBaseCommunityMeta(driver.communityMeta ?? null)
+      const buyerWallet = readWalletSummary(deps.parseCommunityMeta(buyer.communityMeta ?? null))
+      const driverWallet = readWalletSummary(deps.parseCommunityMeta(driver.communityMeta ?? null))
+
+      if (!buyerWallet.enabled) return reply.code(400).send({ error: 'buyer_wallet_required' })
+      if (buyerWallet.civilCreditsCents < contract.bid_amount_cents) return reply.code(400).send({ error: 'insufficient_wallet_balance' })
+
+      buyerMeta.wallet = buildWalletMetaValue({ ...buyerWallet, civilCreditsCents: buyerWallet.civilCreditsCents - contract.bid_amount_cents })
+      driverMeta.wallet = buildWalletMetaValue({ ...driverWallet, civilCreditsCents: driverWallet.civilCreditsCents + contract.bid_amount_cents })
+
+      const walletTransactionId = `${contract.id}-delivery-${Date.now()}`
+      const eventId = walletTransactionId
+      let threadId: string | null = null
+      let joinMessage: any = null
+      let threadParticipants: Array<{ userId: string; mutedUntil: Date | null }> = []
+      const nowIso = new Date().toISOString()
+
+      await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+        await tx.user.update({ where: { id: buyer.id }, data: { communityMeta: buyerMeta as Prisma.InputJsonValue } })
+        await tx.user.update({ where: { id: driver.id }, data: { communityMeta: driverMeta as Prisma.InputJsonValue } })
+
+        await tx.$executeRaw`
+          INSERT INTO citizen_wallet_transaction (
+            id,
+            kind,
+            status,
+            user_id,
+            counterparty_user_id,
+            amount_cents,
+            currency,
+            metadata,
+            created_at,
+            updated_at
+          )
+          VALUES (
+            ${walletTransactionId},
+            ${'delivery_contract'},
+            ${'completed'},
+            ${buyer.id},
+            ${driver.id},
+            ${contract.bid_amount_cents},
+            ${'cad'},
+            ${JSON.stringify({ kind: 'delivery_contract', contractId: contract.id, listingId: contract.listing_id, buyerUserId: buyer.id, driverUserId: driver.id })}::jsonb,
+            NOW(),
+            NOW()
+          )
+        `
+
+        await insertCivilCreditLedgerEntry(tx, {
+          id: `${walletTransactionId}-ledger`,
+          eventId,
+          entryType: 'transfer',
+          status: 'completed',
+          amountCents: contract.bid_amount_cents,
+          currency: 'cad',
+          from: {
+            userId: buyer.id,
+            handle: buyer.handle,
+            name: buyer.name,
+            entityType: 'user',
+            entityLabel: buyer.name ?? buyer.handle,
+          },
+          to: {
+            userId: driver.id,
+            handle: driver.handle,
+            name: driver.name,
+            entityType: 'user',
+            entityLabel: driver.name ?? driver.handle,
+          },
+          sourceType: 'delivery_contract',
+          sourceReferenceId: contract.id,
+          description: `Delivery contract for ${contract.listing_title}`,
+          metadata: { kind: 'delivery_contract', contractId: contract.id, listingId: contract.listing_id },
+        })
+
+        const threadResult = await ensureDeliveryGroupThread({
+          tx,
+          deps,
+          contractId: contract.id,
+          sellerUserId: contract.seller_user_id,
+          buyerUserId: contract.buyer_user_id,
+          driverUserId: driver.id,
+          driverName: driver.name,
+          listingTitle: contract.listing_title,
+        })
+
+        threadId = threadResult.thread.id
+        joinMessage = threadResult.joinMessage
+        threadParticipants = threadResult.thread.participants
+
+        await tx.$executeRaw`
+          UPDATE citizen_market_delivery_contract
+          SET status = 'assigned',
+              driver_user_id = ${driver.id},
+              accepted_at = NOW(),
+              bid_responded_at = NOW(),
+              group_thread_id = ${threadResult.thread.id},
+              updated_at = NOW()
+          WHERE id = ${contract.id}
+        `
+      })
+
+      if (threadId && joinMessage) {
+        await Promise.all(
+          threadParticipants.map((participant: { userId: string }) =>
+            deps.dispatchRealtimeEvent(participant.userId, {
+              type: 'message.created',
+              data: { threadId, message: deps.formatMessage(joinMessage, participant.userId) },
+            }),
+          ),
+        )
+
+        void deps.sendMobilePushForMessageCreated({
+          threadId,
+          message: joinMessage,
+          participants: threadParticipants,
+          pushUrl: `/messages?thread=${encodeURIComponent(threadId)}`,
+        })
+      }
+
+      await deps.createNotificationRecord({
+        userId: driver.id,
+        actorId: buyer.id,
+        type: deps.DELIVERY_NOTIFICATION_TYPES.BID_RESPONSE,
+        payload: {
+          contractId: contract.id,
+          listingId: contract.listing_id,
+          listingTitle: contract.listing_title,
+          amountCents: contract.bid_amount_cents,
+          perKmFeeCents: contract.bid_per_km_fee_cents,
+          status: 'accepted',
+          respondedAt: nowIso,
+          url: threadId ? `/messages?thread=${encodeURIComponent(threadId)}` : '/drive/delivery',
+          threadId,
+        },
+      })
+
+      return reply.send({ success: true, status: 'accepted', threadId })
     }),
   )
 
@@ -909,9 +1393,10 @@ export function registerDeliveryRoutes(app: FastifyInstance, deps: DeliveryDeps)
       if (Number.isNaN(estimatedDeliveryAt.getTime()) || estimatedDeliveryAt <= now) return reply.code(400).send({ error: 'invalid_estimated_delivery_at' })
       if (estimatedDeliveryAt.getTime() - now.getTime() > 3 * 24 * 60 * 60 * 1000) return reply.code(400).send({ error: 'estimated_delivery_too_far' })
 
-      const contractRows = await prisma.$queryRaw<Array<{ id: string; status: string; group_thread_id: string | null }>>`
-        SELECT id, status, group_thread_id
-        FROM citizen_market_delivery_contract
+      const contractRows = await prisma.$queryRaw<Array<{ id: string; status: string; group_thread_id: string | null; listing_id: string; buyer_user_id: string; seller_user_id: string; listing_title: string }>>`
+        SELECT c.id, c.status, c.group_thread_id, c.listing_id, c.buyer_user_id, c.seller_user_id, l.title AS listing_title
+        FROM citizen_market_delivery_contract c
+        INNER JOIN citizen_market_listing l ON l.id = c.listing_id
         WHERE id = ${params.data.contractId}
           AND driver_user_id = ${userId}
         LIMIT 1
@@ -968,6 +1453,28 @@ export function registerDeliveryRoutes(app: FastifyInstance, deps: DeliveryDeps)
         pushUrl: `/messages?thread=${encodeURIComponent(contract.group_thread_id)}`,
       })
 
+      const notifiedUserIds = new Set([contract.buyer_user_id, contract.seller_user_id])
+      await Promise.all(
+        [...notifiedUserIds]
+          .filter((targetUserId) => targetUserId && targetUserId !== userId)
+          .map((targetUserId) =>
+            deps.createNotificationRecord({
+              userId: targetUserId,
+              actorId: userId,
+              type: deps.DELIVERY_NOTIFICATION_TYPES.UPDATE,
+              payload: {
+                contractId: contract.id,
+                listingId: contract.listing_id,
+                listingTitle: contract.listing_title,
+                action: 'picked_up',
+                status: 'picked_up',
+                threadId: contract.group_thread_id,
+                url: `/messages?thread=${encodeURIComponent(contract.group_thread_id)}`,
+              },
+            }),
+          ),
+      )
+
       return reply.send({ success: true, estimatedDeliveryAt: estimatedDeliveryAt.toISOString() })
     }),
   )
@@ -983,9 +1490,10 @@ export function registerDeliveryRoutes(app: FastifyInstance, deps: DeliveryDeps)
       const body = DeliveryDeliverBody.safeParse(req.body ?? {})
       if (!body.success) return reply.code(400).send({ error: body.error.flatten() })
 
-      const contractRows = await prisma.$queryRaw<Array<{ id: string; listing_id: string; status: string; group_thread_id: string | null }>>`
-        SELECT id, listing_id, status, group_thread_id
-        FROM citizen_market_delivery_contract
+      const contractRows = await prisma.$queryRaw<Array<{ id: string; listing_id: string; status: string; group_thread_id: string | null; buyer_user_id: string; seller_user_id: string; listing_title: string }>>`
+        SELECT c.id, c.listing_id, c.status, c.group_thread_id, c.buyer_user_id, c.seller_user_id, l.title AS listing_title
+        FROM citizen_market_delivery_contract c
+        INNER JOIN citizen_market_listing l ON l.id = c.listing_id
         WHERE id = ${params.data.contractId}
           AND driver_user_id = ${userId}
         LIMIT 1
@@ -996,7 +1504,7 @@ export function registerDeliveryRoutes(app: FastifyInstance, deps: DeliveryDeps)
       if (contract.status !== 'picked_up' && contract.status !== 'assigned') return reply.code(409).send({ error: 'contract_not_in_transit' })
       if (!contract.group_thread_id) return reply.code(409).send({ error: 'delivery_chat_not_ready' })
 
-      const bodyText = deps.sanitizePlainText('Delivered. Proof of delivery attached.').trim()
+      const bodyText = deps.sanitizePlainText(body.data.photoUrl ? 'Delivered. Proof of delivery attached.' : 'Delivered.').trim()
 
       const created = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
         await tx.$executeRaw`
@@ -1020,7 +1528,7 @@ export function registerDeliveryRoutes(app: FastifyInstance, deps: DeliveryDeps)
             threadId: contract.group_thread_id,
             senderId: userId,
             body: bodyText || null,
-            attachments: [body.data.photoUrl],
+            attachments: body.data.photoUrl ? [body.data.photoUrl] : [],
             messageType: MessageType.text,
           },
           select: deps.MESSAGE_SELECT,
@@ -1050,13 +1558,29 @@ export function registerDeliveryRoutes(app: FastifyInstance, deps: DeliveryDeps)
         pushUrl: `/messages?thread=${encodeURIComponent(contract.group_thread_id)}`,
       })
 
-      return reply.send({ success: true })
-    }),
-  )
+      const notifiedUserIds = new Set([contract.buyer_user_id, contract.seller_user_id])
+      await Promise.all(
+        [...notifiedUserIds]
+          .filter((targetUserId) => targetUserId && targetUserId !== userId)
+          .map((targetUserId) =>
+            deps.createNotificationRecord({
+              userId: targetUserId,
+              actorId: userId,
+              type: deps.DELIVERY_NOTIFICATION_TYPES.UPDATE,
+              payload: {
+                contractId: contract.id,
+                listingId: contract.listing_id,
+                listingTitle: contract.listing_title,
+                action: 'delivered',
+                status: 'delivered',
+                threadId: contract.group_thread_id,
+                url: `/messages?thread=${encodeURIComponent(contract.group_thread_id)}`,
+              },
+            }),
+          ),
+      )
 
-  app.post('/delivery/contracts/:contractId/accept-bid', async (req: FastifyRequest, reply: FastifyReply) =>
-    deps.withSchemaGuard(req, reply, async () => {
-      return reply.code(404).send({ error: 'not_found' })
+      return reply.send({ success: true })
     }),
   )
 }

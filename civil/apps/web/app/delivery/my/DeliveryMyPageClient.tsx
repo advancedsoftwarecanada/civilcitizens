@@ -31,14 +31,16 @@ export default function DeliveryMyPageClient() {
   const [loading, setLoading] = useState(true)
   const [contracts, setContracts] = useState<DeliveryRequestedContract[]>([])
   const [error, setError] = useState<string | null>(null)
+  const [respondingId, setRespondingId] = useState<string | null>(null)
+  const [respondingAction, setRespondingAction] = useState<'accept' | 'reject' | null>(null)
 
-  const loadContracts = useCallback(async () => {
+  const loadContracts = useCallback(async (options?: { silent?: boolean }) => {
     const token = getStoredToken()
     if (!token) {
       redirectToAuthModal('login')
       return
     }
-    setLoading(true)
+    if (!options?.silent) setLoading(true)
     setError(null)
     try {
       const res = await fetch(buildApiUrl('/delivery/contracts/requested'), {
@@ -60,13 +62,60 @@ export default function DeliveryMyPageClient() {
       console.error('Failed to load requested deliveries', err)
       setError('Unable to load your requested deliveries right now.')
     } finally {
-      setLoading(false)
+      if (!options?.silent) setLoading(false)
     }
   }, [])
 
   useEffect(() => {
     void loadContracts()
   }, [loadContracts])
+
+  useEffect(() => {
+    const intervalId = window.setInterval(() => {
+      void loadContracts({ silent: true })
+    }, 15_000)
+    return () => window.clearInterval(intervalId)
+  }, [loadContracts])
+
+  const handleBidResponse = useCallback(
+    async (contractId: string, action: 'accept' | 'reject') => {
+      const token = getStoredToken()
+      if (!token) {
+        redirectToAuthModal('login')
+        return
+      }
+
+      setRespondingId(contractId)
+      setRespondingAction(action)
+      setError(null)
+
+      try {
+        const response = await fetch(buildApiUrl(`/delivery/contracts/${encodeURIComponent(contractId)}/${action === 'accept' ? 'accept-bid' : 'reject-bid'}`), {
+          method: 'POST',
+          headers: {
+            authorization: `Bearer ${token}`,
+            'content-type': 'application/json',
+          },
+          body: JSON.stringify({}),
+        })
+
+        if (response.status === 401) {
+          redirectToAuthModal('login')
+          return
+        }
+        if (!response.ok) throw new Error('delivery_bid_response_failed')
+
+        await loadContracts()
+      } catch (responseError) {
+        console.error('Failed to respond to delivery bid', responseError)
+        setError('Unable to update that delivery bid right now.')
+      } finally {
+        setRespondingId(null)
+        setRespondingAction(null)
+      }
+    },
+    [loadContracts],
+  )
   const rightRail = (
     <div className="space-y-5">
       <DriveRideRequestRail secondaryAction={isDriverActive ? { label: 'Enter Driver Mode', onClick: enterDriverMode } : undefined} />
@@ -89,8 +138,10 @@ export default function DeliveryMyPageClient() {
           <section className="space-y-4">
             {contracts.length ? (
               contracts.map((contract) => {
-                const pickupLabel = [contract.pickupCity?.trim(), contract.pickupProvince?.trim()].filter(Boolean).join(', ') || 'Pickup pending'
+                const pickupLabel = contract.pickupAddressLabel?.trim() || [contract.pickupCity?.trim(), contract.pickupProvince?.trim()].filter(Boolean).join(', ') || 'Pickup pending'
+                const dropoffLabel = contract.dropoffAddressLabel?.trim() || 'Dropoff pending'
                 const requesterRoleLabel = contract.requesterRole === 'buyer' ? 'You requested this as the buyer' : 'You requested this as the seller'
+                const canRespondToBid = contract.requesterRole === 'buyer' && contract.status === 'bid_pending' && Boolean(contract.driver)
                 return (
                   <article key={contract.id} className="overflow-hidden rounded-[1.8rem] border border-slate-200 bg-white shadow-sm transition hover:-translate-y-0.5 hover:shadow-md">
                     <div className="space-y-5 p-5 sm:p-6">
@@ -121,10 +172,44 @@ export default function DeliveryMyPageClient() {
 
                       <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
                         <DeliveryFact label="Pickup" value={pickupLabel} />
-                        <DeliveryFact label="Delivery fee" value={contract.bidAmountCents ? formatMoney(contract.bidAmountCents) : 'Pending'} />
+                        <DeliveryFact label="Dropoff" value={dropoffLabel} />
+                        <DeliveryFact
+                          label="Delivery fee"
+                          value={
+                            contract.bidAmountCents ? (
+                              <div>
+                                <div>{formatMoney(contract.bidAmountCents)}</div>
+                                {contract.bidPerKmFeeCents ? <div className="mt-1 text-xs font-semibold text-slate-500">{formatMoney(contract.bidPerKmFeeCents)}/km</div> : null}
+                              </div>
+                            ) : (
+                              'Pending'
+                            )
+                          }
+                        />
                         <DeliveryFact label="ETA" value={contract.estimatedDeliveryAt ? new Date(contract.estimatedDeliveryAt).toLocaleString() : 'Waiting for driver update'} />
                         <DeliveryFact label="Delivered" value={contract.deliveredAt ? new Date(contract.deliveredAt).toLocaleString() : 'Not yet'} />
                       </div>
+
+                      {canRespondToBid ? (
+                        <div className="flex flex-wrap gap-2 border-t border-slate-100 pt-1">
+                          <button
+                            type="button"
+                            onClick={() => handleBidResponse(contract.id, 'accept')}
+                            disabled={respondingId === contract.id}
+                            className="inline-flex rounded-full bg-[var(--cc-primary)] px-4 py-2 text-sm font-semibold text-white transition hover:brightness-95 disabled:cursor-not-allowed disabled:opacity-60"
+                          >
+                            {respondingId === contract.id && respondingAction === 'accept' ? 'Accepting…' : 'Accept Bid'}
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleBidResponse(contract.id, 'reject')}
+                            disabled={respondingId === contract.id}
+                            className="inline-flex rounded-full border border-rose-200 bg-white px-4 py-2 text-sm font-semibold text-rose-700 transition hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-60"
+                          >
+                            {respondingId === contract.id && respondingAction === 'reject' ? 'Declining…' : 'Decline Bid'}
+                          </button>
+                        </div>
+                      ) : null}
 
                       <div className="grid gap-4 md:grid-cols-2">
                         <div className="space-y-3">

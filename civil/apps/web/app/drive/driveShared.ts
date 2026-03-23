@@ -92,12 +92,25 @@ export type DriveDeliveryItem = {
   listingId: string
   listingTitle: string
   listingPhotoUrl: string | null
+  pickupAddressLabel: string | null
+  dropoffAddressLabel: string | null
   pickupCity: string | null
   pickupProvince: string | null
   pickupInstructions: string | null
   itemTraits: string[]
   bidPending: boolean
+  bidDriverUserId?: string | null
   bidAmountCents: number | null
+  bidPerKmFeeCents?: number | null
+  routeDistanceKm?: number | null
+  distanceKm?: number | null
+  isBidByViewer?: boolean
+  acceptedAt?: string | null
+  estimatedDeliveryAt?: string | null
+  pickedUpAt?: string | null
+  deliveredAt?: string | null
+  deliveryPhotoUrl?: string | null
+  groupThreadId?: string | null
   createdAt: string
   viewerRole: 'buyer' | 'seller' | 'driver' | null
   seller: {

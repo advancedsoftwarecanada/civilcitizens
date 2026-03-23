@@ -3,7 +3,7 @@
 import { useEffect, useRef } from 'react'
 import { isNotificationPayload, subscribeToNotificationsStream } from './notifications/notificationStream'
 
-const DRIVE_REQUESTER_SOUND_NOTIFICATION_TYPES = new Set(['drive_ride_contract_update'])
+const DRIVE_REQUESTER_SOUND_NOTIFICATION_TYPES = new Set(['drive_ride_contract_update', 'delivery_contract_update'])
 
 export default function DriveRequesterNotificationAudio() {
   const audioRef = useRef<HTMLAudioElement | null>(null)
