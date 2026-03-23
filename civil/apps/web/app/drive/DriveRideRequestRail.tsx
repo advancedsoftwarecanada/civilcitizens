@@ -1,7 +1,7 @@
 'use client'
 
 import Link from 'next/link'
-import { HiOutlineMapPin, HiOutlineTruck } from 'react-icons/hi2'
+import { HiOutlineCube, HiOutlineMapPin, HiOutlineTruck } from 'react-icons/hi2'
 
 export default function DriveRideRequestRail({
   secondaryAction,
@@ -19,6 +19,13 @@ export default function DriveRideRequestRail({
       >
         <HiOutlineMapPin className="h-4 w-4 shrink-0" />
         Request Ride
+      </Link>
+      <Link
+        href="/market"
+        className="inline-flex w-full items-center justify-center gap-2 rounded-full bg-[var(--cc-primary)] px-4 py-3 text-sm font-semibold text-white transition hover:brightness-95"
+      >
+        <HiOutlineCube className="h-4 w-4 shrink-0" />
+        Request Delivery
       </Link>
       {secondaryAction ? (
         <button

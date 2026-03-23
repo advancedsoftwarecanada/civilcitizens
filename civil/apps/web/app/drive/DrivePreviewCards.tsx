@@ -8,7 +8,6 @@ import {
   formatDriveDate,
   formatDriveDateTime,
   formatDriveLocation,
-  formatDriveMoney,
   formatDrivePersonName,
   formatDriveRecurrence,
   getAvatarInitials,
@@ -132,56 +131,65 @@ export function DriveDeliveryPreviewCard({ item }: { item: DriveDeliveryItem }) 
 
 export function DriveDriverPreviewCard({ item, actions }: { item: DriveDriverItem; actions?: ReactNode }) {
   const displayName = item.name?.trim() || item.handle?.trim() || 'Civil driver'
+  const subtitle = formatDriveLocation(item.city, item.province)
+  const vehicleCount = item.vehicles.length
 
   return (
     <article className="overflow-hidden rounded-[1.8rem] border border-slate-200 bg-white shadow-sm transition hover:-translate-y-0.5 hover:shadow-md">
-      <CivilCard
-        size="hero"
-        name={displayName}
-        avatarAlt={displayName}
-        avatarInitials={getAvatarInitials(displayName)}
-        avatarSrc={item.avatarUrl}
-        coverUrl={item.coverUrl}
-        interactive={false}
-        titleLines={0}
-        subtitleLines={0}
-        className="rounded-none border-0 shadow-none"
-      />
-
-      <div className="px-5 pb-5 pt-4">
-        <div className="flex flex-wrap gap-3 text-sm text-slate-500">
-          <span className="inline-flex items-center gap-1.5">
-            <HiOutlineMapPin className="h-4 w-4" />
-            {formatDriveLocation(item.city, item.province)}
-          </span>
-        </div>
-        <div className="mt-4">
-          <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-700">
-            <HiOutlineShieldCheck className="h-4 w-4" />
-            Verified
-          </span>
-        </div>
-        {item.featuredVehicle?.photoUrl ? (
-          <div className="mt-4 overflow-hidden rounded-[1.35rem] border border-slate-200 bg-slate-50">
-            <img src={item.featuredVehicle.photoUrl} alt={item.featuredVehicle.name} className="h-40 w-full object-cover" />
-            <div className="space-y-2 px-4 py-3">
-              <p className="text-sm font-semibold text-slate-900">{item.featuredVehicle.name}</p>
-              <div className="flex flex-wrap gap-2 text-xs font-semibold text-slate-600">
-                <span className="rounded-full border border-slate-200 bg-white px-3 py-1">
-                  Min {formatDriveMoney(item.featuredVehicle.minimumRideAmountCents)}
-                </span>
-                <span className="rounded-full border border-slate-200 bg-white px-3 py-1">
-                  {formatDriveMoney(item.featuredVehicle.perKmFeeCents)}/km
-                </span>
-              </div>
+      <div className="space-y-5 p-5 sm:p-6">
+        <CivilCard
+          size="hero"
+          name={displayName}
+          avatarAlt={displayName}
+          avatarInitials={getAvatarInitials(displayName)}
+          avatarSrc={item.avatarUrl}
+          coverUrl={item.coverUrl}
+          subtitle={subtitle}
+          details={
+            <div className="flex flex-wrap items-center gap-2 text-xs sm:text-sm">
+              <span className="inline-flex items-center gap-1.5 rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 font-semibold text-emerald-700">
+                <HiOutlineShieldCheck className="h-4 w-4" />
+                Verified
+              </span>
+              <span className="rounded-full border border-white/20 bg-white/10 px-3 py-1 text-white/88 backdrop-blur-md">
+                {vehicleCount === 1 ? '1 vehicle listed' : `${vehicleCount} vehicles listed`}
+              </span>
             </div>
+          }
+          interactive={false}
+          className="rounded-[1.6rem] border-0 shadow-none"
+        />
+
+        <div className="space-y-3">
+          <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">Vehicles</p>
+          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+            {item.vehicles.length ? (
+              item.vehicles.map((vehicle) => (
+                <div key={vehicle.id} className="relative overflow-hidden rounded-[1.35rem] border border-slate-200 bg-slate-100 shadow-sm">
+                  <div className="relative h-36 w-full">
+                    {vehicle.photoUrl ? (
+                      <img src={vehicle.photoUrl} alt={vehicle.name} className="h-full w-full object-cover" />
+                    ) : (
+                      <div className="flex h-full w-full items-center justify-center text-slate-400">
+                        <HiOutlineTruck className="h-8 w-8" />
+                      </div>
+                    )}
+
+                    <div className="absolute inset-x-0 bottom-0 h-16 bg-black/70" aria-hidden="true" />
+                    <div className="absolute inset-x-0 bottom-0 z-10 px-4 py-3 text-white">
+                      <p className="truncate text-sm font-semibold">{vehicle.name}</p>
+                      {vehicle.featured ? <p className="mt-1 text-xs font-semibold text-white/80">Featured vehicle</p> : null}
+                    </div>
+                  </div>
+                </div>
+              ))
+            ) : (
+              <div className="rounded-[1.2rem] border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-500">No vehicles listed yet.</div>
+            )}
           </div>
-        ) : (
-          <p className="mt-4 line-clamp-3 text-sm leading-6 text-slate-600">
-            {item.bio?.trim() || 'Civil driver profile is active and available on Drive.'}
-          </p>
-        )}
-        {actions ? <div className="mt-5">{actions}</div> : null}
+        </div>
+
+        {actions ? <div className="border-t border-slate-100 pt-1">{actions}</div> : null}
       </div>
     </article>
   )

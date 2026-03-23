@@ -633,6 +633,123 @@ export function registerDeliveryRoutes(app: FastifyInstance, deps: DeliveryDeps)
     }),
   )
 
+  app.get('/delivery/contracts/requested', async (req: FastifyRequest, reply: FastifyReply) =>
+    deps.withSchemaGuard(req, reply, async () => {
+      const userId = (await deps.resolveUserId(req)) ?? undefined
+      if (!userId) return reply.code(401).send({ error: 'unauthorized' })
+
+      await deps.ensureCitizenMarketplaceTables()
+
+      type RequestedContractRow = {
+        id: string
+        status: string
+        listing_id: string
+        listing_title: string
+        listing_photo_urls: unknown
+        pickup_city: string | null
+        pickup_province: string | null
+        pickup_instructions: string | null
+        item_traits: unknown
+        bid_amount_cents: number | null
+        estimated_delivery_at: Date | null
+        picked_up_at: Date | null
+        delivered_at: Date | null
+        group_thread_id: string | null
+        buyer_id: string
+        buyer_handle: string | null
+        buyer_name: string | null
+        buyer_avatar_url: string | null
+        seller_id: string
+        seller_handle: string | null
+        seller_name: string | null
+        seller_avatar_url: string | null
+        driver_id: string | null
+        driver_handle: string | null
+        driver_name: string | null
+        driver_avatar_url: string | null
+      }
+
+      const rows = await prisma.$queryRaw<RequestedContractRow[]>`
+        SELECT
+          c.id,
+          c.status,
+          c.listing_id,
+          l.title AS listing_title,
+          l.photo_urls AS listing_photo_urls,
+          l.pickup_city,
+          l.pickup_province,
+          c.pickup_instructions,
+          c.item_traits,
+          c.bid_amount_cents,
+          c.estimated_delivery_at,
+          c.picked_up_at,
+          c.delivered_at,
+          c.group_thread_id,
+          buyer.id AS buyer_id,
+          buyer.handle AS buyer_handle,
+          buyer.name AS buyer_name,
+          buyer."avatarUrl" AS buyer_avatar_url,
+          seller.id AS seller_id,
+          seller.handle AS seller_handle,
+          seller.name AS seller_name,
+          seller."avatarUrl" AS seller_avatar_url,
+          driver.id AS driver_id,
+          driver.handle AS driver_handle,
+          driver.name AS driver_name,
+          driver."avatarUrl" AS driver_avatar_url
+        FROM citizen_market_delivery_contract c
+        INNER JOIN citizen_market_listing l ON l.id = c.listing_id
+        INNER JOIN "User" buyer ON buyer.id = c.buyer_user_id
+        INNER JOIN "User" seller ON seller.id = c.seller_user_id
+        LEFT JOIN "User" driver ON driver.id = c.driver_user_id
+        WHERE c.buyer_user_id = ${userId}
+           OR c.seller_user_id = ${userId}
+        ORDER BY c.updated_at DESC, c.created_at DESC
+        LIMIT 50
+      `
+
+      return reply.send({
+        items: rows.map((row: RequestedContractRow) => ({
+          id: row.id,
+          status: row.status,
+          listingId: row.listing_id,
+          listingTitle: row.listing_title,
+          listingPhotoUrl: deps.readGalleryUrls(row.listing_photo_urls)[0] ?? null,
+          pickupCity: row.pickup_city,
+          pickupProvince: row.pickup_province,
+          pickupInstructions: row.pickup_instructions,
+          itemTraits: Array.isArray(row.item_traits) ? (row.item_traits as unknown[]).filter((entry: unknown): entry is string => typeof entry === 'string') : [],
+          bidAmountCents: row.bid_amount_cents,
+          estimatedDeliveryAt: row.estimated_delivery_at?.toISOString() ?? null,
+          pickedUpAt: row.picked_up_at?.toISOString() ?? null,
+          deliveredAt: row.delivered_at?.toISOString() ?? null,
+          groupThreadId: row.group_thread_id,
+          requesterRole: row.buyer_id === userId ? 'buyer' : 'seller',
+          buyer: {
+            id: row.buyer_id,
+            handle: row.buyer_handle,
+            name: row.buyer_name,
+            avatarUrl: row.buyer_avatar_url,
+          },
+          seller: {
+            id: row.seller_id,
+            handle: row.seller_handle,
+            name: row.seller_name,
+            avatarUrl: row.seller_avatar_url,
+          },
+          driver: row.driver_id
+            ? {
+                id: row.driver_id,
+                handle: row.driver_handle,
+                name: row.driver_name,
+                avatarUrl: row.driver_avatar_url,
+              }
+            : null,
+        })),
+      })
+    }),
+  )
+
   app.get('/delivery/summary', async (req: FastifyRequest, reply: FastifyReply) =>
     deps.withSchemaGuard(req, reply, async () => {
       const userId = (await deps.resolveUserId(req)) ?? undefined

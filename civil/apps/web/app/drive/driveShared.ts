@@ -124,6 +124,12 @@ export type DriveDriverItem = {
   activeAt: string | null
   city: string | null
   province: string | null
+  vehicles: Array<{
+    id: string
+    name: string
+    photoUrl: string | null
+    featured: boolean
+  }>
   featuredVehicle: {
     id: string
     name: string

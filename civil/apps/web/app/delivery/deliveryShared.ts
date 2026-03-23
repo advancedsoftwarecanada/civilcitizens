@@ -73,6 +73,42 @@ export type DeliveryDriverContract = {
   }
 }
 
+export type DeliveryRequestedContract = {
+  id: string
+  status: string
+  listingId: string
+  listingTitle: string
+  listingPhotoUrl: string | null
+  pickupCity: string | null
+  pickupProvince: string | null
+  pickupInstructions: string | null
+  itemTraits: string[]
+  bidAmountCents: number | null
+  estimatedDeliveryAt: string | null
+  pickedUpAt: string | null
+  deliveredAt: string | null
+  groupThreadId: string | null
+  requesterRole: 'buyer' | 'seller'
+  buyer: {
+    id: string
+    handle: string | null
+    name: string | null
+    avatarUrl: string | null
+  }
+  seller: {
+    id: string
+    handle: string | null
+    name: string | null
+    avatarUrl: string | null
+  }
+  driver: {
+    id: string
+    handle: string | null
+    name: string | null
+    avatarUrl: string | null
+  } | null
+}
+
 export function formatMoney(cents: number | null | undefined) {
   return new Intl.NumberFormat('en-CA', { style: 'currency', currency: 'CAD' }).format((Number(cents) || 0) / 100)
 }
