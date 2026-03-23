@@ -12,6 +12,7 @@ import {
   HiOutlineBuildingOffice2,
   HiOutlineCog8Tooth,
   HiOutlineDocumentText,
+  HiOutlineHomeModern,
   HiOutlineMapPin,
   HiOutlineShoppingBag,
   HiOutlineTrash,
@@ -31,6 +32,11 @@ import { clearAuthSession } from '../_lib/authSession'
 import { useViewerStore } from '../_lib/viewerStore'
 import { ensureViewerMe } from '../_lib/viewerMe'
 import { redirectToAuthModal } from '../_lib/authModal'
+import {
+  isAndroidHomeLauncherSupported,
+  isCivilHomeLauncherActive,
+  setCivilAsLauncher,
+} from '../_lib/androidHomeLauncher'
 import {
   enableNativePushOptIn,
   disableNativePushNotifications,
@@ -56,7 +62,7 @@ type SettingsActionCardItem = {
   href?: string
   onClick?: () => void
   icon: IconType
-  tone?: 'default' | 'danger' | 'warning' | 'admin'
+  tone?: 'default' | 'danger' | 'warning' | 'admin' | 'primary'
 }
 
 type SettingsActionCardProps = {
@@ -65,7 +71,7 @@ type SettingsActionCardProps = {
   icon: IconType
   href?: string
   onClick?: () => void
-  tone?: 'default' | 'danger' | 'warning' | 'admin'
+  tone?: 'default' | 'danger' | 'warning' | 'admin' | 'primary'
 }
 
 type SettingsToggleCardProps = {
@@ -141,6 +147,8 @@ function SettingsActionCard({
       ? 'border-rose-200 bg-rose-50/40 hover:border-rose-300 hover:bg-rose-50/60'
       : tone === 'warning'
         ? 'border-amber-200 bg-amber-50/60 hover:border-amber-300 hover:bg-amber-100/70'
+        : tone === 'primary'
+          ? 'border-[var(--cc-primary)] bg-[var(--cc-primary)] text-white hover:border-[var(--cc-primary-700)] hover:bg-[var(--cc-primary-700)]'
         : tone === 'admin'
           ? 'border-slate-950 bg-slate-950 hover:border-amber-300 hover:bg-black'
           : 'border-slate-200 bg-white',
@@ -151,17 +159,29 @@ function SettingsActionCard({
       ? 'border-rose-200 bg-rose-50 text-rose-600'
       : tone === 'warning'
         ? 'border-amber-200 bg-amber-100 text-amber-700'
+        : tone === 'primary'
+          ? 'border-white/20 bg-white/10 text-white'
         : tone === 'admin'
           ? 'border-amber-300/50 bg-amber-300/10 text-amber-300'
           : 'border-slate-200 bg-slate-50 text-slate-700',
   )
   const labelClassName =
-    tone === 'danger' ? 'text-rose-700' : tone === 'warning' ? 'text-amber-800' : tone === 'admin' ? 'text-amber-300' : 'text-slate-900'
+    tone === 'danger'
+      ? 'text-rose-700'
+      : tone === 'warning'
+        ? 'text-amber-800'
+        : tone === 'primary'
+          ? 'text-white'
+          : tone === 'admin'
+            ? 'text-amber-300'
+            : 'text-slate-900'
   const descriptionClassName =
     tone === 'danger'
       ? 'text-rose-700/80'
       : tone === 'warning'
         ? 'text-amber-800/80'
+        : tone === 'primary'
+          ? 'text-white/80'
         : tone === 'admin'
           ? 'text-amber-100/80'
           : 'text-slate-500'
@@ -269,6 +289,10 @@ export default function SettingsPage() {
   const [deleteNameInput, setDeleteNameInput] = useState('')
   const [deleteYesInput, setDeleteYesInput] = useState('')
   const [deleteBusy, setDeleteBusy] = useState(false)
+  const [showLauncherConfirm, setShowLauncherConfirm] = useState(false)
+  const [showLauncherControl, setShowLauncherControl] = useState(false)
+  const [launcherActive, setLauncherActive] = useState(false)
+  const [launcherBusy, setLauncherBusy] = useState(false)
   const [showNativePushControl, setShowNativePushControl] = useState(false)
   const [nativePushState, setNativePushState] = useState<PushPermissionState>('unknown')
   const [nativePushBusy, setNativePushBusy] = useState(false)
@@ -304,6 +328,40 @@ export default function SettingsPage() {
       cancelled = true
     }
   }, [cachedViewer])
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    if (!isAndroidHomeLauncherSupported()) return
+
+    setShowLauncherControl(true)
+
+    let cancelled = false
+    const refreshLauncherStatus = async () => {
+      const active = await isCivilHomeLauncherActive()
+      if (!cancelled) setLauncherActive(active)
+    }
+
+    void refreshLauncherStatus()
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        void refreshLauncherStatus()
+      }
+    }
+
+    const handleWindowFocus = () => {
+      void refreshLauncherStatus()
+    }
+
+    window.addEventListener('focus', handleWindowFocus)
+    document.addEventListener('visibilitychange', handleVisibilityChange)
+
+    return () => {
+      cancelled = true
+      window.removeEventListener('focus', handleWindowFocus)
+      document.removeEventListener('visibilitychange', handleVisibilityChange)
+    }
+  }, [])
 
   useEffect(() => {
     if (typeof window === 'undefined') return
@@ -364,6 +422,31 @@ export default function SettingsPage() {
       router.replace('/')
     }
   }, [router, token])
+
+  const refreshLauncherStatus = useCallback(async () => {
+    if (!showLauncherControl) return
+    const active = await isCivilHomeLauncherActive()
+    setLauncherActive(active)
+  }, [showLauncherControl])
+
+  const handleLauncherContinue = useCallback(async () => {
+    if (typeof window === 'undefined' || launcherBusy) return
+
+    setLauncherBusy(true)
+    try {
+      await setCivilAsLauncher()
+      setShowLauncherConfirm(false)
+      window.setTimeout(() => {
+        void refreshLauncherStatus()
+      }, 800)
+    } catch (error) {
+      console.error('Failed to open Android launcher chooser', error)
+      setShowLauncherConfirm(false)
+      window.alert('Please set Civil as your home screen manually in Android Settings > Default Apps > Home App.')
+    } finally {
+      setLauncherBusy(false)
+    }
+  }, [launcherBusy, refreshLauncherStatus])
 
   const handleEnableNativePush = useCallback(async () => {
     if (!showNativePushControl) return
@@ -514,6 +597,20 @@ export default function SettingsPage() {
         href: '/settings/legal/credits',
         icon: HiOutlineDocumentText,
       },
+      ...(showLauncherControl
+        ? [
+            {
+              key: 'launcher',
+              label: launcherActive ? 'Deactivate Launcher' : 'Set Civil as Home Screen',
+              description: launcherActive
+                ? 'Open Android\'s launcher chooser so you can switch away from Civil as your home screen.'
+                : 'Make Civil available as your Android home screen for instant access to rides, deliveries, marketplace, and your network.',
+              onClick: () => setShowLauncherConfirm(true),
+              icon: HiOutlineHomeModern,
+              tone: 'primary' as const,
+            },
+          ]
+        : []),
       {
         key: 'logout',
         label: 'Log Out',
@@ -554,7 +651,7 @@ export default function SettingsPage() {
     }
 
     return items
-  }, [isAdminViewer, manageOrganizationsHref, openDeleteAccountFlow])
+  }, [isAdminViewer, launcherActive, manageOrganizationsHref, openDeleteAccountFlow, showLauncherControl])
 
   const closeDeleteAccountFlow = useCallback(() => {
     if (deleteBusy) return
@@ -724,6 +821,43 @@ export default function SettingsPage() {
               className="rounded-full bg-amber-400 px-4 py-2 text-sm font-semibold text-slate-950 hover:bg-amber-300"
             >
               Log Out
+            </button>
+          </div>
+        </div>
+      </Modal>
+
+      <Modal
+        open={showLauncherConfirm}
+        onClose={() => {
+          if (launcherBusy) return
+          setShowLauncherConfirm(false)
+        }}
+        title={launcherActive ? 'Deactivate Civil Launcher' : 'Make Civil Your Home Screen'}
+      >
+        <div className="space-y-4">
+          <p className="text-sm text-slate-700">
+            {launcherActive
+              ? 'Open Android’s launcher chooser so you can pick a different home app.'
+              : 'Access rides, deliveries, marketplace, and your network instantly by setting Civil as your home screen.'}
+          </p>
+          <div className="flex justify-end gap-2">
+            <button
+              type="button"
+              onClick={() => setShowLauncherConfirm(false)}
+              disabled={launcherBusy}
+              className="rounded-full border border-slate-200 px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-60"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={() => {
+                void handleLauncherContinue()
+              }}
+              disabled={launcherBusy}
+              className="rounded-full bg-[var(--cc-primary)] px-4 py-2 text-sm font-semibold text-white hover:bg-[var(--cc-primary-700)] disabled:opacity-60"
+            >
+              {launcherBusy ? 'Opening…' : 'Continue'}
             </button>
           </div>
         </div>

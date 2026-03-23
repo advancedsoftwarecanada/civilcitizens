@@ -7,7 +7,7 @@ Usage:
 What it does:
     1. Builds the Android release APK and AAB from the Capacitor project.
     2. Verifies the APK signature with `apksigner` when available.
-    3. Copies the final APK into `civil/apps/web/public/android/`.
+    3. Copies the final APK and AAB into `civil/apps/web/public/android/`.
     4. Copies the final AAB into `builds/mobile/android/release/` for Google Play upload.
     5. Reads and advances the repo-tracked Android version code file.
 """
@@ -34,6 +34,7 @@ PUBLISHED_AAB_PLAY = ANDROID_RELEASE_DIR / "civil.aab"
 ANDROID_STUDIO_JAVA = Path("/Applications/Android Studio.app/Contents/jbr/Contents/Home")
 ANDROID_SDK = Path.home() / "Library" / "Android" / "sdk"
 PUBLISHED_APK = WEB_PUBLIC_ANDROID_DIR / "civil.apk"
+PUBLISHED_AAB_WEB = WEB_PUBLIC_ANDROID_DIR / "civil.aab"
 
 
 def _run(command: list[str], *, cwd: Path, env: dict[str, str]) -> None:
@@ -127,6 +128,7 @@ def main() -> int:
     ANDROID_RELEASE_DIR.mkdir(parents=True, exist_ok=True)
     WEB_PUBLIC_ANDROID_DIR.mkdir(parents=True, exist_ok=True)
     shutil.copy2(ANDROID_OUTPUT_APK, PUBLISHED_APK)
+    shutil.copy2(ANDROID_OUTPUT_AAB, PUBLISHED_AAB_WEB)
     shutil.copy2(ANDROID_OUTPUT_AAB, PUBLISHED_AAB)
     shutil.copy2(ANDROID_OUTPUT_AAB, PUBLISHED_AAB_PLAY)
 
@@ -140,11 +142,13 @@ def main() -> int:
     print(f"Built APK: {ANDROID_OUTPUT_APK}")
     print(f"Built AAB: {ANDROID_OUTPUT_AAB}")
     print(f"Published APK: {PUBLISHED_APK}")
+    print(f"Published web AAB: {PUBLISHED_AAB_WEB}")
     print(f"Published AAB: {PUBLISHED_AAB}")
     print(f"Google Play AAB: {PUBLISHED_AAB_PLAY}")
     print(f"Android version code used: {version_code}")
     print(f"Next Android version code: {next_version_code}")
-    print(f"Web path: /android/{PUBLISHED_APK.name}")
+    print(f"Web APK path: /android/{PUBLISHED_APK.name}")
+    print(f"Web AAB path: /android/{PUBLISHED_AAB_WEB.name}")
     return 0
 
 
