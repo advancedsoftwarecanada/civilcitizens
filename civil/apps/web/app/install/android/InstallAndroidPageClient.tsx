@@ -20,6 +20,7 @@ export default function InstallAndroidPageClient() {
   const nextPath = useMemo(() => normalizeRelativePath(searchParams.get('next'), '/login'), [searchParams])
   const source = useMemo(() => (searchParams.get('source') || '').trim(), [searchParams])
   const internalTestUrl = 'https://play.google.com/apps/internaltest/4701496163596226565'
+  const directApkUrl = '/android/civil.apk'
   const [isBlocking, setIsBlocking] = useState(true)
   const [email, setEmail] = useState('')
   const [submitState, setSubmitState] = useState<'idle' | 'submitting' | 'success' | 'error'>('idle')
@@ -61,6 +62,15 @@ export default function InstallAndroidPageClient() {
       flow: 'android_apk',
       event: 'install_cta_clicked',
       source: source ? `${source}:tester` : 'tester',
+      nextPath,
+    })
+  }
+
+  const handleDirectApkClick = () => {
+    void trackInstallFlowEvent({
+      flow: 'android_apk',
+      event: 'install_cta_clicked',
+      source: source ? `${source}:direct-apk` : 'direct-apk',
       nextPath,
     })
   }
@@ -115,37 +125,31 @@ export default function InstallAndroidPageClient() {
               className="h-12 w-12 rounded-xl border border-white/20 object-cover shadow-sm"
               priority
             />
-            <h1 className="text-2xl font-semibold leading-tight text-white">Get Android App</h1>
+            <h1 className="text-2xl font-semibold leading-tight text-white">Get Civil for Android</h1>
           </div>
-          <p className="mt-3 text-sm font-medium text-slate-200">We are onboarding Android testers by invitation.</p>
 
           <div className="mt-5 space-y-4">
             <div className="rounded-2xl border border-white/15 bg-white/5 p-4">
-              <p className="text-xs font-extrabold uppercase tracking-[0.2em] text-white/70">I have been invited to test the app</p>
-              <p className="mt-3 text-sm leading-6 text-slate-100">Use the Android testing link you were sent to install the latest build.</p>
+              <p className="text-xs font-extrabold uppercase tracking-[0.2em] text-white/70">Test with Google Play</p>
               <a
                 href={internalTestUrl}
                 onClick={handleTesterClick}
                 className="mt-4 inline-flex w-full items-center justify-center rounded-2xl bg-[var(--cc-primary)] px-4 py-3 text-sm font-semibold text-white shadow-[0_16px_40px_rgba(213,43,30,0.35)] transition hover:bg-[var(--cc-primary-700)] focus:outline-none focus:ring-2 focus:ring-[var(--cc-primary)]/45"
               >
-                Open Android Test Link
+                Test with Google Play
               </a>
-            </div>
-
-            <div className="rounded-2xl border border-emerald-400/25 bg-emerald-500/10 p-4">
-              <p className="text-xs font-extrabold uppercase tracking-[0.2em] text-emerald-300">Request invitation</p>
+              <p className="mt-3 text-sm leading-6 text-slate-200">
+                If you have been invited to test, click here to download from Google Play.
+              </p>
               {submitState === 'success' ? (
-                <div className="mt-3 rounded-2xl border border-emerald-300/25 bg-emerald-200/10 px-4 py-4">
+                <div className="mt-4 rounded-2xl border border-emerald-300/25 bg-emerald-200/10 px-4 py-4">
                   <p className="text-sm font-semibold text-emerald-100">Thank you.</p>
                   <p className="mt-2 text-sm leading-6 text-emerald-50">{submitMessage || 'Your invitation request has been sent to the admin inbox.'}</p>
                 </div>
               ) : (
                 <>
-                  <p className="mt-3 text-sm leading-6 text-slate-100">If you have not been invited yet, send your email address and we will add you to the Android test list.</p>
+                  <p className="mt-4 text-sm leading-6 text-slate-100">If you'd like to help test, enter your email below and we will email you a link.</p>
                   <form className="mt-4 space-y-3" onSubmit={handleInviteSubmit}>
-                    <label className="block text-xs font-semibold uppercase tracking-[0.2em] text-emerald-100/80" htmlFor="invite-request-email">
-                      Email address
-                    </label>
                     <input
                       id="invite-request-email"
                       type="email"
@@ -168,7 +172,7 @@ export default function InstallAndroidPageClient() {
                       disabled={submitState === 'submitting' || email.trim().length === 0}
                       className="inline-flex w-full items-center justify-center rounded-2xl bg-emerald-400 px-4 py-3 text-sm font-semibold text-slate-950 shadow-[0_16px_40px_rgba(52,211,153,0.35)] transition hover:bg-emerald-300 disabled:cursor-not-allowed disabled:opacity-60"
                     >
-                      {submitState === 'submitting' ? 'Sending request…' : 'Request invitation'}
+                      {submitState === 'submitting' ? 'Sending…' : 'Email me a link'}
                     </button>
                   </form>
                 </>
@@ -184,6 +188,14 @@ export default function InstallAndroidPageClient() {
                 </p>
               ) : null}
             </div>
+
+            <a
+              href={directApkUrl}
+              onClick={handleDirectApkClick}
+              className="inline-flex w-full items-center justify-center rounded-2xl border border-white/15 bg-white/10 px-4 py-3 text-sm font-semibold text-white shadow-[0_16px_40px_rgba(15,23,42,0.2)] transition hover:bg-white/15 focus:outline-none focus:ring-2 focus:ring-white/25"
+            >
+              Download latest DEV Bundle
+            </a>
           </div>
         </div>
       </div>
