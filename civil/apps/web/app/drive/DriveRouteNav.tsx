@@ -6,12 +6,16 @@ import { HiOutlineClock, HiOutlineMap, HiOutlineTruck, HiOutlineUserCircle } fro
 import DriveActiveRideLocationSync from './DriveActiveRideLocationSync'
 import { useDriveViewerState } from './useDriveViewerState'
 
-const DRIVE_NAV_ITEMS = [
-  { href: '/drive', label: 'My Rides', icon: HiOutlineClock, aliases: ['/drive/ride/request', '/drive/myrides/'], driverOnly: false },
-  { href: '/delivery/my', label: 'My Deliveries', icon: HiOutlineTruck, aliases: ['/delivery/contracts/my'], driverOnly: false, requesterOnly: true },
-  { href: '/drive/ride', label: 'Ride Requests', icon: HiOutlineMap, driverOnly: true },
-  { href: '/drive/delivery', label: 'Delivery Requests', icon: HiOutlineTruck, driverOnly: true },
-  { href: '/drive/drivers', label: 'Drivers', icon: HiOutlineUserCircle, aliases: ['/drive/driver/'], driverOnly: false },
+const REQUESTER_NAV_ITEMS = [
+  { href: '/drive', label: 'My Rides', icon: HiOutlineClock, aliases: ['/drive/ride/request', '/drive/myrides/'] },
+  { href: '/delivery/my', label: 'My Deliveries', icon: HiOutlineTruck, aliases: ['/delivery/contracts/my'] },
+  { href: '/drive/drivers', label: 'My Drivers', icon: HiOutlineUserCircle, aliases: ['/drive/driver/'] },
+]
+
+const DRIVER_NAV_ITEMS = [
+  { href: '/drive/ride', label: 'Open Ride Requests', icon: HiOutlineMap, forceDriverMode: true },
+  { href: '/drive/delivery', label: 'Open Delivery Requests', icon: HiOutlineTruck, forceDriverMode: true },
+  { href: '/drive/drivers', label: 'My Customers', icon: HiOutlineUserCircle },
 ]
 
 function isActivePath(pathname: string | null, href: string, aliases?: string[]) {
@@ -24,12 +28,8 @@ function isActivePath(pathname: string | null, href: string, aliases?: string[])
 
 export default function DriveRouteNav() {
   const pathname = usePathname()
-  const { isDriverMode } = useDriveViewerState()
-  const items = DRIVE_NAV_ITEMS.filter((item) => {
-    if (item.driverOnly && !isDriverMode) return false
-    if (item.requesterOnly && isDriverMode) return false
-    return true
-  })
+  const { isDriverMode, enterDriverMode } = useDriveViewerState()
+  const items = isDriverMode ? DRIVER_NAV_ITEMS : REQUESTER_NAV_ITEMS
 
   return (
     <>
@@ -51,6 +51,7 @@ export default function DriveRouteNav() {
               <Link
                 key={item.href}
                 href={item.href}
+                onClick={item.forceDriverMode ? () => enterDriverMode() : undefined}
                 className={`inline-flex w-full items-center justify-center gap-2 rounded-full border px-4 py-3 text-sm font-semibold transition ${active ? 'border-[var(--cc-primary)] bg-[var(--cc-primary)] text-white shadow-[0_10px_24px_rgba(213,43,30,0.22)] hover:brightness-95' : 'border-slate-200 bg-white text-slate-700 hover:border-[var(--cc-primary)]/25 hover:text-[var(--cc-primary)]'}`}
               >
                 <Icon className="h-4 w-4 shrink-0" />

@@ -933,7 +933,8 @@ function resolveDriveDriverLocation(row: DriveDriverRow, deps: DriveRideDeps) {
 
 function mapDriveDriverRow(row: DriveDriverRow, deps: DriveRideDeps) {
   const location = resolveDriveDriverLocation(row, deps)
-  const featuredVehicle = readFeaturedDriverVehicle(row.community_meta)
+  const driverState = readDriverAccountState(row.community_meta)
+  const featuredVehicle = driverState.vehicles.find((vehicle) => vehicle.featured) ?? driverState.vehicles[0] ?? null
   const bio =
     typeof row.bio === 'string' && row.bio.trim()
       ? String(typeof deps.sanitizePlainText === 'function' ? deps.sanitizePlainText(row.bio) : row.bio)
@@ -951,6 +952,12 @@ function mapDriveDriverRow(row: DriveDriverRow, deps: DriveRideDeps) {
     activeAt: row.active_at,
     city: location.city,
     province: location.province,
+    vehicles: driverState.vehicles.map((vehicle) => ({
+      id: vehicle.id,
+      name: vehicle.name,
+      photoUrl: vehicle.photoUrls[0] ?? null,
+      featured: vehicle.featured,
+    })),
     featuredVehicle: featuredVehicle
       ? {
           id: featuredVehicle.id,
@@ -1558,6 +1565,7 @@ export function registerDriveRideRoutes(app: FastifyInstance, deps: DriveRideDep
           NULLIF(u."communityMeta" -> 'deliveryDriver' ->> 'activeAt', '') AS active_at
         FROM "User" u
         WHERE NULLIF(u."communityMeta" -> 'deliveryDriver' ->> 'activeAt', '') IS NOT NULL
+          AND u.id <> ${userId}
         ORDER BY NULLIF(u."communityMeta" -> 'deliveryDriver' ->> 'activeAt', '') DESC, u.id DESC
         LIMIT ${query.data.limit}
       `

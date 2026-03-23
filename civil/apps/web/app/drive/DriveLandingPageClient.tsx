@@ -1,6 +1,7 @@
 'use client'
 
 import Link from 'next/link'
+import { useRouter } from 'next/navigation'
 import { useEffect, useMemo, useState } from 'react'
 import { HiOutlineMap, HiOutlineTruck } from 'react-icons/hi2'
 import DashboardShell from '../_components/DashboardShell'
@@ -27,23 +28,31 @@ type FeedState<T> = {
   error: string | null
 }
 
-function DriverModeLandingNav() {
+function DriverModeLandingNav({
+  onOpenRideRequests,
+  onOpenDeliveryRequests,
+}: {
+  onOpenRideRequests: () => void
+  onOpenDeliveryRequests: () => void
+}) {
   return (
     <nav className="w-full" aria-label="Driver dispatch sections">
       <div className="grid w-full gap-3 md:grid-cols-2">
         <Link
           href="/drive/ride"
+          onClick={onOpenRideRequests}
           className="inline-flex w-full items-center justify-center gap-2 rounded-full border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-700 transition hover:border-[var(--cc-primary)]/25 hover:text-[var(--cc-primary)]"
         >
           <HiOutlineMap className="h-4 w-4 shrink-0" />
-          Ride Requests
+          Open Ride Requests
         </Link>
         <Link
           href="/drive/delivery"
+          onClick={onOpenDeliveryRequests}
           className="inline-flex w-full items-center justify-center gap-2 rounded-full border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-700 transition hover:border-[var(--cc-primary)]/25 hover:text-[var(--cc-primary)]"
         >
           <HiOutlineTruck className="h-4 w-4 shrink-0" />
-          Delivery Requests
+          Open Delivery Requests
         </Link>
       </div>
     </nav>
@@ -51,6 +60,7 @@ function DriverModeLandingNav() {
 }
 
 export default function DriveLandingPageClient() {
+  const router = useRouter()
   const {
     isDriverActive,
     isDriverMode,
@@ -68,6 +78,16 @@ export default function DriveLandingPageClient() {
   const [cancelingRideId, setCancelingRideId] = useState<string | null>(null)
   const [completingRideId, setCompletingRideId] = useState<string | null>(null)
   const [cancelingDeliveryId, setCancelingDeliveryId] = useState<string | null>(null)
+
+  const handleOpenRideRequests = () => {
+    enterDriverMode()
+    router.push('/drive/ride')
+  }
+
+  const handleOpenDeliveryRequests = () => {
+    enterDriverMode()
+    router.push('/drive/delivery')
+  }
 
   useEffect(() => {
     return subscribeToNotificationsStream((payload) => {
@@ -399,7 +419,7 @@ export default function DriveLandingPageClient() {
       mainClassName="space-y-8 pb-12"
       rightRailClassName="pb-12"
     >
-      {isDriverMode ? <DriverModeLandingNav /> : <DriveRouteNav />}
+      {isDriverMode ? <DriverModeLandingNav onOpenRideRequests={handleOpenRideRequests} onOpenDeliveryRequests={handleOpenDeliveryRequests} /> : <DriveRouteNav />}
 
       {isDriverMode ? (
         activeDriverContracts.length ? (

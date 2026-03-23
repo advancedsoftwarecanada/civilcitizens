@@ -24,6 +24,9 @@ export default function DriveModeRail({
   const driverModeEnabled = isDriverActive && (isDriverMode ?? true)
   const title = !isDriverActive ? 'Drive for Civil' : 'Driver Mode'
   const action = driverModeEnabled && onExitDriverMode ? { label: 'Exit Driver Mode', onClick: onExitDriverMode } : undefined
+  const handleOpenDriverRequests = () => {
+    onEnterDriverMode?.()
+  }
 
   return (
     <Block title={title} action={action}>
@@ -57,10 +60,11 @@ export default function DriveModeRail({
         <div className="space-y-3">
           <Link
             href="/drive/ride"
+            onClick={handleOpenDriverRequests}
             className="flex items-center justify-between rounded-2xl border border-slate-200 bg-white px-4 py-3 transition hover:bg-slate-50"
           >
             <div>
-              <p className="text-sm font-semibold text-slate-900">Ride Requests</p>
+              <p className="text-sm font-semibold text-slate-900">Open Ride Requests</p>
               <p className="text-xs text-slate-500">Browse live pickup requests</p>
             </div>
             <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-semibold text-slate-700">
@@ -70,10 +74,11 @@ export default function DriveModeRail({
 
           <Link
             href="/drive/delivery"
+            onClick={handleOpenDriverRequests}
             className="flex items-center justify-between rounded-2xl border border-slate-200 bg-white px-4 py-3 transition hover:bg-slate-50"
           >
             <div>
-              <p className="text-sm font-semibold text-slate-900">Delivery Requests</p>
+              <p className="text-sm font-semibold text-slate-900">Open Delivery Requests</p>
               <p className="text-xs text-slate-500">Browse live delivery requests</p>
             </div>
             <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-semibold text-slate-700">

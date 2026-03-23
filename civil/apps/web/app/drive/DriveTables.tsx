@@ -213,8 +213,7 @@ function MineRideHistoryCard({
               fallbackIcon={<HiOutlineMapPin className="h-9 w-9" />}
             />
             <div className="min-w-0">
-              <p className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-400">Ride history</p>
-              <h3 className="mt-1 text-xl font-semibold text-slate-950">{pickupLabel}</h3>
+              <h3 className="text-xl font-semibold text-slate-950">{pickupLabel}</h3>
               <p className="mt-2 text-sm leading-6 text-slate-500">To {dropoffLabel}</p>
               <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-slate-500">
                 <span className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 font-semibold text-slate-700">

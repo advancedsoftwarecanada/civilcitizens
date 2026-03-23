@@ -1,8 +1,7 @@
 'use client'
 
 import { useEffect, useMemo, useState } from 'react'
-import Block from '../_components/Block'
-import CivilCard from '../_components/CivilCard'
+import { HiOutlineChatBubbleLeftRight, HiOutlineHeart, HiOutlineXMark } from 'react-icons/hi2'
 import DashboardShell from '../_components/DashboardShell'
 import { RightRail } from '../_components/RightRail'
 import { pushToast } from '../_components/useToasts'
@@ -19,6 +18,18 @@ import { useDriveViewerState } from './useDriveViewerState'
 
 const PREFERRED_DRIVERS_STORAGE_KEY = 'drivePreferredDrivers'
 
+type DriveContactItem = {
+  id: string
+  handle: string | null
+  name: string | null
+  avatarUrl: string | null
+  coverUrl: string | null
+}
+
+type DriveContactsResponse = {
+  items?: DriveContactItem[]
+}
+
 function readPreferredDriversFromStorage() {
   if (typeof window === 'undefined') return [] as DriveDriverItem[]
 
@@ -32,31 +43,15 @@ function readPreferredDriversFromStorage() {
   }
 }
 
-function PreferredDriversRail({ items }: { items: DriveDriverItem[] }) {
+function DriverSection({ title, description, children }: { title: string; description: string; children: React.ReactNode }) {
   return (
-    <Block title="Preferred Drivers">
-      <ul className="space-y-3">
-        {items.map((item) => {
-          const displayName = item.name?.trim() || item.handle?.trim() || 'Civil driver'
-
-          return (
-            <li key={item.id}>
-              <CivilCard
-                size="md"
-                name={displayName}
-                avatarAlt={displayName}
-                avatarInitials={getAvatarInitials(displayName)}
-                avatarSrc={item.avatarUrl}
-                coverUrl={item.coverUrl}
-                titleLines={0}
-                subtitleLines={0}
-                interactive={false}
-              />
-            </li>
-          )
-        })}
-      </ul>
-    </Block>
+    <section className="space-y-4">
+      <div>
+        <h2 className="text-2xl font-semibold text-slate-950">{title}</h2>
+        <p className="mt-2 text-sm leading-6 text-slate-600">{description}</p>
+      </div>
+      {children}
+    </section>
   )
 }
 
@@ -66,8 +61,40 @@ export default function DriveDriversPageClient() {
   const [items, setItems] = useState<DriveDriverItem[]>([])
   const [error, setError] = useState<string | null>(null)
   const [preferredDrivers, setPreferredDrivers] = useState<DriveDriverItem[]>([])
+  const [pastDrivers, setPastDrivers] = useState<DriveContactItem[]>([])
 
   const preferredDriverIds = useMemo(() => new Set(preferredDrivers.map((item) => item.id)), [preferredDrivers])
+  const pastDriverIds = useMemo(() => new Set(pastDrivers.map((item) => item.id)), [pastDrivers])
+  const driverItemMap = useMemo(() => new Map(items.map((item) => [item.id, item])), [items])
+  const nearbyDrivers = useMemo(
+    () => items.filter((item) => !preferredDriverIds.has(item.id) && !pastDriverIds.has(item.id)),
+    [items, pastDriverIds, preferredDriverIds],
+  )
+  const normalizedPastDrivers = useMemo(
+    () =>
+      pastDrivers.map((item) => {
+        const matched = driverItemMap.get(item.id)
+        if (matched) return matched
+        return {
+          id: item.id,
+          handle: item.handle,
+          name: item.name,
+          bio: null,
+          avatarUrl: item.avatarUrl,
+          coverUrl: item.coverUrl,
+          activeAt: null,
+          city: null,
+          province: null,
+          vehicles: [],
+          featuredVehicle: null,
+        } satisfies DriveDriverItem
+      }),
+    [driverItemMap, pastDrivers],
+  )
+  const visiblePastDrivers = useMemo(
+    () => normalizedPastDrivers.filter((item) => !preferredDriverIds.has(item.id)),
+    [normalizedPastDrivers, preferredDriverIds],
+  )
 
   useEffect(() => {
     setPreferredDrivers(readPreferredDriversFromStorage())
@@ -86,30 +113,40 @@ export default function DriveDriversPageClient() {
       setLoading(true)
       setError(null)
       try {
-        const response = await fetch(buildApiUrl('/drive/drivers?limit=48'), {
-          headers: { authorization: `Bearer ${token}` },
-          cache: 'no-store',
-        })
-        const payload = (await response.json().catch(() => null)) as DriveFeedResponse<DriveDriverItem> | null
+        const [driversResponse, contactsResponse] = await Promise.all([
+          fetch(buildApiUrl('/drive/drivers?limit=48'), {
+            headers: { authorization: `Bearer ${token}` },
+            cache: 'no-store',
+          }),
+          fetch(buildApiUrl('/drive/contacts'), {
+            headers: { authorization: `Bearer ${token}` },
+            cache: 'no-store',
+          }),
+        ])
+        const driversPayload = (await driversResponse.json().catch(() => null)) as DriveFeedResponse<DriveDriverItem> | null
+        const contactsPayload = (await contactsResponse.json().catch(() => null)) as DriveContactsResponse | null
 
-        if (response.status === 401) {
+        if (driversResponse.status === 401 || contactsResponse.status === 401) {
           redirectToAuthModal('login')
           return
         }
 
         if (cancelled) return
 
-        if (!response.ok) {
+        if (!driversResponse.ok) {
           setItems([])
+          setPastDrivers([])
           setError('Unable to load drivers right now.')
           return
         }
 
-        setItems(Array.isArray(payload?.items) ? payload.items : [])
+        setItems(Array.isArray(driversPayload?.items) ? driversPayload.items : [])
+        setPastDrivers(Array.isArray(contactsPayload?.items) ? contactsPayload.items : [])
       } catch (loadError) {
         console.error('Failed to load drive drivers feed', loadError)
         if (cancelled) return
         setItems([])
+        setPastDrivers([])
         setError('Unable to load drivers right now.')
       } finally {
         if (!cancelled) setLoading(false)
@@ -152,9 +189,48 @@ export default function DriveDriversPageClient() {
     pushToast('Driver added to Preferred Drivers.', 'success')
   }
 
+  const handleRemovePreferredDriver = (item: DriveDriverItem) => {
+    if (!preferredDriverIds.has(item.id)) return
+
+    setPreferredDrivers((current) => current.filter((entry) => entry.id !== item.id))
+    pushToast('Driver removed from Preferred Drivers.', 'success')
+  }
+
   const handleMessageDriver = () => {
     pushToast('Coming soon', 'info')
   }
+
+  const renderDriverActions = (item: DriveDriverItem) => (
+    <div className="flex flex-wrap gap-3">
+      {preferredDriverIds.has(item.id) ? (
+        <button
+          type="button"
+          onClick={() => handleRemovePreferredDriver(item)}
+          className="inline-flex items-center justify-center rounded-full border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 transition hover:border-slate-300 hover:text-slate-900"
+        >
+          <HiOutlineXMark className="mr-2 h-4 w-4 shrink-0" />
+          Remove Preferred
+        </button>
+      ) : (
+        <button
+          type="button"
+          onClick={() => handlePreferDriver(item)}
+          className="inline-flex items-center justify-center rounded-full bg-[var(--cc-primary)] px-4 py-2.5 text-sm font-semibold text-white transition hover:brightness-95"
+        >
+          <HiOutlineHeart className="mr-2 h-4 w-4 shrink-0" />
+          Prefer Driver
+        </button>
+      )}
+      <button
+        type="button"
+        onClick={handleMessageDriver}
+        className="inline-flex items-center justify-center rounded-full bg-[var(--cc-primary)] px-4 py-2.5 text-sm font-semibold text-white transition hover:brightness-95"
+      >
+        <HiOutlineChatBubbleLeftRight className="mr-2 h-4 w-4 shrink-0" />
+        Message
+      </button>
+    </div>
+  )
 
   return (
     <DashboardShell
@@ -170,7 +246,6 @@ export default function DriveDriversPageClient() {
             onExitDriverMode={exitDriverMode}
           />
           <DriveDriverEarningsRail enabled={isDriverActive} />
-          {preferredDrivers.length ? <PreferredDriversRail items={preferredDrivers} /> : null}
           <RightRail mode="drive" organizationLinkTarget="chat" showDriveCallout={false} />
         </div>
       }
@@ -183,44 +258,50 @@ export default function DriveDriversPageClient() {
       {error ? <div className="rounded-[1.6rem] border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">{error}</div> : null}
 
       {loading ? (
-        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+        <div className="space-y-4">
           {Array.from({ length: 6 }).map((_, index) => (
             <DriveCardSkeleton key={index} />
           ))}
         </div>
       ) : null}
 
-      {!loading && !error && !items.length ? (
-        <div className="rounded-[1.6rem] border border-slate-200 bg-white px-4 py-6 text-sm text-slate-500">No active drivers are showing up right now.</div>
-      ) : null}
+      {!loading ? (
+        <div className="space-y-8">
+          <DriverSection title="Preferred Drivers" description="Set a preferred driver so it's easier for you to find them again.">
+            {preferredDrivers.length ? (
+              <div className="space-y-4">
+                {preferredDrivers.map((item) => (
+                  <DriveDriverPreviewCard key={item.id} item={item} actions={renderDriverActions(item)} />
+                ))}
+              </div>
+            ) : (
+              <div className="rounded-[1.6rem] border border-slate-200 bg-white px-4 py-6 text-sm text-slate-500">No preferred drivers yet.</div>
+            )}
+          </DriverSection>
 
-      {!loading && items.length ? (
-        <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-          {items.map((item) => (
-            <DriveDriverPreviewCard
-              key={item.id}
-              item={item}
-              actions={
-                <div className="grid grid-cols-2 gap-3">
-                  <button
-                    type="button"
-                    onClick={() => handlePreferDriver(item)}
-                    disabled={preferredDriverIds.has(item.id)}
-                    className={`inline-flex items-center justify-center rounded-full px-4 py-2.5 text-sm font-semibold transition ${preferredDriverIds.has(item.id) ? 'cursor-default border border-[var(--cc-primary)]/25 bg-[var(--cc-primary)]/10 text-[var(--cc-primary)]' : 'bg-[var(--cc-primary)] text-white hover:brightness-95'}`}
-                  >
-                    {preferredDriverIds.has(item.id) ? 'Preferred' : 'Prefer Driver'}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={handleMessageDriver}
-                    className="inline-flex items-center justify-center rounded-full border border-slate-200 bg-white px-4 py-2.5 text-sm font-semibold text-slate-700 transition hover:border-slate-300 hover:text-slate-900"
-                  >
-                    Message
-                  </button>
-                </div>
-              }
-            />
-          ))}
+          <DriverSection title="Past Drivers" description="After completing a ride, your past drivers will be shown here.">
+            {visiblePastDrivers.length ? (
+              <div className="space-y-4">
+                {visiblePastDrivers.map((item) => (
+                  <DriveDriverPreviewCard key={item.id} item={item} actions={renderDriverActions(item)} />
+                ))}
+              </div>
+            ) : (
+              <div className="rounded-[1.6rem] border border-slate-200 bg-white px-4 py-6 text-sm text-slate-500">No past drivers yet.</div>
+            )}
+          </DriverSection>
+
+          <DriverSection title="Drivers Nearby" description="Browse nearby drivers available on Drive.">
+            {!nearbyDrivers.length ? (
+              <div className="rounded-[1.6rem] border border-slate-200 bg-white px-4 py-6 text-sm text-slate-500">No drivers found.</div>
+            ) : (
+              <div className="space-y-4">
+                {nearbyDrivers.map((item) => (
+                  <DriveDriverPreviewCard key={item.id} item={item} actions={renderDriverActions(item)} />
+                ))}
+              </div>
+            )}
+          </DriverSection>
         </div>
       ) : null}
     </DashboardShell>
