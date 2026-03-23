@@ -23,8 +23,8 @@ const DeliveryBidBody = z
     amountCents: z.number().int().positive().optional(),
     perKmFeeCents: z.number().int().min(DRIVER_PER_KM_FEE_CENTS_MIN).max(500).optional(),
   })
-  .refine((value) => typeof value.amountCents === 'number' || typeof value.perKmFeeCents === 'number', 'missing_bid_value')
   .strict()
+  .refine((value) => typeof value.amountCents === 'number' || typeof value.perKmFeeCents === 'number', 'missing_bid_value')
 
 const DeliveryPickupBody = z
   .object({
