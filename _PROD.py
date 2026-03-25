@@ -30,12 +30,133 @@ Env:
 
 from __future__ import annotations
 
+import re
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 
 REPO_ROOT = Path(__file__).resolve().parent
+DEFAULT_ENV_CANDIDATES = (
+    REPO_ROOT / ".env.production",
+    REPO_ROOT / ".env.production.googlecloud",
+)
+BRAND_DOMAIN_REPLACEMENTS = (
+    ("dev.civilcitizens.ca", "dev.civilrides.ca"),
+    ("civilcitizens.ca", "civilrides.ca"),
+)
+FALLBACK_PROD_HOST = "civilrides.ca"
+
+
+def _extract_env_file_arg(argv: list[str]) -> str | None:
+    for idx, arg in enumerate(argv):
+        if arg == "--env-file":
+            return argv[idx + 1] if idx + 1 < len(argv) else None
+        if arg.startswith("--env-file="):
+            return arg.split("=", 1)[1]
+    return None
+
+
+def _resolve_env_path(raw_path: str) -> Path:
+    path = Path(raw_path)
+    if not path.is_absolute():
+        path = REPO_ROOT / path
+    return path
+
+
+def _select_source_env_file(argv: list[str]) -> tuple[Path | None, bool]:
+    explicit = _extract_env_file_arg(argv)
+    if explicit is not None:
+        resolved = _resolve_env_path(explicit)
+        return resolved, resolved.is_file()
+
+    for candidate in DEFAULT_ENV_CANDIDATES:
+        if candidate.is_file():
+            return candidate, True
+    return None, False
+
+
+def _has_env_key(text: str, key: str) -> bool:
+    pattern = rf"^\s*(?:export\s+)?{re.escape(key)}\s*="
+    return bool(re.search(pattern, text, flags=re.MULTILINE))
+
+
+def _infer_public_host(text: str) -> str:
+    patterns = (
+        r"^\s*(?:export\s+)?CIVIL_PUBLIC_HOST\s*=\s*([^\s#]+)",
+        r"^\s*(?:export\s+)?NEXT_PUBLIC_BASE_URL\s*=\s*https://([^/\s#]+)",
+        r"^\s*(?:export\s+)?NEXT_PUBLIC_MEDIA_BASE_URL\s*=\s*https://([^/\s#]+)",
+        r"^\s*(?:export\s+)?MEDIA_PUBLIC_BASE_URL\s*=\s*https://([^/\s#]+)",
+        r"^\s*(?:export\s+)?MEETING_RTC_WS_URL\s*=\s*wss://([^/\s#]+)",
+    )
+    for pattern in patterns:
+        match = re.search(pattern, text, flags=re.MULTILINE)
+        if match:
+            return match.group(1).strip()
+    return FALLBACK_PROD_HOST
+
+
+def _build_branded_env_text(source_env_file: Path | None) -> str:
+    env_text = source_env_file.read_text(encoding="utf-8") if source_env_file and source_env_file.is_file() else ""
+
+    for old, new in BRAND_DOMAIN_REPLACEMENTS:
+        env_text = env_text.replace(old, new)
+
+    public_host = _infer_public_host(env_text)
+    appended: list[str] = []
+    if not _has_env_key(env_text, "CIVIL_PUBLIC_HOST"):
+        appended.append(f"CIVIL_PUBLIC_HOST={public_host}")
+    if not _has_env_key(env_text, "NEXT_PUBLIC_BASE_URL"):
+        appended.append(f"NEXT_PUBLIC_BASE_URL=https://{public_host}")
+    if not _has_env_key(env_text, "NEXT_PUBLIC_MEDIA_BASE_URL"):
+        appended.append(f"NEXT_PUBLIC_MEDIA_BASE_URL=https://{public_host}/media")
+    if not _has_env_key(env_text, "MEDIA_PUBLIC_BASE_URL"):
+        appended.append(f"MEDIA_PUBLIC_BASE_URL=https://{public_host}/media")
+    if not _has_env_key(env_text, "MEETING_RTC_WS_URL"):
+        appended.append(f"MEETING_RTC_WS_URL=wss://{public_host}/rtc/v1/ws")
+
+    if env_text and not env_text.endswith("\n"):
+        env_text += "\n"
+    if appended:
+        env_text += "".join(f"{line}\n" for line in appended)
+    return env_text
+
+
+def _write_runtime_env_file(env_text: str) -> Path:
+    with tempfile.NamedTemporaryFile(
+        mode="w",
+        encoding="utf-8",
+        prefix="civilrides-prod-",
+        suffix=".env",
+        delete=False,
+    ) as handle:
+        handle.write(env_text)
+        return Path(handle.name)
+
+
+def _argv_with_env_file(argv: list[str], env_file: Path) -> list[str]:
+    updated: list[str] = []
+    idx = 0
+    replaced = False
+    while idx < len(argv):
+        arg = argv[idx]
+        if arg == "--env-file":
+            updated.extend(["--env-file", str(env_file)])
+            replaced = True
+            idx += 2
+            continue
+        if arg.startswith("--env-file="):
+            updated.append(f"--env-file={env_file}")
+            replaced = True
+            idx += 1
+            continue
+        updated.append(arg)
+        idx += 1
+
+    if not replaced:
+        updated.extend(["--env-file", str(env_file)])
+    return updated
 
 
 def _run_best_effort(command: list[str]) -> None:
@@ -59,23 +180,35 @@ def _post_prod_command(command: str, _: dict[str, str]) -> None:
 
 def main(argv: list[str]) -> int:
     if not (REPO_ROOT / "civil" / "docker-compose.yml").is_file():
-        print("Error: expected to run from the civilcitizens repo root (missing civil/docker-compose.yml)", file=sys.stderr)
+        print("Error: expected to run from the repo root (missing civil/docker-compose.yml)", file=sys.stderr)
         return 2
 
     from docker_helper import run_helper
 
-    run_helper(
-        default_env_candidates=[
-            REPO_ROOT / ".env.production",
-            REPO_ROOT / ".env.production.googlecloud",
-        ],
-        # Production default project (existing stack with static ports).
-        # Override via COMPOSE_PROJECT_NAME if needed.
-        default_project_name="civil_prod",
-        # Preserve infra (postgres/redis/minio) and only rebuild/restart app.
-        default_command="deploy",
-        post_command=_post_prod_command,
-    )
+    source_env_file, source_env_exists = _select_source_env_file(argv)
+    runtime_env_file: Path | None = None
+    patched_argv = list(argv)
+    original_sys_argv = sys.argv[:]
+
+    if source_env_file is None or source_env_exists:
+        runtime_env_file = _write_runtime_env_file(_build_branded_env_text(source_env_file))
+        patched_argv = _argv_with_env_file(argv, runtime_env_file)
+
+    try:
+        sys.argv = [original_sys_argv[0], *patched_argv]
+        run_helper(
+            default_env_candidates=list(DEFAULT_ENV_CANDIDATES),
+            # Production default project (existing stack with static ports).
+            # Override via COMPOSE_PROJECT_NAME if needed.
+            default_project_name="civil_prod",
+            # Preserve infra (postgres/redis/minio) and only rebuild/restart app.
+            default_command="deploy",
+            post_command=_post_prod_command,
+        )
+    finally:
+        sys.argv = original_sys_argv
+        if runtime_env_file is not None:
+            runtime_env_file.unlink(missing_ok=True)
     return 0
 
 
