@@ -11,6 +11,7 @@ import {
   HiOutlineHome,
   HiOutlineCalendarDays,
   HiOutlineShoppingCart,
+  HiOutlineTag,
   HiOutlineUserCircle,
   HiOutlineUsers,
 } from 'react-icons/hi2'
@@ -57,6 +58,7 @@ export const PRIMARY_NAV: SidebarNavItem[] = [
   { key: 'network', label: 'Network', href: '/network', icon: FaUserTie },
   { key: 'communities', label: 'Communities', href: '/communities', icon: RiCommunityLine },
   { key: 'organizations', label: 'Organizations', href: '/organizations', icon: VscOrganization },
+  { key: 'topics', label: 'Topics', href: '/topics', icon: HiOutlineTag },
   { key: 'events', label: 'Events', href: '/events', icon: HiOutlineCalendarDays },
   { key: 'market', label: 'Market', href: '/market', icon: HiOutlineShoppingCart },
   { key: 'work', label: 'Work', href: '/work', icon: HiOutlineCurrencyDollar },

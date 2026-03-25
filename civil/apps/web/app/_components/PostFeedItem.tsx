@@ -29,7 +29,7 @@ import { buildPostShareTarget } from '../_lib/shareTarget'
 import CivilLinkPreviewList from './CivilLinkPreviewList'
 import LinkPreviewCard from './LinkPreviewCard'
 import LinkifiedText from './LinkifiedText'
-import { linkifyUrlsInHtml, stripCivilUrlsFromHtml, stripCivilUrlsFromText } from '../_lib/civilLinks'
+import { linkifyContentInHtml, stripCivilUrlsFromHtml, stripCivilUrlsFromText } from '../_lib/civilLinks'
 import PostReactionBar from './PostReactionBar'
 import PollCard from './PollCard'
 
@@ -114,7 +114,10 @@ export default function PostFeedItem({ post, onReact, onDelete, onUpdate, viewer
   const shareTarget = useMemo(() => buildPostShareTarget(post), [post])
   const bodyWithoutCivilLinks = useMemo(() => stripCivilUrlsFromText(post.body), [post.body])
   const articleBodyWithoutCivilLinks = useMemo(() => stripCivilUrlsFromHtml(post.body), [post.body])
-  const linkedArticleBody = useMemo(() => linkifyUrlsInHtml(articleBodyWithoutCivilLinks), [articleBodyWithoutCivilLinks])
+  const linkedArticleBody = useMemo(
+    () => linkifyContentInHtml(articleBodyWithoutCivilLinks, { mentions: post.mentions }),
+    [articleBodyWithoutCivilLinks, post.mentions],
+  )
   const sharedPostBodyWithoutCivilLinks = useMemo(
     () => (post.sharedPost ? stripCivilUrlsFromText(post.sharedPost.body) : ''),
     [post.sharedPost],
@@ -514,12 +517,12 @@ export default function PostFeedItem({ post, onReact, onDelete, onUpdate, viewer
               articleBodyWithoutCivilLinks ? (
                 <div className="space-y-3">
                   <div className="relative">
-                    <Link href={postUrl} className="cc-article-rich-content block text-slate-700 hover:text-slate-900">
+                    <div className="cc-article-rich-content block text-slate-700">
                       <div
                         className={clsx(shouldClampFeedBody && FEED_BODY_MAX_HEIGHT_CLASSNAME)}
                         dangerouslySetInnerHTML={{ __html: linkedArticleBody }}
                       />
-                    </Link>
+                    </div>
                     {shouldClampFeedBody ? <div className="pointer-events-none absolute inset-x-0 bottom-0 h-20 bg-gradient-to-t from-white via-white/95 to-transparent" /> : null}
                   </div>
                   {shouldClampFeedBody ? (
@@ -534,7 +537,7 @@ export default function PostFeedItem({ post, onReact, onDelete, onUpdate, viewer
                 <div className="space-y-3">
                   <div className="relative">
                     <div className={clsx(shouldClampFeedBody && FEED_BODY_MAX_HEIGHT_CLASSNAME)}>
-                      <LinkifiedText text={bodyWithoutCivilLinks} className="whitespace-pre-wrap text-slate-800" />
+                      <LinkifiedText text={bodyWithoutCivilLinks} className="whitespace-pre-wrap text-slate-800" mentions={post.mentions} />
                     </div>
                     {shouldClampFeedBody ? <div className="pointer-events-none absolute inset-x-0 bottom-0 h-20 bg-gradient-to-t from-white via-white/95 to-transparent" /> : null}
                   </div>
@@ -550,7 +553,7 @@ export default function PostFeedItem({ post, onReact, onDelete, onUpdate, viewer
                 <div className="space-y-3">
                   <div className="relative">
                     <div className={clsx(shouldClampFeedBody && FEED_BODY_MAX_HEIGHT_CLASSNAME)}>
-                      <LinkifiedText text={bodyWithoutCivilLinks} className="whitespace-pre-wrap text-slate-800" />
+                      <LinkifiedText text={bodyWithoutCivilLinks} className="whitespace-pre-wrap text-slate-800" mentions={post.mentions} />
                     </div>
                     {shouldClampFeedBody ? <div className="pointer-events-none absolute inset-x-0 bottom-0 h-20 bg-gradient-to-t from-white via-white/95 to-transparent" /> : null}
                   </div>
@@ -593,6 +596,7 @@ export default function PostFeedItem({ post, onReact, onDelete, onUpdate, viewer
                 isVerified={post.sharedPost.organization ? Boolean(post.sharedPost.organization.isVerified) : Boolean(post.sharedPost.author.isVerified)}
                 isBusiness={post.sharedPost.organization ? true : Boolean(post.sharedPost.author.isPremium)}
                 body={sharedPostBodyWithoutCivilLinks}
+                mentions={post.sharedPost.mentions}
                 images={post.sharedPost.images}
                 mediaUrl={post.sharedPost.mediaUrl}
               />

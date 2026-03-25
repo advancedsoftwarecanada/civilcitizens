@@ -1,9 +1,9 @@
 'use client'
 
-import { type ChangeEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { type ChangeEvent, type KeyboardEvent as ReactKeyboardEvent, type SyntheticEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import RichTextEditor from './RichTextEditor'
 import clsx from 'clsx'
-import type { Jurisdiction, PollResultsVisibility, ReactionType } from '@civil/shared'
+import { tokenizeTextEntities, type Jurisdiction, type PollResultsVisibility, type ReactionType } from '@civil/shared'
 import { LuImagePlus, LuVideo } from 'react-icons/lu'
 import { redirectToAuthModal } from '../_lib/authModal'
 import { buildApiUrl } from '../_lib/api'
@@ -12,6 +12,7 @@ import { pushToast } from './useToasts'
 import { formatDisplayName } from '../_lib/text'
 import CivilComposerShell from './CivilComposerShell'
 import LinkPreviewCard, { type LinkPreviewRecord } from './LinkPreviewCard'
+import VerifiedAvatar from './VerifiedAvatar'
 
 export type PostType = 'post' | 'article' | 'photo' | 'poll'
 export type PostVisibility = 'public' | 'members'
@@ -28,6 +29,15 @@ export type ApiPost = {
   type: PostType
   title?: string | null
   body: string
+  topicSlugs: string[]
+  communitySlugs: string[]
+  mentionedUserIds: string[]
+  mentions: Array<{
+    userId: string
+    handle: string
+    matchedHandle: string
+    name?: string | null
+  }>
   mediaUrl?: string | null
   images?: string[] | null
   linkPreview?: LinkPreviewRecord | null
@@ -287,6 +297,185 @@ type PhotoItem = {
   error?: string | null
 }
 
+type MentionSuggestion = {
+  id: string
+  handle: string
+  name?: string | null
+  avatarUrl?: string | null
+  isPremium?: boolean
+  isVerified?: boolean
+  homeCommunity?: {
+    provinceCode: string
+    provinceName?: string | null
+    communitySlug: string
+    communityName?: string | null
+  } | null
+}
+
+type ActiveMentionQuery = {
+  start: number
+  end: number
+  query: string
+}
+
+type MentionMenuPosition = {
+  left: number
+  top: number
+  width: number
+}
+
+function isMentionQueryCharacter(value: string | undefined) {
+  return Boolean(value && /[A-Za-z0-9_]/.test(value))
+}
+
+function getActiveMentionQuery(value: string, cursor: number | null | undefined): ActiveMentionQuery | null {
+  if (typeof cursor !== 'number' || cursor < 0) return null
+
+  let markerIndex = cursor - 1
+  while (markerIndex >= 0 && isMentionQueryCharacter(value[markerIndex])) {
+    markerIndex -= 1
+  }
+
+  if (markerIndex < 0 || value[markerIndex] !== '@') return null
+  if (markerIndex > 0 && isMentionQueryCharacter(value[markerIndex - 1])) return null
+
+  const query = value.slice(markerIndex + 1, cursor)
+  if (/[^A-Za-z0-9_]/.test(query)) return null
+
+  return {
+    start: markerIndex,
+    end: cursor,
+    query,
+  }
+}
+
+const TEXTAREA_MIRROR_STYLE_PROPS = [
+  'box-sizing',
+  'width',
+  'padding-top',
+  'padding-right',
+  'padding-bottom',
+  'padding-left',
+  'border-top-width',
+  'border-right-width',
+  'border-bottom-width',
+  'border-left-width',
+  'font-family',
+  'font-size',
+  'font-style',
+  'font-weight',
+  'font-variant',
+  'font-stretch',
+  'line-height',
+  'letter-spacing',
+  'text-transform',
+  'text-indent',
+  'text-decoration',
+  'text-align',
+  'tab-size',
+] as const
+
+function measureTextareaCaret(
+  textarea: HTMLTextAreaElement,
+  cursor: number,
+): { left: number; top: number; height: number } | null {
+  if (typeof window === 'undefined') return null
+
+  const computed = window.getComputedStyle(textarea)
+  const mirror = document.createElement('div')
+  mirror.setAttribute('aria-hidden', 'true')
+  mirror.style.position = 'absolute'
+  mirror.style.top = '0'
+  mirror.style.left = '-9999px'
+  mirror.style.visibility = 'hidden'
+  mirror.style.pointerEvents = 'none'
+  mirror.style.whiteSpace = 'pre-wrap'
+  mirror.style.wordWrap = 'break-word'
+  mirror.style.overflow = 'hidden'
+
+  TEXTAREA_MIRROR_STYLE_PROPS.forEach((property) => {
+    mirror.style.setProperty(property, computed.getPropertyValue(property))
+  })
+
+  mirror.style.width = `${textarea.clientWidth}px`
+  mirror.textContent = textarea.value.slice(0, cursor)
+  if (mirror.textContent.endsWith('\n')) {
+    mirror.textContent += ' '
+  }
+
+  const marker = document.createElement('span')
+  marker.textContent = textarea.value.slice(cursor) || '\u200b'
+  mirror.appendChild(marker)
+  document.body.appendChild(mirror)
+
+  const lineHeight = parseFloat(computed.lineHeight) || parseFloat(computed.fontSize) * 1.5 || 24
+  const left = marker.offsetLeft - textarea.scrollLeft
+  const top = marker.offsetTop - textarea.scrollTop
+
+  document.body.removeChild(mirror)
+  return { left, top, height: lineHeight }
+}
+
+function measureMentionMenuPosition(
+  textarea: HTMLTextAreaElement,
+  wrapper: HTMLDivElement,
+  cursor: number,
+): MentionMenuPosition | null {
+  const caret = measureTextareaCaret(textarea, cursor)
+  if (!caret) return null
+
+  const availableWidth = Math.max(220, wrapper.clientWidth - 16)
+  const width = Math.min(360, availableWidth)
+  const left = Math.min(Math.max(8, caret.left), Math.max(8, wrapper.clientWidth - width - 8))
+  const top = Math.max(8, caret.top + caret.height + 8)
+
+  return { left, top, width }
+}
+
+function formatMentionHomeCommunity(
+  homeCommunity: MentionSuggestion['homeCommunity'],
+) {
+  if (!homeCommunity) return 'No home community yet'
+  const provinceLabel = homeCommunity.provinceName ?? homeCommunity.provinceCode.toUpperCase()
+  const communityLabel = homeCommunity.communityName ?? homeCommunity.communitySlug
+  return `${provinceLabel} / ${communityLabel}`
+}
+
+function renderComposerHighlightedText(value: string) {
+  const hashtagTokens = tokenizeTextEntities(value).filter((token) => token.kind === 'hashtag')
+  if (!hashtagTokens.length) {
+    if (!value.length) return '\u200b'
+    return value.endsWith('\n') ? `${value}\u200b` : value
+  }
+
+  const fragments: JSX.Element[] = []
+  let cursor = 0
+
+  hashtagTokens.forEach((token, index) => {
+    if (token.start > cursor) {
+      fragments.push(<span key={`text-${index}-${cursor}`}>{value.slice(cursor, token.start)}</span>)
+    }
+
+    fragments.push(
+      <span key={`hashtag-${token.start}-${token.end}`} className="text-[var(--cc-primary)]">
+        {value.slice(token.start, token.end)}
+      </span>,
+    )
+
+    cursor = token.end
+  })
+
+  if (cursor < value.length) {
+    fragments.push(<span key={`text-tail-${cursor}`}>{value.slice(cursor)}</span>)
+  }
+
+  if (value.endsWith('\n')) {
+    fragments.push(<span key="terminal-placeholder">{'\u200b'}</span>)
+  }
+
+  return fragments
+}
+
 export default function PostComposer({
   me = null,
   className,
@@ -304,6 +493,10 @@ export default function PostComposer({
   const containerRef = useRef<HTMLDivElement | null>(null)
   const [postType, setPostType] = useState<PostType>(() => normalizeComposerPostType(defaultPostType))
   const [draft, setDraft] = useState('')
+  const draftTextareaRef = useRef<HTMLTextAreaElement | null>(null)
+  const pollQuestionTextareaRef = useRef<HTMLTextAreaElement | null>(null)
+  const draftMentionMenuAnchorRef = useRef<HTMLDivElement | null>(null)
+  const pollMentionMenuAnchorRef = useRef<HTMLDivElement | null>(null)
   const [articleTitle, setArticleTitle] = useState('')
   const [articleBody, setArticleBody] = useState('<p></p>')
   const [pollOptions, setPollOptions] = useState<string[]>(() => createInitialPollOptions())
@@ -313,6 +506,13 @@ export default function PostComposer({
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [composerLinkPreview, setComposerLinkPreview] = useState<{ sourceUrl: string; preview: LinkPreviewRecord | null } | null>(null)
+  const [activeMentionQuery, setActiveMentionQuery] = useState<ActiveMentionQuery | null>(null)
+  const [mentionSuggestions, setMentionSuggestions] = useState<MentionSuggestion[]>([])
+  const [mentionSearching, setMentionSearching] = useState(false)
+  const [selectedMentionIndex, setSelectedMentionIndex] = useState(0)
+  const [mentionMenuPosition, setMentionMenuPosition] = useState<MentionMenuPosition | null>(null)
+  const [draftScrollTop, setDraftScrollTop] = useState(0)
+  const [pollQuestionScrollTop, setPollQuestionScrollTop] = useState(0)
   const [visibility, setVisibility] = useState<PostVisibility>('public')
   const [showBusinessAuthor, setShowBusinessAuthor] = useState(false)
   const normalizedCommunityOptions = useMemo(() => {
@@ -433,6 +633,177 @@ export default function PostComposer({
       return prev
     })
   }, [allowFamilyAudience, businessTarget, communityTarget, defaultAudience, selectableCommunityOptions])
+
+  const updateMentionMenuPosition = useCallback((cursor: number | null | undefined) => {
+    if (typeof cursor !== 'number' || cursor < 0) {
+      setMentionMenuPosition(null)
+      return
+    }
+
+    const activeTextarea = postType === 'poll' ? pollQuestionTextareaRef.current : draftTextareaRef.current
+    const activeAnchor = postType === 'poll' ? pollMentionMenuAnchorRef.current : draftMentionMenuAnchorRef.current
+    if (!activeTextarea || !activeAnchor) {
+      setMentionMenuPosition(null)
+      return
+    }
+
+    setMentionMenuPosition(measureMentionMenuPosition(activeTextarea, activeAnchor, cursor))
+  }, [postType])
+
+  const updateMentionQueryFromCursor = useCallback((value: string, cursor: number | null | undefined) => {
+    const nextQuery = getActiveMentionQuery(value, cursor)
+    setActiveMentionQuery(nextQuery)
+    setSelectedMentionIndex(0)
+    if (nextQuery) {
+      updateMentionMenuPosition(nextQuery.end)
+    } else {
+      setMentionMenuPosition(null)
+    }
+  }, [updateMentionMenuPosition])
+
+  const applyMentionSuggestion = useCallback(
+    (mention: MentionSuggestion) => {
+      if (!activeMentionQuery) return
+
+      const replacement = `@${mention.handle} `
+      const nextDraft = `${draft.slice(0, activeMentionQuery.start)}${replacement}${draft.slice(activeMentionQuery.end)}`
+      const nextCursor = activeMentionQuery.start + replacement.length
+      const activeTextarea = postType === 'poll' ? pollQuestionTextareaRef.current : draftTextareaRef.current
+
+      setDraft(nextDraft)
+      setActiveMentionQuery(null)
+      setMentionSuggestions([])
+      setSelectedMentionIndex(0)
+      setMentionMenuPosition(null)
+
+      window.requestAnimationFrame(() => {
+        activeTextarea?.focus()
+        activeTextarea?.setSelectionRange(nextCursor, nextCursor)
+      })
+    },
+    [activeMentionQuery, draft, postType],
+  )
+
+  useEffect(() => {
+    if (postType !== 'post' && postType !== 'poll') {
+      setActiveMentionQuery(null)
+      setMentionSuggestions([])
+      setMentionSearching(false)
+      setSelectedMentionIndex(0)
+      setMentionMenuPosition(null)
+    }
+  }, [postType])
+
+  useEffect(() => {
+    const query = activeMentionQuery?.query.trim() ?? ''
+    if (!query.length) {
+      setMentionSuggestions([])
+      setMentionSearching(false)
+      return
+    }
+
+    if (typeof window === 'undefined') return
+    const token = localStorage.getItem('token')
+    if (!token) {
+      setMentionSuggestions([])
+      setMentionSearching(false)
+      return
+    }
+
+    let cancelled = false
+    const controller = new AbortController()
+    setMentionSearching(true)
+    const timer = window.setTimeout(async () => {
+      try {
+        const params = new URLSearchParams({ q: query, limit: '8' })
+        const response = await fetch(buildApiUrl(`/search/users?${params.toString()}`), {
+          headers: { authorization: `Bearer ${token}` },
+          cache: 'no-store',
+          signal: controller.signal,
+        })
+        if (!response.ok) {
+          if (!cancelled) setMentionSuggestions([])
+          return
+        }
+
+        const payload = (await response.json().catch(() => null)) as { items?: MentionSuggestion[] } | null
+        if (cancelled) return
+        setMentionSuggestions(Array.isArray(payload?.items) ? payload.items : [])
+      } catch {
+        if (!cancelled && !controller.signal.aborted) setMentionSuggestions([])
+      } finally {
+        if (!cancelled) setMentionSearching(false)
+      }
+    }, 120)
+
+    return () => {
+      cancelled = true
+      controller.abort()
+      window.clearTimeout(timer)
+    }
+  }, [activeMentionQuery?.query])
+
+  useEffect(() => {
+    if (!activeMentionQuery) return
+
+    const handleReposition = () => {
+      updateMentionMenuPosition(activeMentionQuery.end)
+    }
+
+    window.addEventListener('resize', handleReposition)
+    return () => {
+      window.removeEventListener('resize', handleReposition)
+    }
+  }, [activeMentionQuery, updateMentionMenuPosition])
+
+  const handleDraftSelectionEvent = useCallback(
+    (event: SyntheticEvent<HTMLTextAreaElement>) => {
+      updateMentionQueryFromCursor(event.currentTarget.value, event.currentTarget.selectionStart)
+    },
+    [updateMentionQueryFromCursor],
+  )
+
+  const handleDraftTextKeyDown = useCallback(
+    (event: ReactKeyboardEvent<HTMLTextAreaElement>) => {
+      if (!mentionSuggestions.length || !activeMentionQuery) {
+        if (event.key === 'Escape' && activeMentionQuery) {
+          setActiveMentionQuery(null)
+          setMentionSuggestions([])
+          setSelectedMentionIndex(0)
+        }
+        return
+      }
+
+      if (event.key === 'ArrowDown') {
+        event.preventDefault()
+        setSelectedMentionIndex((current) => (current + 1) % mentionSuggestions.length)
+        return
+      }
+
+      if (event.key === 'ArrowUp') {
+        event.preventDefault()
+        setSelectedMentionIndex((current) => (current - 1 + mentionSuggestions.length) % mentionSuggestions.length)
+        return
+      }
+
+      if (event.key === 'Enter' || event.key === 'Tab') {
+        event.preventDefault()
+        const selectedMention = mentionSuggestions[selectedMentionIndex] ?? mentionSuggestions[0]
+        if (selectedMention) {
+          applyMentionSuggestion(selectedMention)
+        }
+        return
+      }
+
+      if (event.key === 'Escape') {
+        event.preventDefault()
+        setActiveMentionQuery(null)
+        setMentionSuggestions([])
+        setSelectedMentionIndex(0)
+      }
+    },
+    [activeMentionQuery, applyMentionSuggestion, mentionSuggestions, selectedMentionIndex],
+  )
 
   useEffect(() => {
     if (!firstComposerUrl) {
@@ -660,6 +1031,12 @@ export default function PostComposer({
     setShowBusinessAuthor(false)
     setError(null)
     setComposerLinkPreview(null)
+    setActiveMentionQuery(null)
+    setMentionSuggestions([])
+    setMentionSearching(false)
+    setSelectedMentionIndex(0)
+    setDraftScrollTop(0)
+    setPollQuestionScrollTop(0)
     photos.forEach((p) => URL.revokeObjectURL(p.previewUrl))
     setPhotos([])
   }, [businessTarget, communityTarget, defaultAudience, defaultPostType, photos, selectableCommunityOptions])
@@ -872,6 +1249,76 @@ export default function PostComposer({
   const contentClasses = clsx('flex flex-col gap-4', className)
 
   const showCommunityWarning = !communityTarget && !normalizedCommunityOptions.length
+  const mentionQueryValue = activeMentionQuery?.query.trim() ?? ''
+  const showMentionEmptyState = mentionQueryValue.length > 0 && !mentionSearching && mentionSuggestions.length === 0
+  const showMentionSuggestions =
+    (postType === 'post' || postType === 'poll') &&
+    Boolean(activeMentionQuery) &&
+    Boolean(mentionQueryValue.length > 0) &&
+    (mentionSearching || mentionSuggestions.length > 0 || showMentionEmptyState)
+
+  const renderMentionSuggestionsMenu = () => {
+    if (!showMentionSuggestions || !mentionMenuPosition) return null
+
+    return (
+      <div
+        className="absolute z-30 max-h-[20rem] overflow-y-auto rounded-2xl border border-slate-200 bg-white shadow-2xl shadow-slate-900/12"
+        style={{
+          left: `${mentionMenuPosition.left}px`,
+          top: `${mentionMenuPosition.top}px`,
+          width: `${mentionMenuPosition.width}px`,
+        }}
+        onMouseDown={(event) => event.preventDefault()}
+      >
+        {mentionSearching ? (
+          <div className="flex items-center gap-3 px-4 py-3 text-sm text-slate-500">
+            <span className="inline-flex h-4 w-4 shrink-0 animate-spin rounded-full border-2 border-slate-200 border-t-[var(--cc-primary)]" aria-hidden="true" />
+            Searching people…
+          </div>
+        ) : mentionSuggestions.length > 0 ? (
+          mentionSuggestions.map((mention, index) => {
+            const displayName = formatDisplayName(mention.name) || mention.handle
+            return (
+              <button
+                key={mention.id}
+                type="button"
+                className={clsx(
+                  'flex w-full items-center gap-3 px-4 py-3 text-left text-sm transition',
+                  index === selectedMentionIndex ? 'bg-slate-100 text-slate-900' : 'text-slate-700 hover:bg-slate-50',
+                )}
+                onMouseEnter={() => setSelectedMentionIndex(index)}
+                onMouseDown={(event) => {
+                  event.preventDefault()
+                  applyMentionSuggestion(mention)
+                }}
+              >
+                <VerifiedAvatar
+                  src={mention.avatarUrl ?? null}
+                  alt={displayName}
+                  initials={displayName}
+                  size={40}
+                  isVerified={Boolean(mention.isVerified)}
+                  isBusiness={Boolean(mention.isPremium)}
+                  className="shrink-0"
+                />
+                <span className="min-w-0 flex-1">
+                  <span className="flex items-center gap-2 text-slate-900">
+                    <span className="truncate font-semibold">{displayName}</span>
+                    <span className="truncate text-xs text-slate-500">@{mention.handle}</span>
+                  </span>
+                  <span className="block truncate text-xs text-slate-500">{formatMentionHomeCommunity(mention.homeCommunity ?? null)}</span>
+                </span>
+              </button>
+            )
+          })
+        ) : (
+          <div className="px-4 py-3 text-sm text-slate-500">
+            No people found for <span className="font-semibold text-slate-700">@{mentionQueryValue}</span>.
+          </div>
+        )}
+      </div>
+    )
+  }
 
   const composerContent = (
     <>
@@ -1081,15 +1528,53 @@ export default function PostComposer({
 
         {postType === 'post' ? (
           <div className="space-y-2">
-            <textarea
-              className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-base leading-6 text-slate-800 placeholder:text-slate-400 focus:border-[var(--cc-primary)] focus:bg-white focus:outline-none focus:ring-0"
-              placeholder="Share something"
-              rows={4}
-              value={draft}
-              onChange={(e) => setDraft(e.target.value)}
-              maxLength={MAX_POST_LENGTH}
-              disabled={submitting}
-            />
+            <div ref={draftMentionMenuAnchorRef} className="relative">
+              <div className="relative overflow-hidden rounded-2xl border border-slate-200 bg-slate-50 transition focus-within:border-[var(--cc-primary)] focus-within:bg-white">
+                <div aria-hidden="true" className="pointer-events-none absolute inset-0 overflow-hidden rounded-[inherit]">
+                  <div
+                    className="min-h-full whitespace-pre-wrap break-words px-4 py-3 text-base leading-6 text-slate-800"
+                    style={{ transform: `translateY(-${draftScrollTop}px)` }}
+                  >
+                    {renderComposerHighlightedText(draft)}
+                  </div>
+                </div>
+                <textarea
+                  ref={draftTextareaRef}
+                  className="relative z-10 block w-full resize-y border-0 bg-transparent px-4 py-3 text-base leading-6 text-transparent caret-slate-800 placeholder:text-slate-400 focus:outline-none focus:ring-0"
+                  style={{ caretColor: '#1e293b' }}
+                  placeholder="Share something"
+                  rows={4}
+                  value={draft}
+                  onChange={(event) => {
+                    setDraft(event.target.value)
+                    updateMentionQueryFromCursor(event.target.value, event.target.selectionStart)
+                  }}
+                  onSelect={handleDraftSelectionEvent}
+                  onClick={handleDraftSelectionEvent}
+                  onKeyDown={handleDraftTextKeyDown}
+                  onScroll={(event) => {
+                    setDraftScrollTop(event.currentTarget.scrollTop)
+                    updateMentionMenuPosition(event.currentTarget.selectionStart)
+                  }}
+                  onBlur={() => {
+                    window.setTimeout(() => {
+                      if (
+                        document.activeElement !== draftTextareaRef.current &&
+                        document.activeElement !== pollQuestionTextareaRef.current
+                      ) {
+                        setActiveMentionQuery(null)
+                        setMentionSuggestions([])
+                        setMentionSearching(false)
+                        setMentionMenuPosition(null)
+                      }
+                    }, 0)
+                  }}
+                  maxLength={MAX_POST_LENGTH}
+                  disabled={submitting}
+                />
+              </div>
+              {renderMentionSuggestionsMenu()}
+            </div>
             <div className="flex items-center justify-end text-xs text-slate-500">
               <span>
                 {draft.trim().length}/{MAX_POST_LENGTH}
@@ -1133,16 +1618,54 @@ export default function PostComposer({
               <label className="block text-sm font-semibold text-slate-600" htmlFor="poll-question">
                 Question
               </label>
-              <textarea
-                id="poll-question"
-                className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-base leading-6 text-slate-800 placeholder:text-slate-400 focus:border-[var(--cc-primary)] focus:bg-white focus:outline-none focus:ring-0"
-                placeholder="Ask the community something specific"
-                rows={3}
-                value={draft}
-                onChange={(event) => setDraft(event.target.value)}
-                maxLength={MAX_POST_LENGTH}
-                disabled={submitting}
-              />
+              <div ref={pollMentionMenuAnchorRef} className="relative">
+                <div className="relative overflow-hidden rounded-2xl border border-slate-200 bg-slate-50 transition focus-within:border-[var(--cc-primary)] focus-within:bg-white">
+                  <div aria-hidden="true" className="pointer-events-none absolute inset-0 overflow-hidden rounded-[inherit]">
+                    <div
+                      className="min-h-full whitespace-pre-wrap break-words px-4 py-3 text-base leading-6 text-slate-800"
+                      style={{ transform: `translateY(-${pollQuestionScrollTop}px)` }}
+                    >
+                      {renderComposerHighlightedText(draft)}
+                    </div>
+                  </div>
+                  <textarea
+                    id="poll-question"
+                    ref={pollQuestionTextareaRef}
+                    className="relative z-10 block w-full resize-y border-0 bg-transparent px-4 py-3 text-base leading-6 text-transparent caret-slate-800 placeholder:text-slate-400 focus:outline-none focus:ring-0"
+                    style={{ caretColor: '#1e293b' }}
+                    placeholder="Ask the community something specific"
+                    rows={3}
+                    value={draft}
+                    onChange={(event) => {
+                      setDraft(event.target.value)
+                      updateMentionQueryFromCursor(event.target.value, event.target.selectionStart)
+                    }}
+                    onSelect={handleDraftSelectionEvent}
+                    onClick={handleDraftSelectionEvent}
+                    onKeyDown={handleDraftTextKeyDown}
+                    onScroll={(event) => {
+                      setPollQuestionScrollTop(event.currentTarget.scrollTop)
+                      updateMentionMenuPosition(event.currentTarget.selectionStart)
+                    }}
+                    onBlur={() => {
+                      window.setTimeout(() => {
+                        if (
+                          document.activeElement !== draftTextareaRef.current &&
+                          document.activeElement !== pollQuestionTextareaRef.current
+                        ) {
+                          setActiveMentionQuery(null)
+                          setMentionSuggestions([])
+                          setMentionSearching(false)
+                          setMentionMenuPosition(null)
+                        }
+                      }, 0)
+                    }}
+                    maxLength={MAX_POST_LENGTH}
+                    disabled={submitting}
+                  />
+                </div>
+                {renderMentionSuggestionsMenu()}
+              </div>
               <div className="flex items-center justify-end text-xs text-slate-500">
                 <span>
                   {draft.trim().length}/{MAX_POST_LENGTH}

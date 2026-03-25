@@ -18,6 +18,10 @@ export const COMMENT_NOTIFICATION_TYPES = {
   POST_COMMENT: 'comment_post',
 } as const
 
+export const POST_NOTIFICATION_TYPES = {
+  MENTION: 'post_mention',
+} as const
+
 export const NOTIFICATION_FEED_EXCLUDED_TYPES = [
   'message_created',
   'message',
@@ -351,6 +355,11 @@ export function createNotificationHelpers(deps: CreateNotificationHelpersDeps) {
       const payload = readPayloadRecord(record.payload)
       const preview = typeof payload?.bodyPreview === 'string' ? payload.bodyPreview.trim() : ''
       return { title: 'New comment', message: preview ? `${actorLabel} commented: ${preview}` : `${actorLabel} commented on your post.` }
+    }
+    if (record.type === POST_NOTIFICATION_TYPES.MENTION) {
+      const payload = readPayloadRecord(record.payload)
+      const preview = typeof payload?.bodyPreview === 'string' ? payload.bodyPreview.trim() : ''
+      return { title: 'New mention', message: preview ? `${actorLabel} mentioned you: ${preview}` : `${actorLabel} mentioned you in a post.` }
     }
     if (record.type === CONNECTION_NOTIFICATION_TYPES.REQUEST) {
       return { title: 'New connection request', message: `${actorLabel} sent you a connection request.` }

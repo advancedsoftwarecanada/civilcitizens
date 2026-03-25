@@ -15,6 +15,7 @@ import {
   slugifyCommunityName,
 } from '@civil/shared'
 import { z } from 'zod'
+import { resolvePostTaggingForWrite, syncPostTaggingRelations, type ResolvedPostMention } from '../postTagging.js'
 
 const VotePostInput = z.object({
   postId: z.string().cuid(),
@@ -141,7 +142,7 @@ export function registerPostInteractionRoutes(app: FastifyInstance, deps: PostIn
             ? 'network'
             : 'friends'
 
-      const created = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+      const createdResult = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
         const seoSlug = await deps.generateUniquePostSlug(slugBase, tx)
 
         const post = await tx.post.create({
@@ -181,20 +182,29 @@ export function registerPostInteractionRoutes(app: FastifyInstance, deps: PostIn
           })
         }
 
-        if (hashtags?.length) {
-          const tags = [...new Set(hashtags.map((tag: string) => tag.replace(/^#/, '')))] as string[]
-          if (tags.length) {
-            await tx.hashtag.createMany({ data: tags.map((tag: string) => ({ tag })), skipDuplicates: true })
-            await tx.postHashtag.createMany({ data: tags.map((tag: string) => ({ postId: post.id, tag })) })
-          }
-        }
+        const tagging = await resolvePostTaggingForWrite({
+          tx,
+          authorId: userId,
+          text: previewSourceBody,
+          hashtags,
+          implicitCommunitySlugs: [communitySlug, business?.communitySlug ?? null],
+        })
 
-        return tx.post.findUnique({
+        await syncPostTaggingRelations(tx, post.id, tagging)
+
+        const hydratedPost = await tx.post.findUnique({
           where: { id: post.id },
           include: deps.POST_INCLUDE,
         })
+
+        return {
+          post: hydratedPost,
+          tagging,
+        }
       })
 
+      const created = createdResult?.post ?? null
+      const createdTagging = createdResult?.tagging ?? null
       if (!created) return reply.code(500).send({ error: 'post_create_failed' })
 
       void deps.enqueueContentAiScanForPost({
@@ -207,6 +217,35 @@ export function registerPostInteractionRoutes(app: FastifyInstance, deps: PostIn
       }).catch((error: unknown) => {
         console.error('content_ai_scan_enqueue_post_create_failed', error)
       })
+
+      if (createdTagging?.mentions.length) {
+        const paths = deps.getCanonicalPaths(created)
+        const postUrl = paths.community ?? paths.user
+        const bodyPreview = deps.truncatePushBody(previewSourceBody, 90)
+
+        void Promise.allSettled(
+          createdTagging.mentions
+            .filter((mention: ResolvedPostMention) => mention.userId !== userId)
+            .map(async (mention: ResolvedPostMention) => {
+              const canAccess = await deps.canViewerAccessPostForPreview(created, mention.userId)
+              if (!canAccess) return
+              await deps.createNotificationRecord({
+                userId: mention.userId,
+                actorId: userId,
+                type: deps.POST_NOTIFICATION_TYPES.MENTION,
+                postId: created.id,
+                payload: {
+                  bodyPreview,
+                  mentionHandle: mention.handleSnapshot,
+                  url: postUrl,
+                  sourceUrl: postUrl,
+                },
+              })
+            }),
+        ).catch((error: unknown) => {
+          req.log.error({ err: error, postId: created.id }, 'post_mention_notifications_failed')
+        })
+      }
 
       return reply.code(201).send(deps.formatPost(created, { viewerId: userId }))
     }),
@@ -827,6 +866,8 @@ export function registerPostInteractionRoutes(app: FastifyInstance, deps: PostIn
           : null
         : undefined
 
+      const shouldResyncTagging = normalizedUpdatedBody !== undefined || hashtags !== undefined
+
       const updated = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
         const postData: Prisma.PostUpdateInput = {}
         if (title !== undefined) postData.title = title
@@ -843,13 +884,25 @@ export function registerPostInteractionRoutes(app: FastifyInstance, deps: PostIn
           include: deps.POST_INCLUDE,
         })
 
-        if (hashtags) {
-          await tx.postHashtag.deleteMany({ where: { postId: params.data.id } })
-          const tags = [...new Set(hashtags.map((tag: string) => tag.replace(/^#/, '')))] as string[]
-          if (tags.length) {
-            await tx.hashtag.createMany({ data: tags.map((tag: string) => ({ tag })), skipDuplicates: true })
-            await tx.postHashtag.createMany({ data: tags.map((tag: string) => ({ postId: params.data.id, tag })) })
-          }
+        if (shouldResyncTagging) {
+          const updatedBusinessCommunitySlug = (updatedPost.business as { communitySlug?: string | null } | null | undefined)?.communitySlug ?? null
+          const taggingSource = updatedPost.type === 'article'
+            ? deps.stripHtmlToPlainText(updatedPost.body)
+            : updatedPost.body
+          const tagging = await resolvePostTaggingForWrite({
+            tx,
+            authorId: userId,
+            text: taggingSource,
+            hashtags,
+            implicitCommunitySlugs: [updatedPost.communitySlug ?? null, updatedBusinessCommunitySlug],
+          })
+
+          await syncPostTaggingRelations(tx, params.data.id, tagging)
+
+          return tx.post.findUnique({
+            where: { id: params.data.id },
+            include: deps.POST_INCLUDE,
+          })
         }
 
         return updatedPost

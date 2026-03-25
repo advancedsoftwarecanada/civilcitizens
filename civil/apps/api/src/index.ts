@@ -425,6 +425,7 @@ import {
   NOTIFICATION_FEED_EXCLUDED_TYPES,
   ORG_NOTIFICATION_TYPES,
   POLL_NOTIFICATION_TYPES,
+  POST_NOTIFICATION_TYPES,
   PROFILE_FAMILY_RELATIONSHIP_LABELS,
   PROFILE_INVITE_NOTIFICATION_TYPES,
   createNotificationHelpers,
@@ -463,6 +464,7 @@ import { registerMessagesDetailRoutes } from './routes/messagesDetail.js'
 import { registerNotificationsSearchRoutes } from './routes/notificationsSearch.js'
 import { registerPostInteractionRoutes } from './routes/postInteractions.js'
 import { registerPostReadRoutes } from './routes/postRead.js'
+import { registerTopicRoutes } from './routes/topics.js'
 import { registerBillingRoutes } from './routes/billing.js'
 import { registerBillingWebhookRoutes } from './routes/billingWebhook.js'
 import { registerJobRoutes } from './routes/jobs.js'
@@ -3860,6 +3862,29 @@ const POLL_INCLUDE = {
 } as const
 
 const POST_INCLUDE = {
+  hashtags: {
+    select: {
+      tag: true,
+    },
+  },
+  communityTags: {
+    select: {
+      communitySlug: true,
+    },
+  },
+  mentions: {
+    select: {
+      userId: true,
+      handleSnapshot: true,
+      user: {
+        select: {
+          id: true,
+          handle: true,
+          name: true,
+        },
+      },
+    },
+  },
   author: {
     select: {
       id: true,
@@ -3887,6 +3912,29 @@ const POST_INCLUDE = {
   poll: POLL_INCLUDE,
   sharedPost: {
     include: {
+      hashtags: {
+        select: {
+          tag: true,
+        },
+      },
+      communityTags: {
+        select: {
+          communitySlug: true,
+        },
+      },
+      mentions: {
+        select: {
+          userId: true,
+          handleSnapshot: true,
+          user: {
+            select: {
+              id: true,
+              handle: true,
+              name: true,
+            },
+          },
+        },
+      },
       author: {
         select: {
           id: true,
@@ -3954,6 +4002,15 @@ type FormattedPost = {
   type: string
   title: string | null
   body: string
+  topicSlugs: string[]
+  communitySlugs: string[]
+  mentionedUserIds: string[]
+  mentions: Array<{
+    userId: string
+    handle: string
+    matchedHandle: string
+    name: string | null
+  }>
   mediaUrl: string | null
   images: string[] | null
   linkPreview: {
@@ -4341,6 +4398,13 @@ function formatPost(
   const community = post.provinceCode && post.communitySlug ? findCommunity(post.provinceCode, post.communitySlug) : null
   const provinceName = community ? getProvinceDisplayName(community.province as any) : null
   const now = options.now ?? new Date()
+  const topicRows = Array.isArray((post as any).hashtags) ? ((post as any).hashtags as Array<{ tag: string }>) : []
+  const communityTagRows = Array.isArray((post as any).communityTags)
+    ? ((post as any).communityTags as Array<{ communitySlug: string }>)
+    : []
+  const mentionRows = Array.isArray((post as any).mentions)
+    ? ((post as any).mentions as Array<{ userId: string; handleSnapshot: string; user: { handle: string; name: string | null } }>)
+    : []
 
   let sharedPost: FormattedPost | null = null
   if (
@@ -4357,6 +4421,15 @@ function formatPost(
     type: post.type,
     title: post.title,
     body: post.type === 'article' ? sanitizeRichTextHtml(post.body) : sanitizePlainText(post.body),
+    topicSlugs: topicRows.map((tag) => tag.tag),
+    communitySlugs: communityTagRows.map((tag) => tag.communitySlug),
+    mentionedUserIds: mentionRows.map((mention) => mention.userId),
+    mentions: mentionRows.map((mention) => ({
+      userId: mention.userId,
+      handle: mention.user.handle,
+      matchedHandle: mention.handleSnapshot,
+      name: mention.user.name ?? null,
+    })),
     mediaUrl: normalizeMediaUrl(post.mediaUrl ?? null),
     images: (post.images as string[] | null)?.map(normalizeMediaUrl).filter((url): url is string => url !== null) ?? null,
     linkPreview: normalizeStoredLinkPreview((post as any).linkPreview ?? null, normalizeMediaUrl),
@@ -4434,13 +4507,14 @@ function getCanonicalPaths(post: PostWithAuthor) {
   }
 }
 
-type FeedCategory = 'friends' | 'network' | 'community' | 'organizations' | 'events' | 'marketplace' | 'other'
+type FeedCategory = 'friends' | 'network' | 'community' | 'organizations' | 'topics' | 'events' | 'marketplace' | 'other'
 
 type ViewerFeedContext = {
   viewerId: string
   friendIds: Set<string>
   familyRelatedUserIds: Set<string>
   connectionIds: Set<string>
+  followedTopicSlugs: Set<string>
   followedBusinessIds: Set<string>
   memberBusinessIds: Set<string>
   homeCommunityKey: string | null
@@ -4454,6 +4528,7 @@ type FeedRankingPostRecord = {
   authorId: string
   businessId: string | null
   type: string
+  topicSlugs: string[]
   createdAt: Date
   updatedAt: Date
   lastActivityAt: Date
@@ -4483,6 +4558,7 @@ const HOME_FEED_CATEGORY_WEIGHTS: Record<FeedCategory, number> = {
   network: 20,
   community: 20,
   organizations: 15,
+  topics: 18,
   events: 10,
   marketplace: 5,
   other: 5,
@@ -4551,7 +4627,7 @@ function buildFeedRankCursor(offset: number, seed: number): string {
 }
 
 async function loadViewerFeedContext(viewerId: string): Promise<ViewerFeedContext> {
-  const [friendIds, familyRelatedUserIds, connectionIds, communityFollows, businessFollows, businessMemberships, ownedBusinesses, userRecord] =
+  const [friendIds, familyRelatedUserIds, connectionIds, communityFollows, topicFollows, businessFollows, businessMemberships, ownedBusinesses, userRecord] =
     await Promise.all([
       loadAcceptedFriendIds(viewerId),
       loadAcceptedProfileFamilyRelationshipIds(viewerId),
@@ -4559,6 +4635,10 @@ async function loadViewerFeedContext(viewerId: string): Promise<ViewerFeedContex
       prisma.communityFollow.findMany({
         where: { userId: viewerId },
         select: { provinceCode: true, communitySlug: true, home: true, createdAt: true },
+      }),
+      prisma.topicFollow.findMany({
+        where: { userId: viewerId },
+        select: { topicSlug: true },
       }),
       prisma.businessFollow.findMany({
         where: { userId: viewerId },
@@ -4619,6 +4699,7 @@ async function loadViewerFeedContext(viewerId: string): Promise<ViewerFeedContex
     friendIds: new Set(friendIds),
     familyRelatedUserIds: new Set(familyRelatedUserIds),
     connectionIds: new Set(connectionIds),
+    followedTopicSlugs: new Set(topicFollows.map((row: { topicSlug: string }) => row.topicSlug)),
     followedBusinessIds: new Set(businessFollows.map((row) => row.businessId)),
     memberBusinessIds: new Set([...businessMemberships.map((row) => row.businessId), ...ownedBusinesses.map((row) => row.id)]),
     homeCommunityKey,
@@ -4638,6 +4719,16 @@ function resolveGeoLevel(post: FeedRankingPostRecord, context: ViewerFeedContext
   return 4
 }
 
+function countFollowedTopicMatches(post: Pick<FeedRankingPostRecord, 'topicSlugs'>, context: ViewerFeedContext | null) {
+  if (!context?.followedTopicSlugs.size || !post.topicSlugs.length) return 0
+
+  let matches = 0
+  for (const topicSlug of post.topicSlugs) {
+    if (context.followedTopicSlugs.has(topicSlug)) matches += 1
+  }
+  return matches
+}
+
 function resolveFeedCategory(post: FeedRankingPostRecord, scope: 'all' | 'friends' | 'network' | 'communities' | 'organizations', context: ViewerFeedContext | null): FeedCategory {
   if (scope === 'friends') return 'friends'
   if (scope === 'network') return 'network'
@@ -4647,6 +4738,8 @@ function resolveFeedCategory(post: FeedRankingPostRecord, scope: 'all' | 'friend
   const normalizedType = (post.type || '').trim().toLowerCase()
   if (normalizedType.includes('event')) return 'events'
   if (normalizedType.includes('market')) return 'marketplace'
+
+  const followedTopicMatchCount = countFollowedTopicMatches(post, context)
 
   if (context) {
     if (context.friendIds.has(post.authorId) || context.familyRelatedUserIds.has(post.authorId) || post.authorId === context.viewerId) {
@@ -4658,6 +4751,7 @@ function resolveFeedCategory(post: FeedRankingPostRecord, scope: 'all' | 'friend
     }
   }
 
+  if (followedTopicMatchCount > 0) return 'topics'
   if (post.businessId) return 'organizations'
   if (post.provinceCode && post.communitySlug) return 'community'
   return 'other'
@@ -4707,6 +4801,11 @@ function scoreFeedCandidate(args: {
     : ({ 1: 60, 2: 36, 3: 18, 4: 0 } as const)
   const geoBoost = geoBoostByScope[geoLevel]
   const category = resolveFeedCategory(args.post, args.scope, args.context)
+  const followedTopicMatchCount = countFollowedTopicMatches(args.post, args.context)
+  const topicMatchBoost =
+    args.scope === 'all' && followedTopicMatchCount > 0
+      ? 110 + Math.min(3, followedTopicMatchCount) * 45 + Math.max(0, 48 - ageHours) * 2.5
+      : 0
 
   const freshCommunityBoost =
     category === 'community'
@@ -4732,8 +4831,12 @@ function scoreFeedCandidate(args: {
     isViewerPost && args.scope === 'all'
       ? Math.exp(-ageHours / 18) * 420
       : isViewerPost
-        ? Math.exp(-ageHours / 24) * 180
-        : 0
+      ? Math.exp(-ageHours / 24) * 180
+      : 0
+  const viewerTopicAuthorBoost =
+    isViewerPost && args.scope === 'all' && followedTopicMatchCount > 0
+      ? 140 + Math.min(2, followedTopicMatchCount) * 55
+      : 0
 
   const lastViewedAtMs = args.lastViewedAt?.getTime() ?? null
   const isNewSinceLastView = lastViewedAtMs !== null && activityAtMs > lastViewedAtMs
@@ -4752,10 +4855,12 @@ function scoreFeedCandidate(args: {
     activityScore +
     engagementScore +
     geoBoost +
+    topicMatchBoost +
     freshCommunityBoost +
     interactionBoost +
     rediscoveryBoost +
     viewerAuthorBoost +
+    viewerTopicAuthorBoost +
     freshSinceLastViewBoost +
     dormantFeedFreshnessBoost -
     seenPenalty -
@@ -4912,6 +5017,7 @@ async function rankFeedPosts(args: {
       authorId: post.authorId,
       businessId: post.businessId ?? null,
       type: post.type,
+      topicSlugs: Array.isArray(post.hashtags) ? post.hashtags.map((tag) => tag.tag) : [],
       createdAt: post.createdAt,
       updatedAt: post.updatedAt,
       lastActivityAt: post.lastActivityAt,
@@ -5232,6 +5338,7 @@ registerPostInteractionRoutes(app, {
   DEFAULT_JURISDICTION,
   MAX_POLL_OPTIONS,
   POST_INCLUDE,
+  POST_NOTIFICATION_TYPES,
   buildCommentTree,
   buildPostSlugBase,
   canViewerAccessFamilyAudiencePost,
@@ -5283,6 +5390,16 @@ registerPostReadRoutes(app, {
   resolveLinkPreview,
   stripHtmlToPlainText,
   syncLegacyParentFamilyFeedPosts,
+  withSchemaGuard,
+})
+
+registerTopicRoutes(app, {
+  FAMILY_FEED_POST_TYPE,
+  POST_INCLUDE,
+  applyVisibleModerationFiltersToPostWhere,
+  formatPost,
+  loadViewerBlockState,
+  loadViewerPostFormattingContext,
   withSchemaGuard,
 })
 

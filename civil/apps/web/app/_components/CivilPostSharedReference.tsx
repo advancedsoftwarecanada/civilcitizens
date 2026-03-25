@@ -16,6 +16,10 @@ type CivilPostSharedReferenceProps = {
   isVerified?: boolean
   isBusiness?: boolean
   body?: string | null
+  mentions?: Array<{
+    handle: string
+    matchedHandle?: string | null
+  }>
   images?: string[] | null
   mediaUrl?: string | null
 }
@@ -31,6 +35,7 @@ export default function CivilPostSharedReference({
   isVerified = false,
   isBusiness = false,
   body,
+  mentions,
   images,
   mediaUrl,
 }: CivilPostSharedReferenceProps) {
@@ -51,7 +56,7 @@ export default function CivilPostSharedReference({
         />
       </Link>
       <div className="text-sm text-slate-800 [overflow-wrap:anywhere] break-words">
-        {body ? <LinkifiedText text={body} className="whitespace-pre-wrap" /> : null}
+        {body ? <LinkifiedText text={body} className="whitespace-pre-wrap" mentions={mentions} /> : null}
         {images && images.length > 0 ? (
           <Link href={href} className="mt-2 block">
             <CivilPostMedia images={images} mediaUrl={mediaUrl} postUrl={href} />
