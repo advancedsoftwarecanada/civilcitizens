@@ -484,6 +484,41 @@ export const ElectoralDistrictBrowserDistrictSchema = z.object({
   slug: z.string(),
   name: z.string(),
   provinceCode: z.string(),
+  party: z
+    .object({
+      slug: z.string(),
+      name: z.string(),
+      shortName: z.string().nullable(),
+    })
+    .nullable(),
+  partyStatus: z.enum(['seat', 'registered']).nullable(),
+  activeSeat: z
+    .object({
+      title: z.string(),
+      party: z
+        .object({
+          slug: z.string(),
+          name: z.string(),
+          shortName: z.string().nullable(),
+        })
+        .nullable(),
+      politician: z
+        .object({
+          slug: z.string(),
+          displayName: z.string(),
+          photoUrl: z.string().nullable(),
+        })
+        .nullable(),
+    })
+    .nullable(),
+  selectedPartyPolitician: z
+    .object({
+      slug: z.string().nullable(),
+      displayName: z.string(),
+      photoUrl: z.string().nullable(),
+      roleLabel: z.string().nullable(),
+    })
+    .nullable(),
   center: z.object({
     lat: z.number(),
     lng: z.number(),

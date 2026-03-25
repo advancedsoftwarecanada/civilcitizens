@@ -5,6 +5,7 @@ import Link from 'next/link'
 import DashboardShell from '../../../_components/DashboardShell'
 import CommunityRightRailClient from '../../../_components/CommunityRightRailClient'
 import PoliticianContactCard from '../../../_components/PoliticianContactCard'
+import PartyChip from '../../../_components/politics/PartyChip'
 import { buildApiUrl } from '../../../_lib/api'
 import { getProvinceDisplayName, normalizeProvinceCode } from '@civil/shared'
 
@@ -71,8 +72,24 @@ type CommunityPoliticiansResponse = {
         name: string
         shortName: string | null
       }
+      registeredMember: {
+        slug: string | null
+        displayName: string
+        photoUrl: string | null
+        roleLabel: string | null
+      } | null
     }>
   }
+}
+
+function buildInitials(displayName: string) {
+  return displayName
+    .split(/\s+/)
+    .map((segment) => segment.trim())
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((segment) => segment.charAt(0).toUpperCase())
+    .join('') || 'MP'
 }
 
 export default function CommunityPoliticiansPage({ params }: PageProps) {
@@ -145,6 +162,11 @@ export default function CommunityPoliticiansPage({ params }: PageProps) {
         {status === 'ready' ? (
           federalSeat?.politician ? (
             <div className="space-y-4">
+              {federalSeat.party ? (
+                <Link href={`/politicians/federal/${encodeURIComponent(federalSeat.party.slug)}`} className="inline-flex rounded-full">
+                  <PartyChip party={federalSeat.party} jurisdiction="federal" className="transition hover:brightness-95" />
+                </Link>
+              ) : null}
               <PoliticianContactCard
                 displayName={federalSeat.politician.displayName}
                 partyName={federalSeat.party?.shortName ?? federalSeat.party?.name ?? null}
@@ -157,20 +179,10 @@ export default function CommunityPoliticiansPage({ params }: PageProps) {
                 website={federalSeat.politician.contact.website}
                 hillOffice={federalSeat.politician.contact.hillOffice}
                 constituencyOffices={federalSeat.politician.contact.constituencyOffices}
-                lastScrapeAt={federalSeat.politician.lastScrapeAt}
-                lastXmlSyncAt={federalSeat.politician.lastXmlSyncAt}
-                lastHtmlSyncAt={federalSeat.politician.lastHtmlSyncAt}
               />
 
             </div>
-          ) : (
-            <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-              <p className="text-sm font-semibold text-slate-900">Pending scrape</p>
-              <p className="mt-2 text-sm text-slate-600">
-                The seat placeholder exists, but the current MP still needs to be scraped into the politicians database.
-              </p>
-            </div>
-          )
+          ) : null
         ) : null}
       </section>
 
@@ -189,12 +201,55 @@ export default function CommunityPoliticiansPage({ params }: PageProps) {
                 <div className="flex flex-wrap items-start justify-between gap-3">
                   <div>
                     <p className="text-base font-semibold text-slate-900">{association.associationName}</p>
-                    <p className="mt-1 text-sm text-slate-600">
-                      <Link href={`/politicians/federal/${encodeURIComponent(association.party.slug)}`} className="font-semibold text-[var(--cc-primary)] hover:underline">
-                        {association.party.shortName ?? association.party.name}
+                    <div className="mt-2 flex flex-wrap items-center gap-2">
+                      <Link href={`/politicians/federal/${encodeURIComponent(association.party.slug)}`} className="inline-flex rounded-full">
+                        <PartyChip party={association.party} jurisdiction="federal" className="transition hover:brightness-95" />
                       </Link>
-                      {association.registrationStatus ? ` · ${association.registrationStatus}` : ''}
-                    </p>
+                      {association.registrationStatus ? <span className="text-sm text-slate-600">{association.registrationStatus}</span> : null}
+                    </div>
+
+                    {association.registeredMember ? (
+                      <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-3 py-3">
+                        <div className="flex min-w-0 items-center gap-3">
+                          <div className="relative h-11 w-11 overflow-hidden rounded-full border border-slate-200 bg-white">
+                            {association.registeredMember.photoUrl ? (
+                              <img
+                                src={association.registeredMember.photoUrl}
+                                alt={association.registeredMember.displayName}
+                                className="h-full w-full object-cover"
+                                loading="lazy"
+                              />
+                            ) : (
+                              <div className="flex h-full w-full items-center justify-center text-sm font-semibold text-slate-500">
+                                {buildInitials(association.registeredMember.displayName)}
+                              </div>
+                            )}
+                          </div>
+
+                          <div className="min-w-0">
+                            {association.registeredMember.slug ? (
+                              <Link
+                                href={`/politicians/federal/${encodeURIComponent(association.party.slug)}/${encodeURIComponent(association.registeredMember.slug)}`}
+                                className="text-sm font-semibold text-slate-900 hover:text-[var(--cc-primary)] hover:underline"
+                              >
+                                {association.registeredMember.displayName}
+                              </Link>
+                            ) : (
+                              <p className="text-sm font-semibold text-slate-900">{association.registeredMember.displayName}</p>
+                            )}
+                          </div>
+                        </div>
+
+                        {association.registeredMember.slug ? (
+                          <Link
+                            href={`/politicians/federal/${encodeURIComponent(association.party.slug)}/${encodeURIComponent(association.registeredMember.slug)}`}
+                            className="inline-flex items-center rounded-full border border-[var(--cc-primary)]/20 bg-white px-3 py-1.5 text-xs font-semibold text-[var(--cc-primary)] hover:border-[var(--cc-primary)]/35"
+                          >
+                            View Profile
+                          </Link>
+                        ) : null}
+                      </div>
+                    ) : null}
                   </div>
                   <span className="rounded-full border border-slate-200 bg-slate-50 px-3 py-1 text-xs font-semibold uppercase tracking-wide text-slate-500">
                     Federal

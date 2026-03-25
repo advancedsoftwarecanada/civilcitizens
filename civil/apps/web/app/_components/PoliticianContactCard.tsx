@@ -1,3 +1,5 @@
+import Link from 'next/link'
+
 type PoliticianOffice = {
   label: string | null
   lines: string[]
@@ -13,13 +15,11 @@ type PoliticianContactCardProps = {
   photoUrl?: string | null
   profileUrl?: string | null
   xmlUrl?: string | null
+  communityHref?: string | null
   email?: string | null
   website?: string | null
   hillOffice?: PoliticianOffice | null
   constituencyOffices?: PoliticianOffice[]
-  lastScrapeAt?: string | null
-  lastXmlSyncAt?: string | null
-  lastHtmlSyncAt?: string | null
 }
 
 function buildInitials(displayName: string) {
@@ -84,16 +84,14 @@ export default function PoliticianContactCard({
   districtName,
   photoUrl,
   profileUrl,
-  xmlUrl,
+  communityHref,
   email,
   website,
   hillOffice,
   constituencyOffices = [],
-  lastScrapeAt,
-  lastXmlSyncAt,
-  lastHtmlSyncAt,
 }: PoliticianContactCardProps) {
-  const hasContactDetails = Boolean(email || website || hillOffice || constituencyOffices.length)
+  const hasDirectContact = Boolean(email || website)
+  const hasPrimaryOfficeDetails = Boolean(hillOffice)
 
   return (
     <div className="rounded-[1.75rem] border border-slate-200 bg-white p-5 shadow-subtle">
@@ -141,50 +139,47 @@ export default function PoliticianContactCard({
                 Email
               </a>
             ) : null}
-            {xmlUrl ? (
-              <a
-                href={xmlUrl}
-                target="_blank"
-                rel="noreferrer"
+            {communityHref ? (
+              <Link
+                href={communityHref}
                 className="inline-flex items-center rounded-full border border-slate-200 bg-white px-3 py-1.5 font-semibold text-slate-700 hover:border-slate-300"
               >
-                XML source
-              </a>
+                View Community
+              </Link>
             ) : null}
           </div>
         </div>
       </div>
 
-      <div className="mt-5 grid gap-3 lg:grid-cols-2">
-        <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
-          <p className="text-sm font-semibold text-slate-900">Direct contact</p>
-          {hasContactDetails ? (
-            <div className="mt-3 space-y-2 text-sm text-slate-700">
-              {email ? (
-                <p>
-                  <span className="font-semibold text-slate-900">Email:</span>{' '}
-                  <a href={`mailto:${email}`} className="text-[var(--cc-primary)] hover:underline">
-                    {email}
-                  </a>
-                </p>
-              ) : null}
-              {website ? (
-                <p>
-                  <span className="font-semibold text-slate-900">Website:</span>{' '}
-                  <a href={website} target="_blank" rel="noreferrer" className="text-[var(--cc-primary)] hover:underline">
-                    {website}
-                  </a>
-                </p>
-              ) : null}
-              {!email && !website && !hillOffice && !constituencyOffices.length ? <p className="text-slate-500">Contact details have not been scraped yet.</p> : null}
+      {hasDirectContact || hasPrimaryOfficeDetails ? (
+        <div className="mt-5 grid gap-3 lg:grid-cols-2">
+          {hasDirectContact ? (
+            <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+              <p className="text-sm font-semibold text-slate-900">Direct contact</p>
+              <div className="mt-3 space-y-2 text-sm text-slate-700">
+                {email ? (
+                  <p>
+                    <span className="font-semibold text-slate-900">Email:</span>{' '}
+                    <a href={`mailto:${email}`} className="text-[var(--cc-primary)] hover:underline">
+                      {email}
+                    </a>
+                  </p>
+                ) : null}
+                {website ? (
+                  <p>
+                    <span className="font-semibold text-slate-900">Website:</span>{' '}
+                    <a href={website} target="_blank" rel="noreferrer" className="text-[var(--cc-primary)] hover:underline">
+                      {website}
+                    </a>
+                  </p>
+                ) : null}
+              </div>
             </div>
-          ) : (
-            <p className="mt-3 text-sm text-slate-500">Contact details have not been scraped yet.</p>
-          )}
-        </div>
+          ) : null}
 
-        {hillOffice ? <OfficeBlock office={hillOffice} /> : <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-500">Hill office details have not been scraped yet.</div>}
-      </div>
+          {hillOffice ? <OfficeBlock office={hillOffice} /> : null}
+        </div>
+      ) : null}
 
       {constituencyOffices.length ? (
         <div className="mt-5 space-y-3">

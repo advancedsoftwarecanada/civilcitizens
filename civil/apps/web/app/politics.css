@@ -1,0 +1,87 @@
+.cc-party-chip {
+  --cc-party-surface: #475569;
+  --cc-party-border: rgba(15, 23, 42, 0.12);
+  --cc-party-mark: #475569;
+  --cc-party-text: #ffffff;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  min-height: 1.9rem;
+  border: 1px solid var(--cc-party-border);
+  border-radius: 9999px;
+  background: var(--cc-party-surface);
+  color: var(--cc-party-text);
+  padding: 0.26rem 0.75rem 0.26rem 0.32rem;
+  box-shadow: 0 8px 22px rgba(15, 23, 42, 0.08);
+  white-space: nowrap;
+}
+
+.cc-party-chip__mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.35rem;
+  height: 1.35rem;
+  border-radius: 9999px;
+  background: #ffffff;
+  color: var(--cc-party-mark);
+  font-size: 0.74rem;
+  font-weight: 800;
+  line-height: 1;
+}
+
+.cc-party-chip__label {
+  font-size: 0.78rem;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+  line-height: 1;
+}
+
+.cc-party-chip__jurisdiction {
+  font-size: 0.72rem;
+  font-weight: 700;
+  line-height: 1;
+  color: rgba(255, 255, 255, 0.86);
+}
+
+.cc-party-chip--cpc {
+  --cc-party-surface: #1d4ed8;
+  --cc-party-border: rgba(29, 78, 216, 0.34);
+  --cc-party-mark: #1d4ed8;
+}
+
+.cc-party-chip--lpc {
+  --cc-party-surface: #d52b1e;
+  --cc-party-border: rgba(213, 43, 30, 0.34);
+  --cc-party-mark: #d52b1e;
+}
+
+.cc-party-chip--ppc {
+  --cc-party-surface: #6d28d9;
+  --cc-party-border: rgba(109, 40, 217, 0.34);
+  --cc-party-mark: #6d28d9;
+}
+
+.cc-party-chip--ndp {
+  --cc-party-surface: #ea580c;
+  --cc-party-border: rgba(234, 88, 12, 0.34);
+  --cc-party-mark: #ea580c;
+}
+
+.cc-party-chip--gpc {
+  --cc-party-surface: #15803d;
+  --cc-party-border: rgba(21, 128, 61, 0.34);
+  --cc-party-mark: #15803d;
+}
+
+.cc-party-chip--bq {
+  --cc-party-surface: #0284c7;
+  --cc-party-border: rgba(2, 132, 199, 0.34);
+  --cc-party-mark: #0284c7;
+}
+
+.cc-party-chip--neutral {
+  --cc-party-surface: #475569;
+  --cc-party-border: rgba(71, 85, 105, 0.34);
+  --cc-party-mark: #475569;
+}
