@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Civil Rides DEV process manager.
+"""Civil Citizens DEV process manager.
 
 Goal: fast iteration without Docker rebuild loops.
 
@@ -12,7 +12,7 @@ Important storage rule:
     CybertronDev `civil` database.
 
 This manages on-host dev processes behind the CybertronDev nginx proxy:
-- dev.civilrides.ca -> nginx_mariadb_redis -> host:3900 -> CybertronDev nginx
+- dev.civilcitizens.ca -> nginx_mariadb_redis -> host:3900 -> CybertronDev nginx
 - /      -> Next dev server (host :33101 by default)
 - /api/  -> API dev server (host :3012 by default)
 - /media -> MinIO in CybertronDev
@@ -240,7 +240,7 @@ def _build_dev_env() -> dict[str, str]:
     env["DATABASE_URL"] = os.environ.get("DATABASE_URL", file_env.get("DATABASE_URL", default_database_url))
     env["REDIS_URL"] = os.environ.get("REDIS_URL", file_env.get("REDIS_URL", f"redis://localhost:{CYBERTRON_REDIS_PORT}"))
     env.setdefault("JWT_SECRET", "dev_secret")
-    env.setdefault("CIVIL_PUBLIC_HOST", "dev.civilrides.ca")
+    env.setdefault("CIVIL_PUBLIC_HOST", "dev.civilcitizens.ca")
     env.setdefault("NEXT_PUBLIC_API_BASE", "/api")
     env.setdefault("NEXT_PUBLIC_BASE_URL", f"https://{env['CIVIL_PUBLIC_HOST']}")
     env.setdefault("NEXT_PUBLIC_MEDIA_BASE_URL", f"https://{env['CIVIL_PUBLIC_HOST']}/media")
@@ -480,7 +480,7 @@ def start() -> int:
         if any(_is_repo_dev_process(pid) for pid in pids):
             stop()
             break
-        print(f"❌ Port {port} is already in use by a non-managed dev process.")
+        print(f"❌ Port {port} is already in use by a non-CivilCitizens process.")
         print("   Refusing to kill it. Free the port and retry.")
         return 1
 
@@ -613,7 +613,7 @@ def doctor() -> int:
     )
     redis_url = os.environ.get("REDIS_URL", file_env.get("REDIS_URL", f"redis://localhost:{CYBERTRON_REDIS_PORT}"))
     api_base = os.environ.get("NEXT_PUBLIC_API_BASE", file_env.get("NEXT_PUBLIC_API_BASE", "/api"))
-    public_host = os.environ.get("CIVIL_PUBLIC_HOST", file_env.get("CIVIL_PUBLIC_HOST", "dev.civilrides.ca"))
+    public_host = os.environ.get("CIVIL_PUBLIC_HOST", file_env.get("CIVIL_PUBLIC_HOST", "dev.civilcitizens.ca"))
     base_url = os.environ.get("NEXT_PUBLIC_BASE_URL", file_env.get("NEXT_PUBLIC_BASE_URL", f"https://{public_host}"))
     media_base = os.environ.get(
         "NEXT_PUBLIC_MEDIA_BASE_URL",
