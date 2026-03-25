@@ -24,7 +24,7 @@ import { pushToast } from '../../../../../_components/useToasts'
 import { hasHomeCommunity } from '../../../../../_lib/me'
 import { redirectToAuthModal } from '../../../../../_lib/authModal'
 import { buildPostShareTarget } from '../../../../../_lib/shareTarget'
-import { linkifyUrlsInHtml, stripCivilUrlsFromHtml, stripCivilUrlsFromText } from '../../../../../_lib/civilLinks'
+import { linkifyContentInHtml, stripCivilUrlsFromHtml, stripCivilUrlsFromText } from '../../../../../_lib/civilLinks'
 import { ensureViewerMe } from '../../../../../_lib/viewerMe'
 import { useViewerStore } from '../../../../../_lib/viewerStore'
 import { addCommentToTree, normalizeCommentTree, removeCommentFromTree, removeCommentsByAuthorFromTree, updateCommentInTree } from '../../../../../_lib/comments'
@@ -211,7 +211,10 @@ export default function ChamberPostPage({ params }: PageProps) {
   const shareTarget = useMemo(() => (post ? buildPostShareTarget(post) : null), [post])
   const postBodyWithoutCivilLinks = useMemo(() => stripCivilUrlsFromText(post?.body), [post?.body])
   const postArticleBodyWithoutCivilLinks = useMemo(() => stripCivilUrlsFromHtml(post?.body), [post?.body])
-  const linkedArticleBody = useMemo(() => linkifyUrlsInHtml(postArticleBodyWithoutCivilLinks), [postArticleBodyWithoutCivilLinks])
+  const linkedArticleBody = useMemo(
+    () => linkifyContentInHtml(postArticleBodyWithoutCivilLinks, { mentions: post?.mentions }),
+    [post?.mentions, postArticleBodyWithoutCivilLinks],
+  )
 
   const handleReact = useCallback(
     async (reaction: ReactionType | null) => {
@@ -682,7 +685,7 @@ export default function ChamberPostPage({ params }: PageProps) {
                   <div className="cc-article-rich-content" dangerouslySetInnerHTML={{ __html: linkedArticleBody }} />
                 ) : null
               ) : postBodyWithoutCivilLinks ? (
-                <LinkifiedText text={postBodyWithoutCivilLinks} className="whitespace-pre-wrap break-words" />
+                <LinkifiedText text={postBodyWithoutCivilLinks} className="whitespace-pre-wrap break-words" mentions={post.mentions} />
               ) : null}
               {post.linkPreview ? <LinkPreviewCard preview={post.linkPreview} /> : <CivilLinkPreviewList body={post.body} className="mt-3 space-y-2" />}
               {post.type === 'poll' && post.poll ? (

@@ -7,12 +7,14 @@ import { HiOutlineBell } from 'react-icons/hi2'
 import { buildApiUrl } from '../_lib/api'
 import { hasFamilyProfilesAvailable } from '../_lib/me'
 import { formatUserDisplayName } from '../_lib/text'
+import { formatTopicLabel } from '../_lib/topics'
 import { useViewerStore } from '../_lib/viewerStore'
 import { pushToast } from './useToasts'
 import VerifiedAvatar from './VerifiedAvatar'
 import Block from './Block'
 import CivilCard from './CivilCard'
 import FamilyRailBlock, { type SharedFamilyRailEntry } from './FamilyRailBlock'
+import TopicFollowButton from './TopicFollowButton'
 
 type RightRailData = {
   userHandle?: string
@@ -118,6 +120,16 @@ type CommunityOrganizationsRailGroup = {
   href: string
   communityHref: string
   items: CommunityOrganizationRailItem[]
+}
+
+type TopicRailItem = {
+  slug: string
+  href: string
+  recentPostCount?: number
+}
+
+type TopicRailResponse = {
+  items?: TopicRailItem[]
 }
 
 type ConnectionEntry = {
@@ -310,6 +322,15 @@ function shuffleItems<T>(items: T[]) {
   return next
 }
 
+function buildTopicHref(slug: string) {
+  return `/t/${encodeURIComponent(slug)}`
+}
+
+function formatTopicPostCount(value: number | undefined) {
+  if (typeof value !== 'number' || value <= 0) return null
+  return value === 1 ? '1 recent post' : `${value.toLocaleString()} recent posts`
+}
+
 export function RightRail({
   mode = 'default',
   showOrganizations = false,
@@ -357,6 +378,8 @@ export function RightRail({
   const [deliverySummaryItems, setDeliverySummaryItems] = useState<DeliverySummaryRailItem[]>([])
   const [familyMembers, setFamilyMembers] = useState<FamilyMemberRailItem[]>([])
   const [familyRelationships, setFamilyRelationships] = useState<ProfileFamilyRelationshipRailItem[]>([])
+  const [followedTopics, setFollowedTopics] = useState<TopicRailItem[]>([])
+  const [suggestedTopics, setSuggestedTopics] = useState<TopicRailItem[]>([])
 
   const getOrganizationHref = useCallback(
     (org: { provinceCode: string | null; communitySlug: string | null; slug: string }) => {
@@ -379,6 +402,7 @@ export function RightRail({
   const shouldLoadDeliverySummary = mode === 'drive' && showDriveCallout
   const shouldLoadHomeRail = !hideSocialBlocks
   const shouldLoadFamilyRail = !isFamilyLockedSession && mode === 'default' && viewer?.accountType === 'user'
+  const shouldLoadTopicsRail = !isFamilyLockedSession
 
   const subscribedOrganizations = useMemo(
     () => organizations.filter((org) => Boolean(org.provinceCode) && Boolean(org.communitySlug)),
@@ -493,7 +517,7 @@ export function RightRail({
     }
     try {
       const requests: Array<{
-        key: 'home' | 'follows' | 'owned' | 'memberships' | 'communityFollows' | 'connections' | 'friendRequests' | 'connectionRequests' | 'eventsSidebar' | 'workApplications' | 'deliverySummary' | 'family'
+        key: 'home' | 'follows' | 'owned' | 'memberships' | 'communityFollows' | 'connections' | 'friendRequests' | 'connectionRequests' | 'eventsSidebar' | 'workApplications' | 'deliverySummary' | 'family' | 'topicFollows' | 'topicSuggestions'
         promise: Promise<Response>
       }> = []
 
@@ -606,6 +630,23 @@ export function RightRail({
         })
       }
 
+      if (shouldLoadTopicsRail) {
+        requests.push({
+          key: 'topicFollows',
+          promise: fetch(buildApiUrl('/topics/follows'), {
+            headers: { authorization: `Bearer ${token}` },
+            cache: 'no-store',
+          }),
+        })
+        requests.push({
+          key: 'topicSuggestions',
+          promise: fetch(buildApiUrl('/topics/suggestions?limit=6'), {
+            headers: { authorization: `Bearer ${token}` },
+            cache: 'no-store',
+          }),
+        })
+      }
+
       const results = await Promise.all(requests.map((entry) => entry.promise))
       const byKey = new Map(requests.map((entry, index) => [entry.key, results[index] as Response]))
 
@@ -621,6 +662,8 @@ export function RightRail({
       const workApplicationsRes = byKey.get('workApplications')
       const deliverySummaryRes = byKey.get('deliverySummary')
       const familyRes = byKey.get('family')
+      const topicFollowsRes = byKey.get('topicFollows')
+      const topicSuggestionsRes = byKey.get('topicSuggestions')
 
       if (
         homeRes?.status === 401 ||
@@ -633,7 +676,8 @@ export function RightRail({
         connectionRequestsRes?.status === 401 ||
         eventsSidebarRes?.status === 401 ||
         workApplicationsRes?.status === 401 ||
-        familyRes?.status === 401
+        familyRes?.status === 401 ||
+        topicFollowsRes?.status === 401
       ) {
         setStatus('unauthorized')
         return
@@ -668,6 +712,10 @@ export function RightRail({
         if (!shouldLoadDeliverySummary) {
           setDeliverySummaryActive(false)
           setDeliverySummaryItems([])
+        }
+        if (!shouldLoadTopicsRail) {
+          setFollowedTopics([])
+          setSuggestedTopics([])
         }
         return
       }
@@ -862,12 +910,27 @@ export function RightRail({
         setFamilyRelationships([])
       }
 
+      if (topicFollowsRes?.ok) {
+        const payload = (await topicFollowsRes.json().catch(() => null)) as TopicRailResponse | null
+        setFollowedTopics(Array.isArray(payload?.items) ? payload.items : [])
+      } else {
+        setFollowedTopics([])
+      }
+
+      if (topicSuggestionsRes?.ok) {
+        const payload = (await topicSuggestionsRes.json().catch(() => null)) as TopicRailResponse | null
+        const suggestionItems = Array.isArray(payload?.items) ? payload.items : []
+        setSuggestedTopics(suggestionItems)
+      } else {
+        setSuggestedTopics([])
+      }
+
       setStatus('ready')
     } catch (err) {
       console.error(err)
       setStatus('error')
     }
-  }, [shouldLoadHomeRail, shouldLoadOrganizations, shouldLoadOwnedOrganizations, shouldLoadMemberOrganizations, shouldLoadCommunityOrganizations, shouldLoadConnections, shouldLoadPendingFriendRequests, shouldLoadPendingConnectionRequests, shouldLoadEventsSidebar, shouldLoadWorkApplications, shouldLoadDeliverySummary, shouldLoadFamilyRail, viewer?.handle, viewer?.homeCommunity?.communitySlug, viewer?.homeCommunity?.provinceCode])
+  }, [shouldLoadHomeRail, shouldLoadOrganizations, shouldLoadOwnedOrganizations, shouldLoadMemberOrganizations, shouldLoadCommunityOrganizations, shouldLoadConnections, shouldLoadPendingFriendRequests, shouldLoadPendingConnectionRequests, shouldLoadEventsSidebar, shouldLoadWorkApplications, shouldLoadDeliverySummary, shouldLoadFamilyRail, shouldLoadTopicsRail, viewer?.handle, viewer?.homeCommunity?.communitySlug, viewer?.homeCommunity?.provinceCode])
 
   useEffect(() => {
     void loadData()
@@ -907,6 +970,19 @@ export function RightRail({
     } finally {
       setPendingConnectionAction(null)
     }
+  }, [])
+
+  const handleTopicFollowChange = useCallback((topic: TopicRailItem, following: boolean) => {
+    if (following) {
+      setFollowedTopics((current) => {
+        if (current.some((item) => item.slug === topic.slug)) return current
+        return [{ ...topic, href: buildTopicHref(topic.slug) }, ...current]
+      })
+      setSuggestedTopics((current) => current.filter((item) => item.slug !== topic.slug))
+      return
+    }
+
+    setFollowedTopics((current) => current.filter((item) => item.slug !== topic.slug))
   }, [])
 
   if (status === 'loading') {
@@ -1480,6 +1556,52 @@ export function RightRail({
             </ul>
           ) : (
             <p className="text-sm text-slate-500">{railOrganizationsEmptyLabel}</p>
+          )}
+        </Block>
+      ) : null}
+
+      {!isFamilyLockedSession ? (
+        <Block title="Suggested Topics" action={{ label: 'Browse', href: '/topics' }}>
+          {suggestedTopics.length ? (
+            <ul className="space-y-3">
+              {suggestedTopics.map((topic) => (
+                <li key={topic.slug} className="flex items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
+                  <div className="min-w-0">
+                    <Link href={topic.href || buildTopicHref(topic.slug)} className="block text-sm font-semibold text-slate-900 hover:text-[var(--cc-primary)]">
+                      #{topic.slug}
+                    </Link>
+                    <p className="truncate text-xs text-slate-500">
+                      {formatTopicPostCount(topic.recentPostCount) ?? (formatTopicLabel(topic.slug) || topic.slug)}
+                    </p>
+                  </div>
+                  <TopicFollowButton slug={topic.slug} size="sm" onChange={(following) => handleTopicFollowChange(topic, following)} />
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="text-sm text-slate-500">No suggested topics right now.</p>
+          )}
+        </Block>
+      ) : null}
+
+      {!isFamilyLockedSession ? (
+        <Block title="Your Topics" action={{ label: 'View all', href: '/topics' }}>
+          {followedTopics.length ? (
+            <ul className="space-y-3">
+              {followedTopics.map((topic) => (
+                <li key={topic.slug} className="flex items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-3">
+                  <div className="min-w-0">
+                    <Link href={topic.href || buildTopicHref(topic.slug)} className="block text-sm font-semibold text-slate-900 hover:text-[var(--cc-primary)]">
+                      #{topic.slug}
+                    </Link>
+                    <p className="truncate text-xs text-slate-500">{formatTopicLabel(topic.slug) || topic.slug}</p>
+                  </div>
+                  <TopicFollowButton slug={topic.slug} initialFollowing size="sm" onChange={(following) => handleTopicFollowChange(topic, following)} />
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="text-sm text-slate-500">No topics followed yet.</p>
           )}
         </Block>
       ) : null}

@@ -60,7 +60,7 @@ export const CreatePostInput = z
     body: z.string().max(20000).optional(),
     mediaUrl: z.string().url().optional(),
     images: z.array(z.string().url()).optional(),
-    hashtags: z.array(z.string().regex(/^#[A-Za-z0-9_]{1,50}$/)).max(10).optional(),
+    hashtags: z.array(z.string().regex(/^#[A-Za-z0-9_-]{1,50}$/)).max(10).optional(),
     communityProvince: z.string().trim().min(2).max(32).optional(),
     communitySlug: z.string().trim().min(1).max(160).optional(),
     jurisdiction: JurisdictionEnum.optional(),
@@ -733,6 +733,6 @@ export const UpdatePostInput = z.object({
     .optional(),
   body: z.string().max(20000).optional(),
   mediaUrl: z.string().url().optional().nullable(),
-  hashtags: z.array(z.string().regex(/^#[A-Za-z0-9_]{1,50}$/)).max(10).optional(),
+  hashtags: z.array(z.string().regex(/^#[A-Za-z0-9_-]{1,50}$/)).max(10).optional(),
   showBusinessAuthor: z.boolean().optional(),
 })

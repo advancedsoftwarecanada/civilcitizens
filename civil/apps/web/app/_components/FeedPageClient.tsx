@@ -308,25 +308,11 @@ function markSmartFeedPostSeen(scope: FeedScope, postId: string) {
 }
 
 function orderSmartFeedPosts(items: ApiPost[], seenIds: Set<string>, seed: string, scope: FeedScope) {
-  const nowMs = Date.now()
-  const scorePost = (post: ApiPost) => {
-    const createdAtMs = Date.parse(post.createdAt)
-    const ageHours = Number.isFinite(createdAtMs) ? Math.max(0, nowMs - createdAtMs) / (1000 * 60 * 60) : 9999
-    const scopeWindowHours = scope === 'communities' ? 96 : 72
-    const scopeRecencyWeight = scope === 'communities' ? 1.45 : 1.2
-    const hotScore = Number(post.metrics?.hotScore ?? 0)
-    const homeCommunityBoost = scope === 'communities' && post.communitySlug ? 18 : 0
-    const recencyBoost = Math.max(0, scopeWindowHours - ageHours) * scopeRecencyWeight
-    const hotBoost = Math.log1p(Math.max(0, hotScore)) * (scope === 'communities' ? 9 : 6)
-    const jitter = hashSmartFeedValue(`${scope}:${seed}:${post.id}`) * (scope === 'communities' ? 120 : 100)
-    return recencyBoost + hotBoost + homeCommunityBoost + jitter
-  }
-
+  void seed
+  void scope
   const deduped = dedupePostsById(items)
   const unseen = deduped.filter((post) => !seenIds.has(post.id))
   const seen = deduped.filter((post) => seenIds.has(post.id))
-  unseen.sort((left, right) => scorePost(right) - scorePost(left))
-  seen.sort((left, right) => scorePost(right) - scorePost(left))
   return [...unseen, ...seen]
 }
 

@@ -53,6 +53,7 @@ model User {
   blockedUsers              UserBlock[]          @relation("UserBlocksCreated")
   blockedByUsers            UserBlock[]          @relation("UserBlocksReceived")
   communityFollows          CommunityFollow[]
+  topicFollows              TopicFollow[]
   comments                  Comment[]
   commentVotes              CommentVote[]
   contentReportsFiled       ContentReport[]      @relation("ContentReportReporter")
@@ -62,6 +63,7 @@ model User {
   supportRequestsReviewed   SupportRequest[]     @relation("SupportRequestReviewer")
   experiences               Experience[]
   mediaAssets               MediaAsset[]         @relation("UserMediaAssets")
+  mentionedInPosts          PostMention[]
   posts                     Post[]
   pollVotes                 PollVote[]
   avatarMedia               MediaAsset?          @relation("AvatarMedia", fields: [avatarMediaId], references: [id])
@@ -197,6 +199,8 @@ model Post {
   avatarOwner    User?         @relation("AvatarPost")
   coverOwner     User?         @relation("CoverPost")
   hashtags       PostHashtag[]
+  communityTags  PostCommunityTag[]
+  mentions       PostMention[]
   votes          Vote[]
   reactions      PostReaction[]
   poll           Poll?
@@ -843,16 +847,49 @@ model Hashtag {
   tag       String        @id
   createdAt DateTime      @default(now())
   posts     PostHashtag[]
+  followers TopicFollow[]
 }
 
 model PostHashtag {
   postId String
   tag    String
-  post   Post    @relation(fields: [postId], references: [id])
+  post   Post    @relation(fields: [postId], references: [id], onDelete: Cascade)
   hash   Hashtag @relation(fields: [tag], references: [tag])
 
   @@id([postId, tag])
   @@index([tag])
+}
+
+model TopicFollow {
+  userId     String
+  topicSlug  String
+  createdAt  DateTime @default(now())
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  hashtag    Hashtag  @relation(fields: [topicSlug], references: [tag], onDelete: Cascade)
+
+  @@id([userId, topicSlug])
+  @@index([topicSlug])
+}
+
+model PostCommunityTag {
+  postId        String
+  communitySlug String
+  post          Post   @relation(fields: [postId], references: [id], onDelete: Cascade)
+
+  @@id([postId, communitySlug])
+  @@index([communitySlug])
+}
+
+model PostMention {
+  postId         String
+  userId         String
+  handleSnapshot String
+  post           Post   @relation(fields: [postId], references: [id], onDelete: Cascade)
+  user           User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([postId, userId])
+  @@index([userId])
+  @@index([handleSnapshot])
 }
 
 model Experience {

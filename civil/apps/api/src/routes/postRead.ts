@@ -242,6 +242,7 @@ export function registerPostReadRoutes(app: FastifyInstance, deps: PostReadDeps)
         const includeNetwork = scope === 'all' || scope === 'network'
         const includeCommunities = scope === 'all' || scope === 'communities'
         const includeOrganizations = scope === 'all' || scope === 'organizations'
+        const includeTopics = scope === 'all'
 
         const accessibleFilters: Prisma.PostWhereInput[] = []
 
@@ -347,6 +348,42 @@ export function registerPostReadRoutes(app: FastifyInstance, deps: PostReadDeps)
           )
           if (businessIds.length) {
             accessibleFilters.push({ businessId: { in: businessIds } })
+          }
+        }
+
+        if (includeTopics) {
+          const followedTopicSlugs = Array.from(viewerFeedContext.followedTopicSlugs ?? []).filter(
+            (slug: unknown): slug is string => typeof slug === 'string' && slug.trim().length > 0,
+          )
+          if (followedTopicSlugs.length) {
+            accessibleFilters.push({
+              OR: [
+                {
+                  audience: 'network',
+                  hashtags: {
+                    some: {
+                      tag: { in: followedTopicSlugs },
+                    },
+                  },
+                },
+                {
+                  audience: 'community',
+                  hashtags: {
+                    some: {
+                      tag: { in: followedTopicSlugs },
+                    },
+                  },
+                },
+                {
+                  audience: 'organization',
+                  hashtags: {
+                    some: {
+                      tag: { in: followedTopicSlugs },
+                    },
+                  },
+                },
+              ],
+            })
           }
         }
 

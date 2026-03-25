@@ -370,6 +370,10 @@ export function getNotificationMessage(notification: NotificationItem) {
       const snippet = formatReplySnippet(notification)
       return snippet ? `commented: "${snippet}"` : 'commented on your post'
     }
+    case 'post_mention': {
+      const snippet = formatReplySnippet(notification)
+      return snippet ? `mentioned you: "${snippet}"` : 'mentioned you in a post'
+    }
     case 'message':
     case 'message_created':
     case 'message.created': {

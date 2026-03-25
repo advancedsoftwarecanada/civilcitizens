@@ -27,7 +27,7 @@ import { pushToast } from '../../../../_components/useToasts'
 import { redirectToAuthModal } from '../../../../_lib/authModal'
 import { buildApiUrl } from '../../../../_lib/api'
 import { buildPostShareTarget } from '../../../../_lib/shareTarget'
-import { linkifyUrlsInHtml, stripCivilUrlsFromHtml, stripCivilUrlsFromText } from '../../../../_lib/civilLinks'
+import { linkifyContentInHtml, stripCivilUrlsFromHtml, stripCivilUrlsFromText } from '../../../../_lib/civilLinks'
 import { getStoredToken } from '../../../../_lib/tokenStorage'
 import { ensureViewerMe } from '../../../../_lib/viewerMe'
 import { useViewerStore } from '../../../../_lib/viewerStore'
@@ -294,7 +294,10 @@ export default function UserPostPage({ params }: PageProps) {
   const shareTarget = useMemo(() => (post ? buildPostShareTarget(post) : null), [post])
   const postBodyWithoutCivilLinks = useMemo(() => stripCivilUrlsFromText(post?.body), [post?.body])
   const postArticleBodyWithoutCivilLinks = useMemo(() => stripCivilUrlsFromHtml(post?.body), [post?.body])
-  const linkedArticleBody = useMemo(() => linkifyUrlsInHtml(postArticleBodyWithoutCivilLinks), [postArticleBodyWithoutCivilLinks])
+  const linkedArticleBody = useMemo(
+    () => linkifyContentInHtml(postArticleBodyWithoutCivilLinks, { mentions: post?.mentions }),
+    [post?.mentions, postArticleBodyWithoutCivilLinks],
+  )
 
   const handleReact = useCallback(
     async (reaction: ReactionType | null) => {
@@ -623,7 +626,7 @@ export default function UserPostPage({ params }: PageProps) {
                         ) : null
                       ) : postBodyWithoutCivilLinks ? (
                         <div className="rounded-2xl bg-slate-50 px-4 py-3 text-[17px] leading-7 text-slate-900">
-                          <LinkifiedText text={postBodyWithoutCivilLinks} className="whitespace-pre-wrap break-words" />
+                          <LinkifiedText text={postBodyWithoutCivilLinks} className="whitespace-pre-wrap break-words" mentions={post.mentions} />
                         </div>
                       ) : null}
                       {post.linkPreview ? <LinkPreviewCard preview={post.linkPreview} /> : <CivilLinkPreviewList body={post.body} />}
