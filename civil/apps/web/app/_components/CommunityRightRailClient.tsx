@@ -9,6 +9,7 @@ import { buildApiUrl } from '../_lib/api'
 import CivilCard from './CivilCard'
 import OrganizationCreateButton from '../com/_components/OrganizationCreateButton'
 import { CivilDistrictMap } from './map/CivilDistrictMap'
+import PartyChip from './politics/PartyChip'
 
 type CommunityOrganization = {
   id: string
@@ -40,6 +41,7 @@ type CommunityPoliticiansResponse = {
         id: string
         slug: string
         displayName: string
+        photoUrl: string | null
         lastScrapeAt: string | null
       } | null
       party?: {
@@ -69,6 +71,16 @@ function canUseMapStyle(styleUrl: string | null | undefined) {
 }
 
 const numberFormatter = new Intl.NumberFormat('en-CA')
+
+function buildInitials(displayName: string) {
+  const parts = displayName
+    .split(/\s+/)
+    .map((entry) => entry.trim())
+    .filter(Boolean)
+    .slice(0, 2)
+
+  return parts.map((entry) => entry.charAt(0).toUpperCase()).join('') || 'MP'
+}
 
 function shuffleOrganizations<T>(items: T[]): T[] {
   const next = [...items]
@@ -203,17 +215,9 @@ export default function CommunityRightRailClient({
       .slice(0, 5)
   }, [organizations])
 
-  const federalSeatLabel = useMemo(() => {
-    if (!federalSeat) return ''
-    const politicianName = federalSeat.politician?.displayName?.trim()
-    const partyName = federalSeat.party?.shortName?.trim() || federalSeat.party?.name?.trim() || ''
-    if (politicianName && partyName) return `${politicianName}, ${partyName}`
-    if (politicianName) return politicianName
-    return ''
-  }, [federalSeat])
-
   const dataLoaderDiv = <div className="mt-2 h-4 w-28 animate-pulse rounded bg-slate-200" />
   const electoralDistrictName = districtPreview?.district?.name ?? communityName
+  const federalPartyHref = federalSeat?.party ? `/politicians/federal/${encodeURIComponent(federalSeat.party.slug)}` : null
 
   return (
     <div className="space-y-6">
@@ -229,20 +233,6 @@ export default function CommunityRightRailClient({
             <dt className="font-semibold text-slate-600">Province</dt>
             <dd className="mt-1 text-slate-900">{provinceName}</dd>
           </div>
-          <div className="rounded-xl border border-slate-200 bg-white px-3 py-2">
-            <div className="flex items-center justify-between gap-3">
-              <div>
-                <dt className="font-semibold text-slate-600">MP</dt>
-                <dd className="mt-1 min-h-6 text-slate-900">{loadingCommunityData ? dataLoaderDiv : federalSeatLabel}</dd>
-              </div>
-              <Link
-                href={`/${encodeURIComponent(province.toLowerCase())}/${encodeURIComponent(municipality.toLowerCase())}/politicians`}
-                className="text-xs font-semibold text-[var(--cc-primary)] hover:underline"
-              >
-                View all
-              </Link>
-            </div>
-          </div>
         </dl>
       </Block>
 
@@ -251,11 +241,12 @@ export default function CommunityRightRailClient({
           <div className="space-y-3">
             <div className="h-44 animate-pulse rounded-[24px] border border-slate-200 bg-slate-100" />
             <div className="h-4 w-36 animate-pulse rounded bg-slate-200" />
+            <div className="h-28 animate-pulse rounded-2xl border border-slate-200 bg-slate-100" />
           </div>
         ) : districtPreview?.district ? (
           <div className="space-y-3">
             {canUseMapStyle(districtPreview.styleUrl) ? (
-              <CivilDistrictMap context={districtPreview} />
+              <CivilDistrictMap context={districtPreview} party={federalSeat?.party ?? null} showUserLocation={false} />
             ) : (
               <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-4 text-sm text-amber-900">
                 District data loaded, but the map preview is unavailable because the tile server is not usable from this page.
@@ -263,8 +254,59 @@ export default function CommunityRightRailClient({
             )}
             <div className="rounded-xl border border-slate-200 bg-white px-3 py-3">
               <p className="text-sm font-semibold text-slate-900">{electoralDistrictName}</p>
-              <p className="mt-1 text-xs text-slate-500">Federal electoral district boundary for this community.</p>
+              <div className="mt-2 flex flex-wrap items-center gap-2">
+                {federalSeat?.party ? (
+                  federalPartyHref ? (
+                    <Link href={federalPartyHref} className="inline-flex rounded-full">
+                      <PartyChip party={federalSeat.party} jurisdiction="federal" className="transition hover:brightness-95" />
+                    </Link>
+                  ) : (
+                    <PartyChip party={federalSeat.party} jurisdiction="federal" />
+                  )
+                ) : null}
+                <p className="text-xs text-slate-500">Federal electoral district boundary for this community.</p>
+              </div>
             </div>
+            {federalSeat?.politician ? (
+              <div className="rounded-xl border border-slate-200 bg-white px-3 py-3">
+                <div className="space-y-3">
+                  <div className="flex items-start gap-3">
+                    <div className="relative h-16 w-16 shrink-0 overflow-hidden rounded-2xl border border-slate-200 bg-slate-100">
+                      {federalSeat.politician.photoUrl ? (
+                        <img src={federalSeat.politician.photoUrl} alt={federalSeat.politician.displayName} className="h-full w-full object-cover" loading="lazy" />
+                      ) : (
+                        <div className="flex h-full w-full items-center justify-center text-sm font-semibold text-slate-500">
+                          {buildInitials(federalSeat.politician.displayName)}
+                        </div>
+                      )}
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      {federalSeat.party ? (
+                        <div className="mb-3">
+                          {federalPartyHref ? (
+                            <Link href={federalPartyHref} className="inline-flex rounded-full">
+                              <PartyChip party={federalSeat.party} jurisdiction="federal" className="transition hover:brightness-95" />
+                            </Link>
+                          ) : (
+                            <PartyChip party={federalSeat.party} jurisdiction="federal" />
+                          )}
+                        </div>
+                      ) : null}
+                      <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">Federal Member of Parliament</p>
+                      <p className="mt-1 text-lg font-semibold text-slate-900">{federalSeat.politician.displayName}</p>
+                    </div>
+                  </div>
+                  <div className="flex justify-end">
+                    <Link
+                      href={`/${encodeURIComponent(province.toLowerCase())}/${encodeURIComponent(municipality.toLowerCase())}/politicians`}
+                      className="inline-flex items-center justify-center rounded-full border border-[var(--cc-primary)] bg-white px-3 py-1.5 text-xs font-semibold text-[var(--cc-primary)] transition hover:bg-[var(--cc-primary)]/5"
+                    >
+                      View all
+                    </Link>
+                  </div>
+                </div>
+              </div>
+            ) : null}
           </div>
         ) : (
           <p className="text-sm text-slate-500">Sign in to load the electoral district boundary map.</p>

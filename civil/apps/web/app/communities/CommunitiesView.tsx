@@ -19,6 +19,7 @@ import { redirectToAuthModal } from '../_lib/authModal'
 import { clearAuthSession } from '../_lib/authSession'
 import { buildApiUrl } from '../_lib/api'
 import DashboardShell from '../_components/DashboardShell'
+import PartyChip from '../_components/politics/PartyChip'
 import { getAuthedEntryPath, type MeResponse } from '../_lib/me'
 import { useViewerStore } from '../_lib/viewerStore'
 import { ensureViewerMe } from '../_lib/viewerMe'
@@ -1277,7 +1278,10 @@ export function CommunitiesView({ mode = 'default' }: { mode?: CommunitiesPageMo
                         {isHome ? <HiMiniStar className="h-4 w-4 text-emerald-600" /> : <span className="text-xs font-semibold text-blue-700">{avatarInitial}</span>}
                       </span>
                       <div>
-                        <div className="text-lg font-semibold text-slate-900">{cityLabel}</div>
+                        <div className="flex flex-wrap items-center gap-2">
+                          <div className="text-lg font-semibold text-slate-900">{cityLabel}</div>
+                          {matchingDistrict?.party ? <PartyChip party={matchingDistrict.party} jurisdiction="federal" /> : null}
+                        </div>
                       </div>
                     </div>
                     <div className="flex flex-col items-start gap-2 sm:items-end">
@@ -1964,7 +1968,10 @@ export function CommunitiesView({ mode = 'default' }: { mode?: CommunitiesPageMo
               <div key={key} className={`rounded-3xl border p-5 ${isHome ? 'border-emerald-300 bg-emerald-50/70' : isFollowing ? 'border-blue-300 bg-blue-50/70' : 'border-slate-200 bg-white'}`}>
                 <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                   <div>
-                    <div className="text-lg font-semibold text-slate-900">{district.name}</div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <div className="text-lg font-semibold text-slate-900">{district.name}</div>
+                      {district.party ? <PartyChip party={district.party} jurisdiction="federal" /> : null}
+                    </div>
                     <div className="mt-1 flex flex-wrap gap-3 text-sm text-slate-600">
                       <span>{district.followerCount.toLocaleString()} followers</span>
                       <span>{district.postsToday.toLocaleString()} posts today</span>

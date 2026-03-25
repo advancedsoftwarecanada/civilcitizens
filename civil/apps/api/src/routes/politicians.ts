@@ -13,7 +13,7 @@ import {
 import { XMLParser } from 'fast-xml-parser'
 import { COMMUNITIES, PROVINCES, findCommunity, normalizeProvinceCode, slugifyCommunityName } from '@civil/shared'
 import { z } from 'zod'
-import { resolveCommunityElectoralDistrictContext } from '../geospatial.js'
+import { browseFederalPartyDistricts, resolveCommunityElectoralDistrictContext } from '../geospatial.js'
 
 type CommunityLookupRecord = (typeof COMMUNITIES)[number]
 
@@ -33,6 +33,10 @@ const FEDERAL_PARTY_QUERY = z.object({
 
 const FEDERAL_PARTY_PARAMS = z.object({
   partySlug: z.string().trim().min(1).max(120),
+})
+
+const FEDERAL_PARTY_DISTRICTS_QUERY = z.object({
+  provinceCode: z.string().trim().max(40).optional(),
 })
 
 const FEDERAL_MEMBER_PARAMS = z.object({
@@ -1508,6 +1512,25 @@ function readOurCommonsLinks(metadata: Prisma.JsonValue | null) {
   return { profileUrl, xmlUrl }
 }
 
+function readAssociationRepresentative(metadata: Prisma.JsonValue | null): { displayName: string; roleLabel: string } | null {
+  if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) return null
+  const source = (metadata as Record<string, unknown>).source
+  if (!source || typeof source !== 'object' || Array.isArray(source)) return null
+  const sourceRecord = source as Record<string, unknown>
+
+  const ceoName = typeof sourceRecord.ceoName === 'string' ? sourceRecord.ceoName.trim() : ''
+  if (ceoName) {
+    return { displayName: ceoName, roleLabel: '' }
+  }
+
+  const financialAgentName = typeof sourceRecord.financialAgentName === 'string' ? sourceRecord.financialAgentName.trim() : ''
+  if (financialAgentName) {
+    return { displayName: financialAgentName, roleLabel: '' }
+  }
+
+  return null
+}
+
 async function enqueueFederalMemberDetailScrapes(queue: Queue<{ scrapeJobId: string }>): Promise<FederalMemberDetailFetchSummary> {
   const enqueuedAt = new Date().toISOString()
   const politicians = await prisma.politician.findMany({
@@ -1741,6 +1764,12 @@ export function registerPoliticianRoutes(app: FastifyInstance, deps: Politicians
 
     let seat: Awaited<ReturnType<typeof prisma.politicalSeat.findUnique>> = null
     let associations: Awaited<ReturnType<typeof prisma.politicalDistrictAssociation.findMany>> = []
+    let politiciansByPartyId = new Map<string, {
+      slug: string
+      displayName: string
+      photoUrl: string | null
+      roleLabel: string
+    }>()
 
     try {
       ;[seat, associations] = await Promise.all([
@@ -1777,6 +1806,35 @@ export function registerPoliticianRoutes(app: FastifyInstance, deps: Politicians
           },
         }),
       ])
+
+      const partyIds = associations.map((association: (typeof associations)[number]) => association.party.id)
+      if (partyIds.length) {
+        const politicians = await prisma.politician.findMany({
+          where: {
+            jurisdiction: PoliticalJurisdiction.FEDERAL,
+            provinceCode,
+            communitySlug: community.slug,
+            partyId: { in: partyIds },
+          },
+          orderBy: [{ displayName: 'asc' }],
+          select: {
+            partyId: true,
+            slug: true,
+            displayName: true,
+            metadata: true,
+          },
+        })
+
+        politicians.forEach((politician: (typeof politicians)[number]) => {
+          if (!politician.partyId || politiciansByPartyId.has(politician.partyId)) return
+          politiciansByPartyId.set(politician.partyId, {
+            slug: politician.slug,
+            displayName: politician.displayName,
+            photoUrl: readOurCommonsProfile(politician.metadata).photoUrl,
+            roleLabel: '',
+          })
+        })
+      }
     } catch (error) {
       if (!isPoliticalStorageUnavailableError(error)) throw error
     }
@@ -1811,19 +1869,34 @@ export function registerPoliticianRoutes(app: FastifyInstance, deps: Politicians
               lastScrapeAt: readLastScrapeAt(seat.metadata),
             }
           : null,
-        associations: associations.map((association: (typeof associations)[number]) => ({
-          id: association.id,
-          associationName: association.associationName,
-          registrationStatus: association.registrationStatus,
-          registeredAt: association.registeredAt?.toISOString() ?? null,
-          deregisteredAt: association.deregisteredAt?.toISOString() ?? null,
-          party: {
-            id: association.party.id,
-            slug: association.party.slug,
-            name: association.party.name,
-            shortName: association.party.shortName,
-          },
-        })),
+        associations: associations.map((association: (typeof associations)[number]) => {
+          const linkedPolitician = politiciansByPartyId.get(association.party.id) ?? null
+          const fallbackRepresentative = linkedPolitician ? null : readAssociationRepresentative(association.metadata)
+
+          return {
+            id: association.id,
+            associationName: association.associationName,
+            registrationStatus: association.registrationStatus,
+            registeredAt: association.registeredAt?.toISOString() ?? null,
+            deregisteredAt: association.deregisteredAt?.toISOString() ?? null,
+            party: {
+              id: association.party.id,
+              slug: association.party.slug,
+              name: association.party.name,
+              shortName: association.party.shortName,
+            },
+            registeredMember: linkedPolitician
+              ? linkedPolitician
+              : fallbackRepresentative
+                ? {
+                    slug: null,
+                    displayName: fallbackRepresentative.displayName,
+                    photoUrl: null,
+                    roleLabel: fallbackRepresentative.roleLabel,
+                  }
+                : null,
+          }
+        }),
       },
     })
   })
@@ -1858,6 +1931,7 @@ export function registerPoliticianRoutes(app: FastifyInstance, deps: Politicians
     if (!query.success) return reply.code(400).send({ error: query.error.flatten() })
 
     let items: Awaited<ReturnType<typeof prisma.politicalParty.findMany>> = []
+    let registeredAssociationCounts: Array<{ partyId: string; _count: { _all: number } }> = []
     try {
       items = await prisma.politicalParty.findMany({
         where: {
@@ -1886,9 +1960,33 @@ export function registerPoliticianRoutes(app: FastifyInstance, deps: Politicians
           },
         },
       })
+
+      const partyIds = items.map((party: (typeof items)[number]) => party.id)
+      if (partyIds.length) {
+        registeredAssociationCounts = await prisma.politicalDistrictAssociation.groupBy({
+          by: ['partyId'],
+          where: {
+            partyId: { in: partyIds },
+            deregisteredAt: null,
+            NOT: {
+              registrationStatus: {
+                contains: 'deregister',
+                mode: 'insensitive',
+              },
+            },
+          },
+          _count: {
+            _all: true,
+          },
+        })
+      }
     } catch (error) {
       if (!isPoliticalStorageUnavailableError(error)) throw error
     }
+
+    const registeredAssociationCountByPartyId = new Map(
+      registeredAssociationCounts.map((entry) => [entry.partyId, entry._count._all]),
+    )
 
     return reply.send({
       items: items.map((party: (typeof items)[number]) => ({
@@ -1897,6 +1995,7 @@ export function registerPoliticianRoutes(app: FastifyInstance, deps: Politicians
         name: party.name,
         shortName: party.shortName,
         associationCount: party._count.associations,
+        registeredAssociationCount: registeredAssociationCountByPartyId.get(party.id) ?? 0,
         politicianCount: party._count.politicians,
         seatCount: party._count.seats,
         updatedAt: party.updatedAt.toISOString(),
@@ -2003,6 +2102,35 @@ export function registerPoliticianRoutes(app: FastifyInstance, deps: Politicians
         deregisteredAt: association.deregisteredAt?.toISOString() ?? null,
       })),
     })
+  })
+
+  app.get('/politicians/federal/:partySlug/districts', async (req: FastifyRequest, reply: FastifyReply) => {
+    const params = FEDERAL_PARTY_PARAMS.safeParse(req.params)
+    const query = FEDERAL_PARTY_DISTRICTS_QUERY.safeParse(req.query)
+    if (!params.success || !query.success) return reply.code(400).send({ error: 'invalid_params' })
+
+    const rawProvinceCode = query.data.provinceCode?.trim().toLowerCase() || null
+    const provinceCode = !rawProvinceCode || rawProvinceCode === 'all' || rawProvinceCode === 'ca'
+      ? null
+      : normalizeProvinceCode(rawProvinceCode)
+    if (rawProvinceCode && rawProvinceCode !== 'all' && rawProvinceCode !== 'ca' && !provinceCode) {
+      return reply.code(400).send({ error: 'invalid_params' })
+    }
+
+    try {
+      const payload = await browseFederalPartyDistricts({
+        partySlug: params.data.partySlug,
+        provinceCode,
+      })
+
+      return reply.send(payload)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'party_districts_failed'
+      if (message === 'party_not_found') return reply.code(404).send({ error: message })
+      if (message === 'postgis_not_enabled') return reply.code(503).send({ error: message })
+      req.log.error({ err: error }, 'party_districts_failed')
+      return reply.code(500).send({ error: 'party_districts_failed' })
+    }
   })
 
   app.get('/politicians/federal/:partySlug/:memberSlug', async (req: FastifyRequest, reply: FastifyReply) => {

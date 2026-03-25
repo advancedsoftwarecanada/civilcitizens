@@ -1,4 +1,4 @@
-import { prisma, Prisma } from '@civil/db'
+import { prisma, PoliticalJurisdiction, PoliticalOfficeType, Prisma } from '@civil/db'
 import { ensureGeoCache } from './geodata.js'
 import { normalizePostalCodeInput } from './communityGeo.js'
 
@@ -54,6 +54,33 @@ type DistrictStatsCount = {
   }
 }
 
+type DistrictPartySummary = {
+  slug: string
+  name: string
+  shortName: string | null
+}
+
+type DistrictPartyStatus = 'seat' | 'registered'
+
+type DistrictSeatPoliticianSummary = {
+  slug: string
+  displayName: string
+  photoUrl: string | null
+}
+
+type DistrictSeatSummary = {
+  title: string
+  party: DistrictPartySummary | null
+  politician: DistrictSeatPoliticianSummary | null
+}
+
+type DistrictSelectedPartyPoliticianSummary = {
+  slug: string | null
+  displayName: string
+  photoUrl: string | null
+  roleLabel: string | null
+}
+
 type PostalPointRow = {
   code: string
   lat: number | null
@@ -66,8 +93,50 @@ type ExtensionRow = {
 
 let spatialDataReady: Promise<void> | null = null
 
+function isPoliticalStorageUnavailableError(error: unknown) {
+  if (error && typeof error === 'object') {
+    const maybeError = error as { code?: unknown; message?: unknown }
+    if (maybeError.code === 'P2021' || maybeError.code === 'P2022') {
+      return true
+    }
+    const message = typeof maybeError.message === 'string' ? maybeError.message : ''
+    return /PoliticalParty|PoliticalDistrictAssociation|PoliticalSeat|Politician|PoliticianScrapeJob|does not exist|doesn't exist|relation .* does not exist/i.test(message)
+  }
+
+  return false
+}
+
 function trimTrailingSlash(value: string) {
   return value.replace(/\/+$/, '')
+}
+
+function readPoliticianPhotoUrl(metadata: unknown) {
+  if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) return null
+  const ourCommons = (metadata as Record<string, unknown>).ourCommons
+  if (!ourCommons || typeof ourCommons !== 'object' || Array.isArray(ourCommons)) return null
+  const photoUrl = (ourCommons as Record<string, unknown>).photoUrl
+  return typeof photoUrl === 'string' && photoUrl.trim() ? photoUrl.trim() : null
+}
+
+function readAssociationRepresentative(metadata: unknown): { displayName: string; roleLabel: string } | null {
+  if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) return null
+  const source = (metadata as Record<string, unknown>).source
+  if (!source || typeof source !== 'object' || Array.isArray(source)) return null
+  const sourceRecord = source as Record<string, unknown>
+
+  const ceoName = typeof sourceRecord.ceoName === 'string' ? sourceRecord.ceoName.trim() : ''
+  if (ceoName) {
+    return { displayName: ceoName, roleLabel: '' }
+  }
+
+  const financialAgentName = typeof sourceRecord.financialAgentName === 'string'
+    ? sourceRecord.financialAgentName.trim()
+    : ''
+  if (financialAgentName) {
+    return { displayName: financialAgentName, roleLabel: '' }
+  }
+
+  return null
 }
 
 export function getMapTileServerBaseUrl() {
@@ -259,6 +328,172 @@ async function findElectoralDistrict(lat: number, lng: number): Promise<Resolved
   }
 }
 
+async function loadDistrictActiveSeatByKey(districts: ResolvedDistrict[]) {
+  const seatByKey = new Map<string, DistrictSeatSummary | null>()
+
+  districts.forEach((district) => {
+    seatByKey.set(`${district.provinceCode}:${district.slug}`, null)
+  })
+
+  if (districts.length === 0) {
+    return seatByKey
+  }
+
+  try {
+    const seats = await prisma.politicalSeat.findMany({
+      where: {
+        jurisdiction: PoliticalJurisdiction.FEDERAL,
+        officeType: PoliticalOfficeType.MP,
+        OR: districts.map((district) => ({
+          provinceCode: district.provinceCode,
+          communitySlug: district.slug,
+        })),
+      },
+      select: {
+        provinceCode: true,
+        communitySlug: true,
+        title: true,
+        currentParty: {
+          select: {
+            slug: true,
+            name: true,
+            shortName: true,
+          },
+        },
+        currentPolitician: {
+          select: {
+            slug: true,
+            displayName: true,
+            metadata: true,
+          },
+        },
+      },
+    })
+
+    seats.forEach((seat: (typeof seats)[number]) => {
+      const key = `${seat.provinceCode}:${seat.communitySlug}`
+      seatByKey.set(key, {
+        title: seat.title,
+        party: seat.currentParty
+          ? {
+              slug: seat.currentParty.slug,
+              name: seat.currentParty.name,
+              shortName: seat.currentParty.shortName,
+            }
+          : null,
+        politician: seat.currentPolitician
+          ? {
+              slug: seat.currentPolitician.slug,
+              displayName: seat.currentPolitician.displayName,
+              photoUrl: readPoliticianPhotoUrl(seat.currentPolitician.metadata),
+            }
+          : null,
+      })
+    })
+  } catch (error) {
+    if (!isPoliticalStorageUnavailableError(error)) {
+      throw error
+    }
+  }
+
+  return seatByKey
+}
+
+async function loadSelectedPartyPoliticianByKey(args: {
+  districts: ResolvedDistrict[]
+  partyId: string
+  provinceCode?: string | null
+}) {
+  const politicianByKey = new Map<string, DistrictSelectedPartyPoliticianSummary | null>()
+
+  args.districts.forEach((district) => {
+    politicianByKey.set(`${district.provinceCode}:${district.slug}`, null)
+  })
+
+  if (args.districts.length === 0) {
+    return politicianByKey
+  }
+
+  try {
+    const [politicians, associations] = await Promise.all([
+      prisma.politician.findMany({
+        where: {
+          jurisdiction: PoliticalJurisdiction.FEDERAL,
+          partyId: args.partyId,
+          ...(args.provinceCode ? { provinceCode: args.provinceCode } : {}),
+          OR: args.districts.map((district) => ({
+            provinceCode: district.provinceCode,
+            communitySlug: district.slug,
+          })),
+        },
+        orderBy: [{ displayName: 'asc' }],
+        select: {
+          provinceCode: true,
+          communitySlug: true,
+          slug: true,
+          displayName: true,
+          metadata: true,
+        },
+      }),
+      prisma.politicalDistrictAssociation.findMany({
+        where: {
+          jurisdiction: PoliticalJurisdiction.FEDERAL,
+          partyId: args.partyId,
+          ...(args.provinceCode ? { provinceCode: args.provinceCode } : {}),
+          OR: args.districts.map((district) => ({
+            provinceCode: district.provinceCode,
+            communitySlug: district.slug,
+          })),
+          deregisteredAt: null,
+          NOT: {
+            registrationStatus: {
+              contains: 'deregister',
+              mode: 'insensitive',
+            },
+          },
+        },
+        orderBy: [{ associationName: 'asc' }],
+        select: {
+          provinceCode: true,
+          communitySlug: true,
+          metadata: true,
+        },
+      }),
+    ])
+
+    politicians.forEach((politician: (typeof politicians)[number]) => {
+      if (!politician.provinceCode || !politician.communitySlug) return
+      const key = `${politician.provinceCode}:${politician.communitySlug}`
+      if (politicianByKey.get(key)) return
+      politicianByKey.set(key, {
+        slug: politician.slug,
+        displayName: politician.displayName,
+        photoUrl: readPoliticianPhotoUrl(politician.metadata),
+        roleLabel: '',
+      })
+    })
+
+    associations.forEach((association: (typeof associations)[number]) => {
+      const key = `${association.provinceCode}:${association.communitySlug}`
+      if (politicianByKey.get(key)) return
+      const representative = readAssociationRepresentative(association.metadata)
+      if (!representative) return
+      politicianByKey.set(key, {
+        slug: null,
+        displayName: representative.displayName,
+        photoUrl: null,
+        roleLabel: representative.roleLabel,
+      })
+    })
+  } catch (error) {
+    if (!isPoliticalStorageUnavailableError(error)) {
+      throw error
+    }
+  }
+
+  return politicianByKey
+}
+
 async function findElectoralDistrictBySlug(provinceCode: string, communitySlug: string): Promise<ResolvedDistrict | null> {
   const rows = (await prisma.$queryRaw(Prisma.sql`
     SELECT
@@ -402,6 +637,47 @@ async function listElectoralDistrictsForProvince(args: {
     bounds: Array.isArray(row.bbox) ? (row.bbox as [number, number, number, number]) : ([0, 0, 0, 0] as [number, number, number, number]),
     geometry: geometryMap.get(row.code) ?? ({ type: 'Polygon', coordinates: [] } as DistrictGeometry),
     matchMethod: row.code === args.selectedDistrictCode ? ('contains' as const) : null,
+  }))
+}
+
+async function listAllElectoralDistricts(): Promise<ResolvedDistrict[]> {
+  const rows = (await prisma.electoralDistrict.findMany({
+    orderBy: [{ provinceCode: 'asc' }, { name: 'asc' }],
+    select: {
+      code: true,
+      slug: true,
+      name: true,
+      provinceCode: true,
+      centroidLat: true,
+      centroidLng: true,
+      bbox: true,
+    },
+  })) as ElectoralDistrictListRow[]
+
+  const selectedCodes = rows.map((row) => row.code)
+  const geometries = selectedCodes.length
+    ? ((await prisma.$queryRaw(Prisma.sql`
+        SELECT
+          district."code",
+          ST_AsGeoJSON(district."boundaryGeom") AS "geometryJson"
+        FROM "ElectoralDistrict" AS district
+        WHERE district."code" IN (${Prisma.join(selectedCodes)})
+      `)) as Array<{ code: number; geometryJson: string }>)
+    : []
+  const geometryMap = new Map(geometries.map((row: { code: number; geometryJson: string }) => [row.code, JSON.parse(row.geometryJson) as DistrictGeometry]))
+
+  return rows.map((row: ElectoralDistrictListRow) => ({
+    code: row.code,
+    slug: row.slug,
+    name: row.name,
+    provinceCode: row.provinceCode,
+    center: {
+      lat: Number(row.centroidLat),
+      lng: Number(row.centroidLng),
+    },
+    bounds: Array.isArray(row.bbox) ? (row.bbox as [number, number, number, number]) : ([0, 0, 0, 0] as [number, number, number, number]),
+    geometry: geometryMap.get(row.code) ?? ({ type: 'Polygon', coordinates: [] } as DistrictGeometry),
+    matchMethod: null,
   }))
 }
 
@@ -571,7 +847,7 @@ export async function browseElectoralDistricts(args: {
   const startOfToday = new Date()
   startOfToday.setHours(0, 0, 0, 0)
 
-  const [followCounts, postCounts] = await Promise.all([
+  const [followCounts, postCounts, activeSeatByKey] = await Promise.all([
     districtKeys.length
       ? prisma.communityFollow.groupBy({
           by: ['provinceCode', 'communitySlug'],
@@ -589,6 +865,7 @@ export async function browseElectoralDistricts(args: {
           _count: { _all: true },
         })
       : Promise.resolve([] as DistrictStatsCount[]),
+    loadDistrictActiveSeatByKey(districts),
   ])
 
   const followMap = new Map(followCounts.map((entry: DistrictStatsCount) => [`${entry.provinceCode}:${entry.communitySlug}`, entry._count._all]))
@@ -604,8 +881,178 @@ export async function browseElectoralDistricts(args: {
     selectedDistrictCode: selectedDistrict?.code ?? districts[0]?.code ?? null,
     districts: districts.map((district: ResolvedDistrict) => {
       const key = `${district.provinceCode}:${district.slug}`
+      const activeSeat = activeSeatByKey.get(key) ?? null
+      const districtParty = activeSeat?.party ?? null
       return {
         ...district,
+        party: districtParty,
+        partyStatus: districtParty ? 'seat' : null,
+        activeSeat,
+        selectedPartyPolitician: null,
+        postsToday: postMap.get(key) ?? 0,
+        followerCount: followMap.get(key) ?? 0,
+      }
+    }),
+  }
+}
+
+export async function browseFederalPartyDistricts(args: {
+  partySlug: string
+  provinceCode?: string | null
+}) {
+  await ensureSpatialDataReady()
+
+  const normalizedPartySlug = args.partySlug.trim().toLowerCase()
+  const normalizedProvinceCode = args.provinceCode?.trim().toLowerCase() || null
+
+  let party: {
+    id: string
+    slug: string
+    name: string
+    shortName: string | null
+  } | null = null
+
+  try {
+    party = await prisma.politicalParty.findUnique({
+      where: {
+        jurisdiction_slug: {
+          jurisdiction: PoliticalJurisdiction.FEDERAL,
+          slug: normalizedPartySlug,
+        },
+      },
+      select: {
+        id: true,
+        slug: true,
+        name: true,
+        shortName: true,
+      },
+    })
+  } catch (error) {
+    if (isPoliticalStorageUnavailableError(error)) {
+      throw new Error('party_not_found')
+    }
+    throw error
+  }
+
+  if (!party) {
+    throw new Error('party_not_found')
+  }
+
+  const districts = normalizedProvinceCode
+    ? await listElectoralDistrictsForProvince({
+        provinceCode: normalizedProvinceCode,
+      })
+    : await listAllElectoralDistricts()
+
+  const districtKeys = districts.map((district) => ({
+    provinceCode: district.provinceCode,
+    communitySlug: district.slug,
+  }))
+  const startOfToday = new Date()
+  startOfToday.setHours(0, 0, 0, 0)
+
+  const [followCounts, postCounts, activeSeatByKey, selectedPartyPoliticianByKey, selectedSeatKeys, selectedRegisteredAssociationKeys] = await Promise.all([
+    districtKeys.length
+      ? prisma.communityFollow.groupBy({
+          by: ['provinceCode', 'communitySlug'],
+          where: { OR: districtKeys },
+          _count: { _all: true },
+        })
+      : Promise.resolve([] as DistrictStatsCount[]),
+    districtKeys.length
+      ? prisma.post.groupBy({
+          by: ['provinceCode', 'communitySlug'],
+          where: {
+            OR: districtKeys,
+            createdAt: { gte: startOfToday },
+          },
+          _count: { _all: true },
+        })
+      : Promise.resolve([] as DistrictStatsCount[]),
+    loadDistrictActiveSeatByKey(districts),
+    loadSelectedPartyPoliticianByKey({
+      districts,
+      partyId: party.id,
+      provinceCode: normalizedProvinceCode,
+    }),
+    prisma.politicalSeat.findMany({
+      where: {
+        jurisdiction: PoliticalJurisdiction.FEDERAL,
+        officeType: PoliticalOfficeType.MP,
+        currentPartyId: party.id,
+        ...(normalizedProvinceCode ? { provinceCode: normalizedProvinceCode } : {}),
+      },
+      select: {
+        provinceCode: true,
+        communitySlug: true,
+      },
+    }).catch((error: unknown) => {
+      if (isPoliticalStorageUnavailableError(error)) return [] as Array<{ provinceCode: string; communitySlug: string }>
+      throw error
+    }),
+    prisma.politicalDistrictAssociation.findMany({
+      where: {
+        jurisdiction: PoliticalJurisdiction.FEDERAL,
+        partyId: party.id,
+        ...(normalizedProvinceCode ? { provinceCode: normalizedProvinceCode } : {}),
+        deregisteredAt: null,
+        NOT: {
+          registrationStatus: {
+            contains: 'deregister',
+            mode: 'insensitive',
+          },
+        },
+      },
+      select: {
+        provinceCode: true,
+        communitySlug: true,
+      },
+    }).catch((error: unknown) => {
+      if (isPoliticalStorageUnavailableError(error)) return [] as Array<{ provinceCode: string; communitySlug: string }>
+      throw error
+    }),
+  ])
+
+  const followMap = new Map(followCounts.map((entry: DistrictStatsCount) => [`${entry.provinceCode}:${entry.communitySlug}`, entry._count._all]))
+  const postMap = new Map(postCounts.map((entry: DistrictStatsCount) => [`${entry.provinceCode}:${entry.communitySlug}`, entry._count._all]))
+  const selectedSeatKeySet = new Set(selectedSeatKeys.map((entry: { provinceCode: string; communitySlug: string }) => `${entry.provinceCode}:${entry.communitySlug}`))
+  const selectedRegisteredAssociationKeySet = new Set(selectedRegisteredAssociationKeys.map((entry: { provinceCode: string; communitySlug: string }) => `${entry.provinceCode}:${entry.communitySlug}`))
+
+  return {
+    provinceCode: normalizedProvinceCode ?? 'ca',
+    resolvedFrom: null,
+    postalCode: null,
+    tileServerBaseUrl: getPublicMapTileServerBaseUrl(),
+    styleUrl: getMapStyleUrl(),
+    userLocation: null,
+    selectedDistrictCode:
+      normalizedProvinceCode
+        ? districts.find((district) => {
+            const key = `${district.provinceCode}:${district.slug}`
+            return selectedSeatKeySet.has(key) || selectedRegisteredAssociationKeySet.has(key)
+          })?.code
+          ?? districts[0]?.code
+          ?? null
+        : null,
+    districts: districts.map((district: ResolvedDistrict) => {
+      const key = `${district.provinceCode}:${district.slug}`
+      const districtPartyStatus: DistrictPartyStatus | null = selectedSeatKeySet.has(key)
+        ? 'seat'
+        : selectedRegisteredAssociationKeySet.has(key)
+          ? 'registered'
+          : null
+      return {
+        ...district,
+        party: districtPartyStatus
+          ? {
+              slug: party.slug,
+              name: party.name,
+              shortName: party.shortName,
+            }
+          : null,
+        partyStatus: districtPartyStatus,
+        activeSeat: activeSeatByKey.get(key) ?? null,
+        selectedPartyPolitician: selectedPartyPoliticianByKey.get(key) ?? null,
         postsToday: postMap.get(key) ?? 0,
         followerCount: followMap.get(key) ?? 0,
       }

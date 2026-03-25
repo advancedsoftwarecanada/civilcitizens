@@ -121,16 +121,12 @@ export default function FederalMemberPage({ params }: PageProps) {
               website={politician.contact.website}
               hillOffice={politician.contact.hillOffice}
               constituencyOffices={politician.contact.constituencyOffices}
-              lastScrapeAt={politician.lastScrapeAt}
-              lastXmlSyncAt={politician.lastXmlSyncAt}
-              lastHtmlSyncAt={politician.lastHtmlSyncAt}
             />
 
             <div className="space-y-2 text-sm text-slate-700">
               <p><span className="font-semibold text-slate-900">Party:</span> {politician.party?.shortName ?? politician.party?.name ?? 'Unassigned'}</p>
-              <p><span className="font-semibold text-slate-900">Office:</span> {politician.officeType ?? 'Pending scrape'}</p>
-              <p><span className="font-semibold text-slate-900">District:</span> {politician.district?.name ?? 'Pending scrape'}</p>
-              <p><span className="font-semibold text-slate-900">Last scrape:</span> {politician.lastScrapeAt ? new Date(politician.lastScrapeAt).toLocaleString() : 'Never'}</p>
+              {politician.officeType ? <p><span className="font-semibold text-slate-900">Office:</span> {politician.officeType}</p> : null}
+              {politician.district?.name ? <p><span className="font-semibold text-slate-900">District:</span> {politician.district.name}</p> : null}
             </div>
 
             {politician.district ? (
