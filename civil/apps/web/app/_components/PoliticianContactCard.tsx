@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react'
 import Link from 'next/link'
 
 type PoliticianOffice = {
@@ -20,6 +21,7 @@ type PoliticianContactCardProps = {
   website?: string | null
   hillOffice?: PoliticianOffice | null
   constituencyOffices?: PoliticianOffice[]
+  extraActions?: ReactNode
 }
 
 function buildInitials(displayName: string) {
@@ -89,6 +91,7 @@ export default function PoliticianContactCard({
   website,
   hillOffice,
   constituencyOffices = [],
+  extraActions,
 }: PoliticianContactCardProps) {
   const hasDirectContact = Boolean(email || website)
   const hasPrimaryOfficeDetails = Boolean(hillOffice)
@@ -147,6 +150,7 @@ export default function PoliticianContactCard({
                 View Community
               </Link>
             ) : null}
+            {extraActions}
           </div>
         </div>
       </div>

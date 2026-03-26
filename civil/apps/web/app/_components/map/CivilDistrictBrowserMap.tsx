@@ -36,6 +36,7 @@ type CivilDistrictBrowserMapProps = {
   allowEmptySelection?: boolean
   popupMode?: PopupMode
   visitLabel?: string
+  animateByElections?: boolean
 }
 
 function collectBounds(browser: ElectoralDistrictBrowserResponse) {
@@ -213,9 +214,11 @@ function resolvePartyLabel(party: DistrictParty) {
   return party.shortName?.trim() || party.name
 }
 
-function buildFillColorExpression(selectedCode: number | null) {
+function buildFillColorExpression(selectedCode: number | null, pulseByElections: boolean) {
   return [
     'case',
+    ['all', ['==', ['get', 'hasByElection'], 1], pulseByElections],
+    ['coalesce', ['get', 'pulseFillColor'], '#ffffff'],
     ['==', ['get', 'code'], selectedCode ?? -1],
     ['coalesce', ['get', 'selectedFillColor'], ['get', 'fillColor'], '#94a3b8'],
     ['coalesce', ['get', 'fillColor'], '#cbd5e1'],
@@ -241,9 +244,11 @@ function buildPatternFilter(selectedCode: number | null, selectedOnly: boolean) 
   ]
 }
 
-function buildLineColorExpression(selectedCode: number | null) {
+function buildLineColorExpression(selectedCode: number | null, pulseByElections: boolean) {
   return [
     'case',
+    ['all', ['==', ['get', 'hasByElection'], 1], pulseByElections],
+    ['coalesce', ['get', 'pulseLineColor'], '#ffffff'],
     ['==', ['get', 'code'], selectedCode ?? -1],
     ['coalesce', ['get', 'selectedLineColor'], ['get', 'lineColor'], '#64748b'],
     ['coalesce', ['get', 'lineColor'], '#94a3b8'],
@@ -455,6 +460,17 @@ function buildPopupContent(args: {
     }
   }
 
+  if (args.popupMode !== 'politicalExplorer' && args.district.activeSeat?.politician) {
+    root.appendChild(
+      createMemberRow({
+        displayName: args.district.activeSeat.politician.displayName,
+        photoUrl: args.district.activeSeat.politician.photoUrl,
+        subtitle: args.district.activeSeat.title,
+        marginTop: partyLabel ? '8px' : '6px',
+      }),
+    )
+  }
+
   if (args.popupMode === 'politicalExplorer') {
     const activeSeat = args.district.activeSeat
     const selectedPartyPolitician = args.district.selectedPartyPolitician
@@ -636,6 +652,7 @@ export function CivilDistrictBrowserMap({
   allowEmptySelection = false,
   popupMode = 'default',
   visitLabel = 'Visit',
+  animateByElections = false,
 }: CivilDistrictBrowserMapProps) {
   const wrapperRef = useRef<HTMLDivElement | null>(null)
   const containerRef = useRef<HTMLDivElement | null>(null)
@@ -643,9 +660,12 @@ export function CivilDistrictBrowserMap({
   const mapRef = useRef<any>(null)
   const popupRef = useRef<any>(null)
   const popupDismissedRef = useRef(false)
+  const suppressPopupCloseRef = useRef(false)
+  const popupCloseResetTimerRef = useRef<number | null>(null)
   const onSelectDistrictRef = useRef(onSelectDistrict)
   const onToggleSelectedDistrictFollowRef = useRef(onToggleSelectedDistrictFollow)
   const [isFullscreen, setIsFullscreen] = useState(false)
+  const [pulsePhase, setPulsePhase] = useState(false)
   const selectionStateRef = useRef({
     selectedDistrictCode,
     selectedDistrict,
@@ -661,6 +681,25 @@ export function CivilDistrictBrowserMap({
 
   const handleZoomOut = useCallback(() => {
     mapRef.current?.zoomOut?.({ duration: 180 })
+  }, [])
+
+  const runPopupMutation = useCallback((mutation: () => void) => {
+    suppressPopupCloseRef.current = true
+    mutation()
+
+    if (typeof window === 'undefined') {
+      suppressPopupCloseRef.current = false
+      return
+    }
+
+    if (popupCloseResetTimerRef.current != null) {
+      window.clearTimeout(popupCloseResetTimerRef.current)
+    }
+
+    popupCloseResetTimerRef.current = window.setTimeout(() => {
+      suppressPopupCloseRef.current = false
+      popupCloseResetTimerRef.current = null
+    }, 0)
   }, [])
 
   useEffect(() => {
@@ -710,6 +749,45 @@ export function CivilDistrictBrowserMap({
   }, [focusRequestToken])
 
   useEffect(() => {
+    const hasByElectionDistrict = browser.districts.some((district) => district.byElection?.status === 'published')
+    if (!animateByElections || !hasByElectionDistrict) {
+      setPulsePhase(false)
+      return
+    }
+
+    const interval = window.setInterval(() => {
+      setPulsePhase((current) => !current)
+    }, 950)
+
+    return () => {
+      window.clearInterval(interval)
+    }
+  }, [animateByElections, browser])
+
+  useEffect(() => {
+    const map = mapRef.current
+    if (!map || !map.isStyleLoaded()) return
+
+    const resolvedDistrict = resolveSelectedDistrict({ browser, selectedDistrictCode, selectedDistrict, allowEmptySelection })
+    const selectedCode = resolvedDistrict?.code ?? null
+
+    if (map.getLayer('civil-district-browser-fill')) {
+      map.setPaintProperty('civil-district-browser-fill', 'fill-color', buildFillColorExpression(selectedCode, animateByElections && pulsePhase))
+    }
+
+    if (map.getLayer('civil-district-browser-line')) {
+      map.setPaintProperty('civil-district-browser-line', 'line-color', buildLineColorExpression(selectedCode, animateByElections && pulsePhase))
+    }
+  }, [
+    browser,
+    selectedDistrict,
+    selectedDistrictCode,
+    allowEmptySelection,
+    animateByElections,
+    pulsePhase,
+  ])
+
+  useEffect(() => {
     const map = mapRef.current
     const popup = popupRef.current
     if (!map || !popup || !map.isStyleLoaded()) return
@@ -718,7 +796,6 @@ export function CivilDistrictBrowserMap({
     const selectedCode = resolvedDistrict?.code ?? null
 
     if (map.getLayer('civil-district-browser-fill')) {
-      map.setPaintProperty('civil-district-browser-fill', 'fill-color', buildFillColorExpression(selectedCode))
       map.setPaintProperty('civil-district-browser-fill', 'fill-opacity', buildFillOpacityExpression(selectedCode))
     }
 
@@ -731,31 +808,34 @@ export function CivilDistrictBrowserMap({
     }
 
     if (map.getLayer('civil-district-browser-line')) {
-      map.setPaintProperty('civil-district-browser-line', 'line-color', buildLineColorExpression(selectedCode))
       map.setPaintProperty('civil-district-browser-line', 'line-width', buildLineWidthExpression(selectedCode))
     }
 
     if (!resolvedDistrict || popupDismissedRef.current) {
-      popup.remove()
+      runPopupMutation(() => {
+        popup.remove()
+      })
       return
     }
 
-    popup
-      .setLngLat([resolvedDistrict.center.lng, resolvedDistrict.center.lat])
-      .setDOMContent(
-        buildPopupContent({
-          district: resolvedDistrict,
-          isFollowing: isSelectedDistrictFollowing,
-          isHome: isSelectedDistrictHome,
-          isFollowPending,
-          visitHref: visitHrefBuilder ? visitHrefBuilder(resolvedDistrict) : `/${resolvedDistrict.provinceCode.toLowerCase()}/${resolvedDistrict.slug.toLowerCase()}`,
-          onToggleFollow: () => onToggleSelectedDistrictFollowRef.current(),
-          showFollowAction,
-          popupMode,
-          visitLabel,
-        }),
-      )
-      .addTo(map)
+    runPopupMutation(() => {
+      popup
+        .setLngLat([resolvedDistrict.center.lng, resolvedDistrict.center.lat])
+        .setDOMContent(
+          buildPopupContent({
+            district: resolvedDistrict,
+            isFollowing: isSelectedDistrictFollowing,
+            isHome: isSelectedDistrictHome,
+            isFollowPending,
+            visitHref: visitHrefBuilder ? visitHrefBuilder(resolvedDistrict) : `/${resolvedDistrict.provinceCode.toLowerCase()}/${resolvedDistrict.slug.toLowerCase()}`,
+            onToggleFollow: () => onToggleSelectedDistrictFollowRef.current(),
+            showFollowAction,
+            popupMode,
+            visitLabel,
+          }),
+        )
+        .addTo(map)
+    })
 
     if (focusRequestToken > 0) {
       const maplibregl = maplibreRef.current
@@ -783,6 +863,7 @@ export function CivilDistrictBrowserMap({
     visitLabel,
     visitHrefBuilder,
     allowEmptySelection,
+    runPopupMutation,
   ])
 
   useEffect(() => {
@@ -821,6 +902,9 @@ export function CivilDistrictBrowserMap({
       })
       popupRef.current = popup
       popup.on('close', () => {
+        if (suppressPopupCloseRef.current) {
+          return
+        }
         popupDismissedRef.current = true
       })
 
@@ -848,6 +932,9 @@ export function CivilDistrictBrowserMap({
                   selectedFillColor: palette.selectedFillColor,
                   lineColor: palette.lineColor,
                   selectedLineColor: palette.selectedLineColor,
+                  hasByElection: district.byElection?.status === 'published' ? 1 : 0,
+                  pulseFillColor: '#ffffff',
+                  pulseLineColor: '#ffffff',
                   fillOpacity: palette.fillOpacity,
                   selectedFillOpacity: palette.selectedFillOpacity,
                   hasPattern: patternId ? 1 : 0,
@@ -867,7 +954,7 @@ export function CivilDistrictBrowserMap({
           type: 'fill',
           source: 'civil-district-browser',
           paint: {
-            'fill-color': buildFillColorExpression(selectedCode) as any,
+            'fill-color': buildFillColorExpression(selectedCode, animateByElections && pulsePhase) as any,
             'fill-opacity': buildFillOpacityExpression(selectedCode) as any,
           },
         })
@@ -897,7 +984,7 @@ export function CivilDistrictBrowserMap({
           type: 'line',
           source: 'civil-district-browser',
           paint: {
-            'line-color': buildLineColorExpression(selectedCode) as any,
+            'line-color': buildLineColorExpression(selectedCode, animateByElections && pulsePhase) as any,
             'line-width': buildLineWidthExpression(selectedCode) as any,
           },
         })
@@ -971,28 +1058,58 @@ export function CivilDistrictBrowserMap({
           allowEmptySelection,
         })
         if (resolvedDistrict) {
-          popup
-            .setLngLat([resolvedDistrict.center.lng, resolvedDistrict.center.lat])
-            .setDOMContent(
-              buildPopupContent({
-                district: resolvedDistrict,
-                isFollowing: nextSelection.isSelectedDistrictFollowing,
-                isHome: nextSelection.isSelectedDistrictHome,
-                isFollowPending: nextSelection.isFollowPending,
-                visitHref: visitHrefBuilder ? visitHrefBuilder(resolvedDistrict) : `/${resolvedDistrict.provinceCode.toLowerCase()}/${resolvedDistrict.slug.toLowerCase()}`,
-                onToggleFollow: () => onToggleSelectedDistrictFollowRef.current(),
-                showFollowAction,
-                popupMode,
-                visitLabel,
-              }),
-            )
-            .addTo(map)
+          runPopupMutation(() => {
+            popup
+              .setLngLat([resolvedDistrict.center.lng, resolvedDistrict.center.lat])
+              .setDOMContent(
+                buildPopupContent({
+                  district: resolvedDistrict,
+                  isFollowing: nextSelection.isSelectedDistrictFollowing,
+                  isHome: nextSelection.isSelectedDistrictHome,
+                  isFollowPending: nextSelection.isFollowPending,
+                  visitHref: visitHrefBuilder ? visitHrefBuilder(resolvedDistrict) : `/${resolvedDistrict.provinceCode.toLowerCase()}/${resolvedDistrict.slug.toLowerCase()}`,
+                  onToggleFollow: () => onToggleSelectedDistrictFollowRef.current(),
+                  showFollowAction,
+                  popupMode,
+                  visitLabel,
+                }),
+              )
+              .addTo(map)
+          })
         }
       })
 
       const handleDistrictClick = (event: any) => {
         const code = Number(event.features?.[0]?.properties?.code)
         if (Number.isFinite(code)) {
+          const clickedDistrict = browser.districts.find((district) => district.code === code) ?? null
+          if (clickedDistrict) {
+            const selectionState = selectionStateRef.current
+            const clickedStatus = selectionState.districtStatusByCode[code] ?? 'default'
+            const clickedIsHome = clickedStatus === 'home'
+            const clickedIsFollowing = clickedIsHome || clickedStatus === 'following'
+            const clickedIsFollowPending = selectionState.selectedDistrictCode === code ? selectionState.isFollowPending : false
+
+            runPopupMutation(() => {
+              popup
+                .setLngLat([clickedDistrict.center.lng, clickedDistrict.center.lat])
+                .setDOMContent(
+                  buildPopupContent({
+                    district: clickedDistrict,
+                    isFollowing: clickedIsFollowing,
+                    isHome: clickedIsHome,
+                    isFollowPending: clickedIsFollowPending,
+                    visitHref: visitHrefBuilder ? visitHrefBuilder(clickedDistrict) : `/${clickedDistrict.provinceCode.toLowerCase()}/${clickedDistrict.slug.toLowerCase()}`,
+                    onToggleFollow: () => onToggleSelectedDistrictFollowRef.current(),
+                    showFollowAction,
+                    popupMode,
+                    visitLabel,
+                  }),
+                )
+                .addTo(map)
+            })
+          }
+
           popupDismissedRef.current = false
           onSelectDistrictRef.current(code)
         }
@@ -1025,13 +1142,18 @@ export function CivilDistrictBrowserMap({
 
     return () => {
       cancelled = true
+      if (popupCloseResetTimerRef.current != null) {
+        window.clearTimeout(popupCloseResetTimerRef.current)
+        popupCloseResetTimerRef.current = null
+      }
+      suppressPopupCloseRef.current = false
       popupRef.current?.remove()
       popupRef.current = null
       mapRef.current?.remove()
       mapRef.current = null
       maplibreRef.current = null
     }
-  }, [browser, showFollowAction, popupMode, visitLabel, visitHrefBuilder, allowEmptySelection])
+  }, [browser, showFollowAction, popupMode, visitLabel, visitHrefBuilder, allowEmptySelection, animateByElections, runPopupMutation])
 
   async function handleToggleFullscreen() {
     const wrapper = wrapperRef.current

@@ -519,6 +519,19 @@ export const ElectoralDistrictBrowserDistrictSchema = z.object({
       roleLabel: z.string().nullable(),
     })
     .nullable(),
+  byElection: z
+    .object({
+      id: z.string(),
+      status: z.enum(['draft', 'published', 'completed']),
+      title: z.string(),
+      tagline: z.string().nullable(),
+      electionsCanadaUrl: z.string().nullable(),
+      electionDayAt: z.string().nullable(),
+      electionDayLabel: z.string().nullable(),
+      advanceVotingLabel: z.string().nullable(),
+      electionDayHoursLabel: z.string().nullable(),
+    })
+    .nullable(),
   center: z.object({
     lat: z.number(),
     lng: z.number(),

@@ -246,6 +246,28 @@ type WorkApplicationsRailResponse = {
   items?: WorkApplicationRailItem[]
 }
 
+type UpcomingByElectionRailItem = {
+  id: string
+  provinceCode: string
+  provinceName: string
+  communitySlug: string
+  communityName: string
+  communityHref: string
+  status: 'published'
+  title: string
+  tagline: string | null
+  electionsCanadaUrl: string | null
+  electionDayAt: string | null
+  electionDayLabel: string | null
+  advanceVotingLabel: string | null
+  electionDayHoursLabel: string | null
+  isHome: boolean
+}
+
+type UpcomingByElectionRailResponse = {
+  items?: UpcomingByElectionRailItem[]
+}
+
 type DeliverySummaryRailItem = {
   id: string
   status: string
@@ -380,6 +402,7 @@ export function RightRail({
   const [familyRelationships, setFamilyRelationships] = useState<ProfileFamilyRelationshipRailItem[]>([])
   const [followedTopics, setFollowedTopics] = useState<TopicRailItem[]>([])
   const [suggestedTopics, setSuggestedTopics] = useState<TopicRailItem[]>([])
+  const [upcomingByElections, setUpcomingByElections] = useState<UpcomingByElectionRailItem[]>([])
 
   const getOrganizationHref = useCallback(
     (org: { provinceCode: string | null; communitySlug: string | null; slug: string }) => {
@@ -403,6 +426,7 @@ export function RightRail({
   const shouldLoadHomeRail = !hideSocialBlocks
   const shouldLoadFamilyRail = !isFamilyLockedSession && mode === 'default' && viewer?.accountType === 'user'
   const shouldLoadTopicsRail = !isFamilyLockedSession
+  const shouldLoadUpcomingByElections = !isFamilyLockedSession && mode === 'communitiesFeed'
 
   const subscribedOrganizations = useMemo(
     () => organizations.filter((org) => Boolean(org.provinceCode) && Boolean(org.communitySlug)),
@@ -517,7 +541,7 @@ export function RightRail({
     }
     try {
       const requests: Array<{
-        key: 'home' | 'follows' | 'owned' | 'memberships' | 'communityFollows' | 'connections' | 'friendRequests' | 'connectionRequests' | 'eventsSidebar' | 'workApplications' | 'deliverySummary' | 'family' | 'topicFollows' | 'topicSuggestions'
+        key: 'home' | 'follows' | 'owned' | 'memberships' | 'communityFollows' | 'connections' | 'friendRequests' | 'connectionRequests' | 'eventsSidebar' | 'workApplications' | 'deliverySummary' | 'family' | 'topicFollows' | 'topicSuggestions' | 'upcomingByElections'
         promise: Promise<Response>
       }> = []
 
@@ -647,6 +671,16 @@ export function RightRail({
         })
       }
 
+      if (shouldLoadUpcomingByElections) {
+        requests.push({
+          key: 'upcomingByElections',
+          promise: fetch(buildApiUrl('/by-elections/upcoming'), {
+            headers: { authorization: `Bearer ${token}` },
+            cache: 'no-store',
+          }),
+        })
+      }
+
       const results = await Promise.all(requests.map((entry) => entry.promise))
       const byKey = new Map(requests.map((entry, index) => [entry.key, results[index] as Response]))
 
@@ -664,6 +698,7 @@ export function RightRail({
       const familyRes = byKey.get('family')
       const topicFollowsRes = byKey.get('topicFollows')
       const topicSuggestionsRes = byKey.get('topicSuggestions')
+      const upcomingByElectionsRes = byKey.get('upcomingByElections')
 
       if (
         homeRes?.status === 401 ||
@@ -678,6 +713,7 @@ export function RightRail({
         workApplicationsRes?.status === 401 ||
         familyRes?.status === 401 ||
         topicFollowsRes?.status === 401
+        || upcomingByElectionsRes?.status === 401
       ) {
         setStatus('unauthorized')
         return
@@ -716,6 +752,9 @@ export function RightRail({
         if (!shouldLoadTopicsRail) {
           setFollowedTopics([])
           setSuggestedTopics([])
+        }
+        if (!shouldLoadUpcomingByElections) {
+          setUpcomingByElections([])
         }
         return
       }
@@ -925,12 +964,19 @@ export function RightRail({
         setSuggestedTopics([])
       }
 
+      if (upcomingByElectionsRes?.ok) {
+        const payload = (await upcomingByElectionsRes.json().catch(() => null)) as UpcomingByElectionRailResponse | null
+        setUpcomingByElections(Array.isArray(payload?.items) ? payload.items : [])
+      } else {
+        setUpcomingByElections([])
+      }
+
       setStatus('ready')
     } catch (err) {
       console.error(err)
       setStatus('error')
     }
-  }, [shouldLoadHomeRail, shouldLoadOrganizations, shouldLoadOwnedOrganizations, shouldLoadMemberOrganizations, shouldLoadCommunityOrganizations, shouldLoadConnections, shouldLoadPendingFriendRequests, shouldLoadPendingConnectionRequests, shouldLoadEventsSidebar, shouldLoadWorkApplications, shouldLoadDeliverySummary, shouldLoadFamilyRail, shouldLoadTopicsRail, viewer?.handle, viewer?.homeCommunity?.communitySlug, viewer?.homeCommunity?.provinceCode])
+  }, [shouldLoadHomeRail, shouldLoadOrganizations, shouldLoadOwnedOrganizations, shouldLoadMemberOrganizations, shouldLoadCommunityOrganizations, shouldLoadConnections, shouldLoadPendingFriendRequests, shouldLoadPendingConnectionRequests, shouldLoadEventsSidebar, shouldLoadWorkApplications, shouldLoadDeliverySummary, shouldLoadFamilyRail, shouldLoadTopicsRail, shouldLoadUpcomingByElections, viewer?.handle, viewer?.homeCommunity?.communitySlug, viewer?.homeCommunity?.provinceCode])
 
   useEffect(() => {
     void loadData()
@@ -1640,6 +1686,46 @@ export function RightRail({
             </ul>
           ) : (
             <p className="text-sm text-slate-500">No communities followed.</p>
+          )}
+        </Block>
+      ) : null}
+
+      {shouldLoadUpcomingByElections ? (
+        <Block title="Upcoming By-Elections">
+          {upcomingByElections.length ? (
+            <ul className="space-y-3">
+              {upcomingByElections.map((entry) => (
+                <li
+                  key={entry.id}
+                  className={`rounded-2xl border px-4 py-3 ${entry.isHome ? 'border-emerald-200 bg-emerald-50/60' : 'border-slate-200 bg-white'}`}
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <Link href={entry.communityHref} className="block text-sm font-semibold text-slate-900 hover:text-[var(--cc-primary)]">
+                        {entry.communityName}
+                      </Link>
+                      <p className="mt-1 text-xs text-slate-500">{entry.title}</p>
+                    </div>
+                    <span className="inline-flex rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wide text-emerald-700">
+                      Published
+                    </span>
+                  </div>
+                  {entry.electionDayLabel ? <p className="mt-2 text-xs text-slate-600">{entry.electionDayLabel}</p> : null}
+                  <div className="mt-3 flex flex-wrap gap-3 text-xs font-semibold">
+                    <Link href={entry.communityHref} className="text-[var(--cc-primary)] hover:underline">
+                      Visit Community
+                    </Link>
+                    {entry.electionsCanadaUrl ? (
+                      <a href={entry.electionsCanadaUrl} target="_blank" rel="noreferrer" className="text-slate-600 hover:text-slate-900 hover:underline">
+                        Elections Canada
+                      </a>
+                    ) : null}
+                  </div>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="text-sm text-slate-500">No published by-elections in your communities right now.</p>
           )}
         </Block>
       ) : null}

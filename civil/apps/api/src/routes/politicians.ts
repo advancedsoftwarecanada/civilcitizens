@@ -4,6 +4,7 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 import type { Queue } from 'bullmq'
 import { prisma } from '@civil/db'
 import {
+  ByElectionStatus,
   PoliticalJurisdiction,
   PoliticalOfficeType,
   PoliticianScrapeJobSource,
@@ -19,6 +20,25 @@ type CommunityLookupRecord = (typeof COMMUNITIES)[number]
 
 const ADMIN_EDA_IMPORT_BODY = z.object({
   sourceKey: z.string().trim().min(1).max(120),
+})
+
+const BY_ELECTION_STATUS_INPUT = z.enum(['draft', 'published', 'completed'])
+
+const ADMIN_BY_ELECTION_BODY = z.object({
+  provinceCode: z.string().trim().min(2).max(40),
+  communitySlug: z.string().trim().min(1).max(120),
+  status: BY_ELECTION_STATUS_INPUT.default('draft'),
+  title: z.string().trim().min(1).max(240),
+  tagline: z.string().trim().max(240).optional().nullable(),
+  electionsCanadaUrl: z.string().trim().max(2000).optional().nullable(),
+  electionDayAt: z.string().trim().max(10).optional().nullable(),
+  electionDayLabel: z.string().trim().max(240).optional().nullable(),
+  advanceVotingLabel: z.string().trim().max(4000).optional().nullable(),
+  electionDayHoursLabel: z.string().trim().max(240).optional().nullable(),
+})
+
+const ADMIN_BY_ELECTION_PARAMS = z.object({
+  byElectionId: z.string().trim().min(1).max(120),
 })
 
 const COMMUNITY_POLITICIANS_PARAMS = z.object({
@@ -42,6 +62,11 @@ const FEDERAL_PARTY_DISTRICTS_QUERY = z.object({
 const FEDERAL_MEMBER_PARAMS = z.object({
   partySlug: z.string().trim().min(1).max(120),
   memberSlug: z.string().trim().min(1).max(120),
+})
+
+const UPCOMING_BY_ELECTIONS_QUERY = z.object({
+  provinceCode: z.string().trim().max(40).optional(),
+  scope: z.enum(['following', 'all']).optional(),
 })
 
 const FEDERAL_DATASET_SOURCES = [
@@ -86,6 +111,23 @@ type PoliticiansRouteDeps = {
 }
 
 type FederalDatasetSource = (typeof FEDERAL_DATASET_SOURCES)[number]
+
+type ManualByElectionSummary = {
+  id: string
+  provinceCode: string
+  provinceName: string
+  communitySlug: string
+  communityName: string
+  status: 'draft' | 'published' | 'completed'
+  title: string
+  tagline: string | null
+  electionsCanadaUrl: string | null
+  electionDayAt: string | null
+  electionDayLabel: string | null
+  advanceVotingLabel: string | null
+  electionDayHoursLabel: string | null
+  updatedAt: string
+}
 
 type FederalAssociationCsvRow = {
   Registered_association: string
@@ -315,7 +357,7 @@ function isPoliticalStorageUnavailableError(error: unknown) {
 
   if (error && typeof error === 'object') {
     const message = 'message' in error && typeof error.message === 'string' ? error.message : ''
-    return /PoliticalParty|PoliticalDistrictAssociation|PoliticalSeat|Politician|PoliticianScrapeJob|does not exist|doesn't exist|relation .* does not exist/i.test(message)
+    return /PoliticalParty|PoliticalDistrictAssociation|PoliticalSeat|Politician|PoliticianScrapeJob|PoliticalByElection|does not exist|doesn't exist|relation .* does not exist/i.test(message)
   }
 
   return false
@@ -439,6 +481,56 @@ function parseIsoDateTime(value: string | null) {
   if (!value) return null
   const parsed = new Date(value)
   return Number.isNaN(parsed.getTime()) ? null : parsed
+}
+
+function normalizeOptionalText(value: string | null | undefined) {
+  const trimmed = typeof value === 'string' ? value.trim() : ''
+  return trimmed ? trimmed : null
+}
+
+function parseManualByElectionDate(value: string | null | undefined) {
+  const trimmed = normalizeOptionalText(value)
+  if (!trimmed) return null
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) return null
+  const parsed = new Date(`${trimmed}T12:00:00.000Z`)
+  return Number.isNaN(parsed.getTime()) ? null : parsed
+}
+
+function toPrismaByElectionStatus(value: z.infer<typeof BY_ELECTION_STATUS_INPUT>): ByElectionStatus {
+  switch (value) {
+    case 'published':
+      return ByElectionStatus.PUBLISHED
+    case 'completed':
+      return ByElectionStatus.COMPLETED
+    case 'draft':
+    default:
+      return ByElectionStatus.DRAFT
+  }
+}
+
+function fromPrismaByElectionStatus(value: ByElectionStatus): 'draft' | 'published' | 'completed' {
+  switch (value) {
+    case ByElectionStatus.PUBLISHED:
+      return 'published'
+    case ByElectionStatus.COMPLETED:
+      return 'completed'
+    case ByElectionStatus.DRAFT:
+    default:
+      return 'draft'
+  }
+}
+
+function resolveProvinceName(provinceCode: string) {
+  return PROVINCES.find((province: (typeof PROVINCES)[number]) => province.code === provinceCode)?.name ?? provinceCode.toUpperCase()
+}
+
+function resolveCommunityName(args: {
+  provinceCode: string
+  communitySlug: string
+  electoralDistrictName?: string | null
+}) {
+  const community = findCommunity(args.provinceCode, args.communitySlug)
+  return args.electoralDistrictName?.trim() || community?.name || community?.slug || args.communitySlug
 }
 
 function jsonObject(value: Prisma.JsonValue | null | undefined) {
@@ -1432,6 +1524,95 @@ async function loadFederalDatasetStatsSafe() {
   }
 }
 
+async function loadByElectionStorageReadySafe() {
+  try {
+    await prisma.politicalByElection.findFirst({
+      select: { id: true },
+    })
+    return true
+  } catch (error) {
+    if (isPoliticalStorageUnavailableError(error)) {
+      return false
+    }
+    throw error
+  }
+}
+
+async function loadManualByElections(): Promise<ManualByElectionSummary[]> {
+  const rows = await prisma.politicalByElection.findMany({
+    orderBy: [{ updatedAt: 'desc' }],
+    select: {
+      id: true,
+      provinceCode: true,
+      communitySlug: true,
+      status: true,
+      title: true,
+      tagline: true,
+      electionsCanadaUrl: true,
+      electionDayAt: true,
+      electionDayLabel: true,
+      advanceVotingLabel: true,
+      electionDayHoursLabel: true,
+      updatedAt: true,
+      electoralDistrict: {
+        select: {
+          name: true,
+        },
+      },
+    },
+  })
+
+  const statusOrder: Record<ByElectionStatus, number> = {
+    [ByElectionStatus.PUBLISHED]: 0,
+    [ByElectionStatus.DRAFT]: 1,
+    [ByElectionStatus.COMPLETED]: 2,
+  }
+
+  return rows
+    .map((row: (typeof rows)[number]) => ({
+      id: row.id,
+      provinceCode: row.provinceCode,
+      provinceName: resolveProvinceName(row.provinceCode),
+      communitySlug: row.communitySlug,
+      communityName: resolveCommunityName({
+        provinceCode: row.provinceCode,
+        communitySlug: row.communitySlug,
+        electoralDistrictName: row.electoralDistrict?.name ?? null,
+      }),
+      status: fromPrismaByElectionStatus(row.status),
+      title: row.title,
+      tagline: row.tagline ?? null,
+      electionsCanadaUrl: row.electionsCanadaUrl ?? null,
+      electionDayAt: row.electionDayAt?.toISOString() ?? null,
+      electionDayLabel: row.electionDayLabel ?? null,
+      advanceVotingLabel: row.advanceVotingLabel ?? null,
+      electionDayHoursLabel: row.electionDayHoursLabel ?? null,
+      updatedAt: row.updatedAt.toISOString(),
+    }))
+    .sort((left: ManualByElectionSummary, right: ManualByElectionSummary) => {
+      const leftStatus = statusOrder[toPrismaByElectionStatus(left.status)]
+      const rightStatus = statusOrder[toPrismaByElectionStatus(right.status)]
+      if (leftStatus !== rightStatus) return leftStatus - rightStatus
+
+      const leftDate = left.electionDayAt ? new Date(left.electionDayAt).getTime() : Number.MAX_SAFE_INTEGER
+      const rightDate = right.electionDayAt ? new Date(right.electionDayAt).getTime() : Number.MAX_SAFE_INTEGER
+      if (leftDate !== rightDate) return leftDate - rightDate
+
+      return left.communityName.localeCompare(right.communityName)
+    })
+}
+
+async function loadManualByElectionsSafe() {
+  try {
+    return await loadManualByElections()
+  } catch (error) {
+    if (isPoliticalStorageUnavailableError(error)) {
+      return [] as ManualByElectionSummary[]
+    }
+    throw error
+  }
+}
+
 function readLastScrapeAt(metadata: Prisma.JsonValue | null) {
   if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) return null
   const scrape = (metadata as Record<string, unknown>).scrape
@@ -1651,7 +1832,11 @@ export function registerPoliticianRoutes(app: FastifyInstance, deps: Politicians
     const user = await deps.loadAdminUserOrReply(req, reply)
     if (!user) return
 
-    const { databaseReady, stats } = await loadFederalDatasetStatsSafe()
+    const [{ databaseReady, stats }, byElections, byElectionStorageReady] = await Promise.all([
+      loadFederalDatasetStatsSafe(),
+      loadManualByElectionsSafe(),
+      loadByElectionStorageReadySafe(),
+    ])
     const sources = await Promise.all(
       FEDERAL_DATASET_SOURCES.map(async (source) => {
         try {
@@ -1680,9 +1865,10 @@ export function registerPoliticianRoutes(app: FastifyInstance, deps: Politicians
 
     return reply.send({
       generatedAt: new Date().toISOString(),
-      databaseReady,
+      databaseReady: databaseReady && byElectionStorageReady,
       sources,
       stats,
+      byElections,
     })
   })
 
@@ -1748,6 +1934,269 @@ export function registerPoliticianRoutes(app: FastifyInstance, deps: Politicians
       console.error('commons_federal_member_detail_fetch_failed', error)
       const detail = error instanceof Error ? error.message : String(error)
       return reply.code(500).send({ error: 'commons_federal_member_detail_fetch_failed', detail })
+    }
+  })
+
+  app.post('/admin/eda/by-elections', async (req: FastifyRequest, reply: FastifyReply) => {
+    const user = await deps.loadAdminUserOrReply(req, reply)
+    if (!user) return
+
+    const parse = ADMIN_BY_ELECTION_BODY.safeParse(req.body ?? {})
+    if (!parse.success) return reply.code(400).send({ error: parse.error.flatten() })
+
+    const provinceCode = normalizeProvinceCode(parse.data.provinceCode)
+    if (!provinceCode) return reply.code(400).send({ error: 'invalid_province' })
+
+    const community = findCommunity(provinceCode, parse.data.communitySlug)
+    if (!community) return reply.code(404).send({ error: 'community_not_found' })
+
+    try {
+      const district = await prisma.electoralDistrict.findFirst({
+        where: {
+          provinceCode,
+          slug: community.slug,
+        },
+        select: { code: true },
+      }).catch((error: unknown) => {
+        if (isPoliticalStorageUnavailableError(error)) return null
+        throw error
+      })
+
+      const byElection = await prisma.politicalByElection.create({
+        data: {
+          jurisdiction: PoliticalJurisdiction.FEDERAL,
+          provinceCode,
+          communitySlug: community.slug,
+          electoralDistrictCode: district?.code ?? null,
+          status: toPrismaByElectionStatus(parse.data.status),
+          title: parse.data.title.trim(),
+          tagline: normalizeOptionalText(parse.data.tagline),
+          electionsCanadaUrl: normalizeOptionalText(parse.data.electionsCanadaUrl),
+          electionDayAt: parseManualByElectionDate(parse.data.electionDayAt),
+          electionDayLabel: normalizeOptionalText(parse.data.electionDayLabel),
+          advanceVotingLabel: normalizeOptionalText(parse.data.advanceVotingLabel),
+          electionDayHoursLabel: normalizeOptionalText(parse.data.electionDayHoursLabel),
+        },
+        select: { id: true },
+      })
+
+      return reply.send({ ok: true, id: byElection.id })
+    } catch (error) {
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+        return reply.code(409).send({ error: 'by_election_conflict' })
+      }
+      if (isPoliticalStorageUnavailableError(error)) {
+        return reply.code(503).send({ error: 'political_tables_not_ready' })
+      }
+      console.error('admin_by_election_create_failed', error)
+      return reply.code(500).send({ error: 'admin_by_election_create_failed' })
+    }
+  })
+
+  app.patch('/admin/eda/by-elections/:byElectionId', async (req: FastifyRequest, reply: FastifyReply) => {
+    const user = await deps.loadAdminUserOrReply(req, reply)
+    if (!user) return
+
+    const params = ADMIN_BY_ELECTION_PARAMS.safeParse(req.params)
+    if (!params.success) return reply.code(400).send({ error: params.error.flatten() })
+
+    const parse = ADMIN_BY_ELECTION_BODY.safeParse(req.body ?? {})
+    if (!parse.success) return reply.code(400).send({ error: parse.error.flatten() })
+
+    const provinceCode = normalizeProvinceCode(parse.data.provinceCode)
+    if (!provinceCode) return reply.code(400).send({ error: 'invalid_province' })
+
+    const community = findCommunity(provinceCode, parse.data.communitySlug)
+    if (!community) return reply.code(404).send({ error: 'community_not_found' })
+
+    try {
+      const district = await prisma.electoralDistrict.findFirst({
+        where: {
+          provinceCode,
+          slug: community.slug,
+        },
+        select: { code: true },
+      }).catch((error: unknown) => {
+        if (isPoliticalStorageUnavailableError(error)) return null
+        throw error
+      })
+
+      await prisma.politicalByElection.update({
+        where: { id: params.data.byElectionId },
+        data: {
+          provinceCode,
+          communitySlug: community.slug,
+          electoralDistrictCode: district?.code ?? null,
+          status: toPrismaByElectionStatus(parse.data.status),
+          title: parse.data.title.trim(),
+          tagline: normalizeOptionalText(parse.data.tagline),
+          electionsCanadaUrl: normalizeOptionalText(parse.data.electionsCanadaUrl),
+          electionDayAt: parseManualByElectionDate(parse.data.electionDayAt),
+          electionDayLabel: normalizeOptionalText(parse.data.electionDayLabel),
+          advanceVotingLabel: normalizeOptionalText(parse.data.advanceVotingLabel),
+          electionDayHoursLabel: normalizeOptionalText(parse.data.electionDayHoursLabel),
+        },
+      })
+
+      return reply.send({ ok: true })
+    } catch (error) {
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2025') {
+        return reply.code(404).send({ error: 'by_election_not_found' })
+      }
+      if (isPoliticalStorageUnavailableError(error)) {
+        return reply.code(503).send({ error: 'political_tables_not_ready' })
+      }
+      console.error('admin_by_election_update_failed', error)
+      return reply.code(500).send({ error: 'admin_by_election_update_failed' })
+    }
+  })
+
+  app.get('/by-elections/upcoming', async (req: FastifyRequest, reply: FastifyReply) => {
+    const userId = (req as any).user?.id
+    if (!userId) return reply.code(401).send({ error: 'unauthorized' })
+
+    try {
+      const query = UPCOMING_BY_ELECTIONS_QUERY.safeParse(req.query)
+      if (!query.success) return reply.code(400).send({ error: 'invalid_query' })
+
+      const requestedProvinceCode = query.data.provinceCode ? normalizeProvinceCode(query.data.provinceCode) : null
+      const requestedScope = query.data.scope === 'all' ? 'all' : 'following'
+      if (query.data.provinceCode && !requestedProvinceCode) {
+        return reply.code(404).send({ error: 'province_not_found' })
+      }
+
+      const follows = await prisma.communityFollow.findMany({
+        where: { userId },
+        orderBy: [{ home: 'desc' }, { createdAt: 'desc' }],
+        select: {
+          provinceCode: true,
+          communitySlug: true,
+          home: true,
+        },
+      })
+
+      if (!follows.length) {
+        return reply.send({ items: [] })
+      }
+
+      const homeKeys = new Set(
+        follows.filter((follow: (typeof follows)[number]) => follow.home).map((follow: (typeof follows)[number]) => `${follow.provinceCode}:${follow.communitySlug}`),
+      )
+
+      if (requestedScope !== 'all' && !follows.length) {
+        return reply.send({ items: [] })
+      }
+
+      const rows = await prisma.politicalByElection.findMany({
+        where: {
+          jurisdiction: PoliticalJurisdiction.FEDERAL,
+          status: ByElectionStatus.PUBLISHED,
+          ...(requestedProvinceCode ? { provinceCode: requestedProvinceCode } : {}),
+          ...(requestedScope === 'all'
+            ? {}
+            : {
+                OR: follows.map((follow: (typeof follows)[number]) => ({
+                  provinceCode: follow.provinceCode,
+                  communitySlug: follow.communitySlug,
+                })),
+              }),
+        },
+        orderBy: [{ electionDayAt: 'asc' }, { updatedAt: 'desc' }],
+        select: {
+          id: true,
+          provinceCode: true,
+          communitySlug: true,
+          title: true,
+          tagline: true,
+          electionsCanadaUrl: true,
+          electionDayAt: true,
+          electionDayLabel: true,
+          advanceVotingLabel: true,
+          electionDayHoursLabel: true,
+          updatedAt: true,
+          electoralDistrict: {
+            select: {
+              name: true,
+            },
+          },
+        },
+      })
+
+      const items = rows
+        .map((row: (typeof rows)[number]) => {
+          const key = `${row.provinceCode}:${row.communitySlug}`
+          return {
+            id: row.id,
+            provinceCode: row.provinceCode,
+            provinceName: resolveProvinceName(row.provinceCode),
+            communitySlug: row.communitySlug,
+            communityName: resolveCommunityName({
+              provinceCode: row.provinceCode,
+              communitySlug: row.communitySlug,
+              electoralDistrictName: row.electoralDistrict?.name ?? null,
+            }),
+            communityHref: `/${row.provinceCode.toLowerCase()}/${row.communitySlug.toLowerCase()}`,
+            status: 'published' as const,
+            title: row.title,
+            tagline: row.tagline ?? null,
+            electionsCanadaUrl: row.electionsCanadaUrl ?? null,
+            electionDayAt: row.electionDayAt?.toISOString() ?? null,
+            electionDayLabel: row.electionDayLabel ?? null,
+            advanceVotingLabel: row.advanceVotingLabel ?? null,
+            electionDayHoursLabel: row.electionDayHoursLabel ?? null,
+            isHome: homeKeys.has(key),
+            updatedAt: row.updatedAt.toISOString(),
+          }
+        })
+        .sort((left: {
+          id: string
+          provinceCode: string
+          provinceName: string
+          communitySlug: string
+          communityName: string
+          communityHref: string
+          status: 'published'
+          title: string
+          tagline: string | null
+          electionsCanadaUrl: string | null
+          electionDayAt: string | null
+          electionDayLabel: string | null
+          advanceVotingLabel: string | null
+          electionDayHoursLabel: string | null
+          isHome: boolean
+          updatedAt: string
+        }, right: {
+          id: string
+          provinceCode: string
+          provinceName: string
+          communitySlug: string
+          communityName: string
+          communityHref: string
+          status: 'published'
+          title: string
+          tagline: string | null
+          electionsCanadaUrl: string | null
+          electionDayAt: string | null
+          electionDayLabel: string | null
+          advanceVotingLabel: string | null
+          electionDayHoursLabel: string | null
+          isHome: boolean
+          updatedAt: string
+        }) => {
+          if (left.isHome !== right.isHome) return left.isHome ? -1 : 1
+          const leftDate = left.electionDayAt ? new Date(left.electionDayAt).getTime() : Number.MAX_SAFE_INTEGER
+          const rightDate = right.electionDayAt ? new Date(right.electionDayAt).getTime() : Number.MAX_SAFE_INTEGER
+          if (leftDate !== rightDate) return leftDate - rightDate
+          return left.communityName.localeCompare(right.communityName)
+        })
+
+      return reply.send({ items })
+    } catch (error) {
+      if (isPoliticalStorageUnavailableError(error)) {
+        return reply.send({ items: [] })
+      }
+      console.error('upcoming_by_elections_failed', error)
+      return reply.code(500).send({ error: 'upcoming_by_elections_failed' })
     }
   })
 

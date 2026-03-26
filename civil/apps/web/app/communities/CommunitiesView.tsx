@@ -14,6 +14,7 @@ import { useRouter } from 'next/navigation'
 import Sidebar from '../_components/Sidebar'
 import { CivilDistrictBrowserMap } from '../_components/map/CivilDistrictBrowserMap'
 import { CivilDistrictMap } from '../_components/map/CivilDistrictMap'
+import CivilMapLoadingState from '../_components/map/CivilMapLoadingState'
 import { pushToast } from '../_components/useToasts'
 import { redirectToAuthModal } from '../_lib/authModal'
 import { clearAuthSession } from '../_lib/authSession'
@@ -85,6 +86,28 @@ type CommunitiesDashboardResponse = {
   suggestions?: CitySummary[]
 }
 
+type UpcomingByElectionItem = {
+  id: string
+  provinceCode: string
+  provinceName: string
+  communitySlug: string
+  communityName: string
+  communityHref: string
+  status: 'published'
+  title: string
+  tagline: string | null
+  electionsCanadaUrl: string | null
+  electionDayAt: string | null
+  electionDayLabel: string | null
+  advanceVotingLabel: string | null
+  electionDayHoursLabel: string | null
+  isHome: boolean
+}
+
+type UpcomingByElectionResponse = {
+  items?: UpcomingByElectionItem[]
+}
+
 type WelcomeHomeConfirmation = {
   match: CommunityGeoMatch
   reason: 'auto' | 'suggestion' | 'postal'
@@ -154,6 +177,16 @@ function formatCommunityDisplayName(value: string | null | undefined) {
     })
     .filter(Boolean)
     .join(' - ')
+}
+
+function buildInitials(displayName: string) {
+  const parts = displayName
+    .split(/\s+/)
+    .map((entry) => entry.trim())
+    .filter(Boolean)
+    .slice(0, 2)
+
+  return parts.map((entry) => entry.charAt(0).toUpperCase()).join('') || 'CC'
 }
 
 function buildMatchCityKey(match: CommunityGeoMatch) {
@@ -231,6 +264,8 @@ export function CommunitiesView({ mode = 'default' }: { mode?: CommunitiesPageMo
   const [loadingFollows, setLoadingFollows] = useState(true)
   const [suggestionsLoading, setSuggestionsLoading] = useState(true)
   const [suggestedCommunities, setSuggestedCommunities] = useState<CitySummary[]>([])
+  const [upcomingByElections, setUpcomingByElections] = useState<UpcomingByElectionItem[]>([])
+  const [upcomingByElectionsLoading, setUpcomingByElectionsLoading] = useState(false)
   const [managingFollow, setManagingFollow] = useState<string | null>(null)
   const [, setBootstrapped] = useState(false)
   const [geoBusy, setGeoBusy] = useState(false)
@@ -264,16 +299,28 @@ export function CommunitiesView({ mode = 'default' }: { mode?: CommunitiesPageMo
   const [districtBrowserError, setDistrictBrowserError] = useState<string | null>(null)
   const [selectedBrowserDistrictCode, setSelectedBrowserDistrictCode] = useState<number | null>(null)
   const [mapFocusRequestToken, setMapFocusRequestToken] = useState(0)
+  const [pendingBrowserMapFocus, setPendingBrowserMapFocus] = useState<{ provinceCode: string; communitySlug: string } | null>(null)
   const [provinceCommunityFilter, setProvinceCommunityFilter] = useState('')
   const [provinceCommunitySort, setProvinceCommunitySort] = useState<'alphabetical' | 'distance'>('alphabetical')
+  const [hasMounted, setHasMounted] = useState(false)
 
   const isWelcomeMode = mode === 'welcome'
   const provinceSelectRef = useRef<HTMLSelectElement | null>(null)
+  const districtExplorerSectionRef = useRef<HTMLElement | null>(null)
   const latestPostalSelectionRef = useRef<string | null>(null)
+  const pendingBrowserMapFocusRef = useRef<{ provinceCode: string; communitySlug: string } | null>(null)
   const router = useRouter()
   const cachedMe = useViewerStore((s) => s.me)
   const setViewerStoreMe = useViewerStore((s) => s.setMe)
   const activePostalOwnerId = postalOwnerId ?? me?.id ?? null
+
+  useEffect(() => {
+    setHasMounted(true)
+  }, [])
+
+  useEffect(() => {
+    pendingBrowserMapFocusRef.current = pendingBrowserMapFocus
+  }, [pendingBrowserMapFocus])
 
   async function loadCitiesForProvince(province: string, preselectCommunity?: string, preselectCitySlug?: string | null) {
     if (!province) {
@@ -544,6 +591,8 @@ export function CommunitiesView({ mode = 'default' }: { mode?: CommunitiesPageMo
           setSuggestedCommunities([])
         }
 
+        await loadUpcomingByElections({ token, scope: 'all' })
+
         if (!nextHome?.province && storedPostalRaw && !isGeolocationPostalSentinel(storedPostalRaw)) {
           try {
             const postalRes = await fetch(buildApiUrl('/communities/postal-lookup'), {
@@ -577,6 +626,54 @@ export function CommunitiesView({ mode = 'default' }: { mode?: CommunitiesPageMo
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
+  async function loadUpcomingByElections(options: {
+    token?: string | null
+    provinceCode?: string | null
+    scope?: 'following' | 'all'
+  } = {}) {
+    const token = options.token ?? localStorage.getItem('token')
+    if (!token) {
+      setUpcomingByElections([])
+      return
+    }
+
+    setUpcomingByElectionsLoading(true)
+    try {
+      const searchParams = new URLSearchParams()
+      const normalizedProvinceCode = options.provinceCode?.trim().toLowerCase() || ''
+      if (normalizedProvinceCode) {
+        searchParams.set('provinceCode', normalizedProvinceCode)
+      }
+      if (options.scope === 'all') {
+        searchParams.set('scope', 'all')
+      }
+      const requestPath = searchParams.size > 0
+        ? `/by-elections/upcoming?${searchParams.toString()}`
+        : '/by-elections/upcoming'
+
+      const res = await fetch(buildApiUrl(requestPath), {
+        headers: { authorization: `Bearer ${token}` },
+        cache: 'no-store',
+      })
+
+      if (res.status === 401) {
+        clearAuthSession()
+        redirectToAuthModal('login')
+        return
+      }
+
+      if (!res.ok) throw new Error('request_failed')
+
+      const payload = (await res.json().catch(() => null)) as UpcomingByElectionResponse | null
+      setUpcomingByElections(Array.isArray(payload?.items) ? payload.items : [])
+    } catch (error) {
+      console.warn('Failed loading upcoming by-elections', error)
+      setUpcomingByElections([])
+    } finally {
+      setUpcomingByElectionsLoading(false)
+    }
+  }
+
   async function refreshFollows(options: { token?: string; syncHome?: boolean } = {}): Promise<CommunityFollow[]> {
     const token = options.token ?? localStorage.getItem('token')
     if (!token) return []
@@ -596,6 +693,7 @@ export function CommunitiesView({ mode = 'default' }: { mode?: CommunitiesPageMo
           setHomeCommunityState(null)
         }
       }
+      await loadUpcomingByElections({ token, scope: 'all' })
       return items
     } catch (error) {
       console.error('Failed loading followed cities', error)
@@ -901,6 +999,10 @@ export function CommunitiesView({ mode = 'default' }: { mode?: CommunitiesPageMo
         if (cancelled) return
         setDistrictBrowser(data)
         setSelectedBrowserDistrictCode((current) => {
+          const pendingFocus = pendingBrowserMapFocusRef.current
+          if (pendingFocus && pendingFocus.provinceCode === selectedBrowserProvince) {
+            return null
+          }
           if (current && data.districts.some((district) => district.code === current)) return current
           return data.selectedDistrictCode
         })
@@ -1183,6 +1285,14 @@ export function CommunitiesView({ mode = 'default' }: { mode?: CommunitiesPageMo
   const selectedBrowserProvinceName = selectedBrowserProvince
     ? provinces.find((province) => province.code === selectedBrowserProvince)?.name ?? selectedBrowserProvince.toUpperCase()
     : 'Canada'
+  const orderedUpcomingByElections = useMemo(() => {
+    return [...upcomingByElections].sort((left, right) => {
+      const leftDate = left.electionDayAt ? new Date(left.electionDayAt).getTime() : Number.MAX_SAFE_INTEGER
+      const rightDate = right.electionDayAt ? new Date(right.electionDayAt).getTime() : Number.MAX_SAFE_INTEGER
+      if (leftDate !== rightDate) return leftDate - rightDate
+      return left.communityName.localeCompare(right.communityName)
+    })
+  }, [upcomingByElections])
   const visibleOrderedFollows = useMemo(() => {
     const provinceFollows = selectedBrowserProvince
       ? orderedFollows.filter((follow) => follow.province === selectedBrowserProvince)
@@ -1331,6 +1441,76 @@ export function CommunitiesView({ mode = 'default' }: { mode?: CommunitiesPageMo
           </div>
         )}
       </div>
+    </section>
+  )
+
+  const upcomingByElectionsSection = (
+    <section className="surface-card space-y-4 px-6 py-5 shadow-subtle">
+      <div>
+        <h2 className="text-2xl font-bold text-slate-900">Upcoming Federal By-Elections</h2>
+        <p className="mt-2 text-sm text-slate-600">Published federal by-elections across Canada.</p>
+      </div>
+
+      {upcomingByElectionsLoading ? (
+        <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4 text-sm text-slate-600">
+          Loading upcoming federal by-elections…
+        </div>
+      ) : orderedUpcomingByElections.length === 0 ? (
+        <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-4 py-4 text-sm text-slate-600">
+          No published federal by-elections right now.
+        </div>
+      ) : (
+        <div className="space-y-3">
+          {orderedUpcomingByElections.map((entry) => {
+            return (
+              <div
+                key={entry.id}
+                className={`rounded-3xl border p-5 ${entry.isHome ? 'border-emerald-300 bg-emerald-50/70' : 'border-slate-200 bg-white'}`}
+              >
+                <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                  <div className="min-w-0">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Link href={entry.communityHref} className="text-lg font-semibold text-slate-900 hover:text-[var(--cc-primary)]">
+                        {entry.communityName}
+                      </Link>
+                      <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wide text-emerald-700">
+                        Published
+                      </span>
+                    </div>
+                    <p className="mt-1 text-xs font-medium uppercase tracking-wide text-slate-500">{entry.provinceName}</p>
+                    <p className="mt-1 text-sm text-slate-600">{entry.title}</p>
+                    {entry.electionDayLabel ? <p className="mt-2 text-sm text-slate-700">{entry.electionDayLabel}</p> : null}
+                  </div>
+                  {entry.isHome ? <span className="rounded-full bg-emerald-100 px-2 py-1 text-xs font-semibold text-emerald-700">Home</span> : null}
+                </div>
+
+                <div className="mt-3 flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    className="border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-white"
+                    onClick={() => focusDistrictOnMapByIdentity(entry.provinceCode, entry.communitySlug)}
+                  >
+                    Show on map
+                  </button>
+                  <Link className="border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-white" href={entry.communityHref}>
+                    Visit Community
+                  </Link>
+                  {entry.electionsCanadaUrl ? (
+                    <a
+                      href={entry.electionsCanadaUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="border border-[var(--cc-primary)] px-3 py-1.5 text-sm font-semibold text-[var(--cc-primary)] transition hover:bg-[var(--cc-primary)] hover:text-white"
+                    >
+                      Elections Canada
+                    </a>
+                  ) : null}
+                </div>
+              </div>
+            )
+          })}
+        </div>
+      )}
     </section>
   )
 
@@ -1645,7 +1825,7 @@ export function CommunitiesView({ mode = 'default' }: { mode?: CommunitiesPageMo
                     Civil centers the map on your current location and highlights the district boundary returned by the backend spatial query.
                   </p>
                 </div>
-                {districtBusy ? <span className="text-xs font-semibold uppercase tracking-wide text-[var(--cc-primary)]">Loading map…</span> : null}
+                {districtBusy ? <span className="text-xs font-semibold uppercase tracking-wide text-[var(--cc-primary)]">Loading Civil Maps</span> : null}
               </div>
 
               {districtPreview?.district && canUseMapStyle(districtPreview.styleUrl) ? (
@@ -1663,6 +1843,10 @@ export function CommunitiesView({ mode = 'default' }: { mode?: CommunitiesPageMo
               ) : districtPreview?.district ? (
                 <div className="mt-4 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-4 text-sm text-amber-900">
                   District data loaded, but the map preview is disabled because the configured tile server is using insecure HTTP on an HTTPS page.
+                </div>
+              ) : districtBusy ? (
+                <div className="mt-4">
+                  <CivilMapLoadingState className="min-h-[240px]" />
                 </div>
               ) : null}
 
@@ -1709,6 +1893,48 @@ export function CommunitiesView({ mode = 'default' }: { mode?: CommunitiesPageMo
     setSelectedBrowserDistrictCode(districtCode)
     setMapFocusRequestToken((current) => current + 1)
   }
+
+  function focusDistrictOnMapByIdentity(provinceCode: string, communitySlug: string) {
+    const normalizedProvinceCode = provinceCode.trim().toLowerCase()
+    const normalizedCommunitySlug = communitySlug.trim().toLowerCase()
+    if (!normalizedProvinceCode || !normalizedCommunitySlug) return
+
+    window.scrollTo({ top: 0, behavior: 'smooth' })
+
+    if (selectedBrowserProvince === normalizedProvinceCode && districtBrowser) {
+      const immediateMatch = districtBrowser.districts.find((district) => {
+        return district.provinceCode.trim().toLowerCase() === normalizedProvinceCode
+          && district.slug.trim().toLowerCase() === normalizedCommunitySlug
+      })
+
+      if (immediateMatch) {
+        focusDistrictOnMap(immediateMatch.code)
+        return
+      }
+    }
+
+    setPendingBrowserMapFocus({ provinceCode: normalizedProvinceCode, communitySlug: normalizedCommunitySlug })
+    setSelectedBrowserDistrictCode(null)
+    if (selectedBrowserProvince !== normalizedProvinceCode) {
+      setSelectedBrowserProvince(normalizedProvinceCode)
+    }
+  }
+
+  useEffect(() => {
+    if (!pendingBrowserMapFocus || !districtBrowser) return
+    if (selectedBrowserProvince !== pendingBrowserMapFocus.provinceCode) return
+
+    const match = districtBrowser.districts.find((district) => {
+      return district.provinceCode.trim().toLowerCase() === pendingBrowserMapFocus.provinceCode
+        && district.slug.trim().toLowerCase() === pendingBrowserMapFocus.communitySlug
+    })
+
+    if (!match) return
+
+    setSelectedBrowserDistrictCode(match.code)
+    setMapFocusRequestToken((current) => current + 1)
+    setPendingBrowserMapFocus(null)
+  }, [districtBrowser, pendingBrowserMapFocus, selectedBrowserProvince])
 
   const provinceDistrictCards = useMemo(() => {
     if (!districtBrowser) return []
@@ -1759,7 +1985,7 @@ export function CommunitiesView({ mode = 'default' }: { mode?: CommunitiesPageMo
   }, [activeProvinceCommunitySort, homeProvinceDistrict, provinceCommunityFilter, provinceDistrictCards])
 
   const districtExplorerSection = isWelcomeMode ? null : (
-    <section className="surface-card space-y-5 px-6 py-5 shadow-subtle">
+    <section ref={districtExplorerSectionRef} className="surface-card space-y-5 px-6 py-5 shadow-subtle">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <h2 className="text-2xl font-bold text-gray-900">Community Explorer</h2>
@@ -1767,7 +1993,7 @@ export function CommunitiesView({ mode = 'default' }: { mode?: CommunitiesPageMo
             Join your local community paired by Electoral District Association by Elections Canada.
           </p>
         </div>
-        {districtBrowserBusy ? <span className="text-xs font-semibold uppercase tracking-wide text-[var(--cc-primary)]">Loading map…</span> : null}
+        {districtBrowserBusy ? <span className="text-xs font-semibold uppercase tracking-wide text-[var(--cc-primary)]">Loading Civil Maps</span> : null}
       </div>
 
       {districtBrowser?.districts.length && canUseMapStyle(districtBrowser.styleUrl) ? (
@@ -1796,13 +2022,15 @@ export function CommunitiesView({ mode = 'default' }: { mode?: CommunitiesPageMo
               }
             }
           }}
+          allowEmptySelection={Boolean(pendingBrowserMapFocus)}
+          animateByElections
         />
       ) : districtBrowser?.districts.length ? (
         <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-4 text-sm text-amber-900">
           District data is available, but the map preview is disabled because the configured tile server is not safe for this page.
         </div>
       ) : districtBrowserBusy ? (
-        <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-5 text-sm text-slate-600">Loading district boundaries…</div>
+        <CivilMapLoadingState />
       ) : districtBrowserError ? (
         <div className="rounded-2xl border border-red-200 bg-red-50 px-4 py-4 text-sm text-red-700">{districtBrowserError}</div>
       ) : (
@@ -1868,20 +2096,55 @@ export function CommunitiesView({ mode = 'default' }: { mode?: CommunitiesPageMo
                 const isFollowing = follows.some((follow) => follow.province === city.provinceCode && follow.communitySlug === city.communitySlug)
                 const isSaving = suggestionSavingKey === key
                 const matchingDistrict = districtBrowser?.districts.find((district) => district.provinceCode === city.provinceCode && district.slug === city.communitySlug) ?? null
+                const activeSeat = matchingDistrict?.activeSeat ?? null
+                const activePolitician = activeSeat?.politician ?? null
                 return (
                   <div key={key} className="rounded-2xl border border-slate-200 bg-white px-4 py-4">
-                    <div className="text-sm font-semibold text-slate-900">{city.name}</div>
-                    {typeof city.distanceKm === 'number' ? <div className="mt-1 text-xs text-slate-500">{city.distanceKm.toFixed(1)} km away</div> : null}
-                    <div className="mt-3 flex flex-wrap gap-2">
+                    <div className="space-y-3">
+                      <div>
+                        <p className="text-base font-semibold text-slate-900">{city.name}</p>
+                        {typeof city.distanceKm === 'number' ? <p className="mt-1 text-xs text-slate-500">{city.distanceKm.toFixed(1)} km away</p> : null}
+                      </div>
+
+                      {matchingDistrict?.party ? (
+                        <div>
+                          <PartyChip party={matchingDistrict.party} jurisdiction="federal" className="transition hover:brightness-95" />
+                        </div>
+                      ) : null}
+
+                      {activePolitician ? (
+                        <div className="rounded-2xl border border-slate-200 bg-slate-50 px-3 py-3">
+                          <div className="flex items-start gap-3">
+                            <div className="relative h-12 w-12 shrink-0 overflow-hidden rounded-full border border-slate-200 bg-white">
+                              {activePolitician.photoUrl ? (
+                                <img
+                                  src={activePolitician.photoUrl}
+                                  alt={activePolitician.displayName}
+                                  className="h-full w-full object-cover"
+                                  loading="lazy"
+                                />
+                              ) : (
+                                <div className="flex h-full w-full items-center justify-center text-sm font-semibold text-slate-500">
+                                  {buildInitials(activePolitician.displayName)}
+                                </div>
+                              )}
+                            </div>
+
+                            <div className="min-w-0 flex-1">
+                              <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">
+                                {activeSeat?.title || 'Federal Member of Parliament'}
+                              </p>
+                              <p className="mt-1 text-sm font-semibold text-slate-900">{activePolitician.displayName}</p>
+                            </div>
+                          </div>
+                        </div>
+                      ) : null}
+
+                      <div className="flex flex-wrap gap-2">
                       <button
                         type="button"
-                        className="border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-60"
-                        onClick={() => {
-                          if (matchingDistrict) {
-                            focusDistrictOnMap(matchingDistrict.code)
-                          }
-                        }}
-                        disabled={!matchingDistrict}
+                        className="border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50"
+                        onClick={() => focusDistrictOnMapByIdentity(city.provinceCode, city.communitySlug)}
                       >
                         Show on map
                       </button>
@@ -1896,6 +2159,7 @@ export function CommunitiesView({ mode = 'default' }: { mode?: CommunitiesPageMo
                       >
                         {isFollowing ? 'Following' : isSaving ? 'Following…' : 'Follow'}
                       </button>
+                      </div>
                     </div>
                   </div>
                 )
@@ -1922,7 +2186,7 @@ export function CommunitiesView({ mode = 'default' }: { mode?: CommunitiesPageMo
             className="mt-1 w-full rounded-2xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 focus:border-[var(--cc-primary)] focus:outline-none focus:ring-2 focus:ring-red-200"
             value={provinceCommunityFilter}
             onChange={(event) => setProvinceCommunityFilter(event.target.value)}
-            placeholder="Type a community name, for example Aur"
+            placeholder={hasMounted ? 'Type a community name, for example Aur' : undefined}
           />
         </div>
 
@@ -2016,6 +2280,7 @@ export function CommunitiesView({ mode = 'default' }: { mode?: CommunitiesPageMo
     <div className="w-full space-y-6">
       {districtExplorerSection}
       {manageSection}
+      {upcomingByElectionsSection}
       {provinceCommunitiesSection}
     </div>
   )
@@ -2057,7 +2322,7 @@ export function CommunitiesView({ mode = 'default' }: { mode?: CommunitiesPageMo
                 The district map is available in the database, but the tile server is not configured for secure browser use yet. Confirm the community name above, or switch communities.
               </div>
             ) : districtBusy ? (
-              <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-5 text-sm text-slate-600">Loading district map…</div>
+              <CivilMapLoadingState className="min-h-[240px]" />
             ) : (
               <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-4 text-sm text-amber-900">
                 We matched your community, but the district map is not ready yet. Confirm only if the community name above looks correct.

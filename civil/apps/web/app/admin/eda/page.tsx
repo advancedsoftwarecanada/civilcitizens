@@ -53,6 +53,7 @@ type AdminEdaResponse = {
   generatedAt: string
   databaseReady: boolean
   sources: DatasetSource[]
+  byElections: AdminByElectionEntry[]
   stats: {
     parties: DatasetStat
     associations: DatasetStat
@@ -123,24 +124,104 @@ type FederalMemberDetailFetchResponse = {
   stats: AdminEdaResponse['stats']
 }
 
+type ProvinceOption = {
+  code: string
+  name: string
+}
+
+type CommunityOption = {
+  slug: string
+  province: string
+  name?: string
+}
+
+type ItemsResponse<T> = {
+  items?: T[]
+}
+
+type ByElectionStatusValue = 'draft' | 'published' | 'completed'
+
+type AdminByElectionEntry = {
+  id: string
+  provinceCode: string
+  provinceName: string
+  communitySlug: string
+  communityName: string
+  status: ByElectionStatusValue
+  title: string
+  tagline: string | null
+  electionsCanadaUrl: string | null
+  electionDayAt: string | null
+  electionDayLabel: string | null
+  advanceVotingLabel: string | null
+  electionDayHoursLabel: string | null
+  updatedAt: string
+}
+
 type Status = 'idle' | 'loading' | 'ready' | 'error'
+
+const provincesFallback: ProvinceOption[] = [
+  { code: 'nl', name: 'Newfoundland and Labrador' },
+  { code: 'pe', name: 'Prince Edward Island' },
+  { code: 'ns', name: 'Nova Scotia' },
+  { code: 'nb', name: 'New Brunswick' },
+  { code: 'qc', name: 'Quebec' },
+  { code: 'on', name: 'Ontario' },
+  { code: 'mb', name: 'Manitoba' },
+  { code: 'sk', name: 'Saskatchewan' },
+  { code: 'ab', name: 'Alberta' },
+  { code: 'bc', name: 'British Columbia' },
+  { code: 'yt', name: 'Yukon' },
+  { code: 'nt', name: 'Northwest Territories' },
+  { code: 'nu', name: 'Nunavut' },
+]
 
 export default function AdminEdaPage() {
   const { token, loading: accessLoading, error: accessError, isSuperAdmin } = useAdminAccess()
   const [status, setStatus] = useState<Status>('idle')
   const [error, setError] = useState<string | null>(null)
   const [sources, setSources] = useState<DatasetSource[]>([])
+  const [byElections, setByElections] = useState<AdminByElectionEntry[]>([])
   const [stats, setStats] = useState<AdminEdaResponse['stats'] | null>(null)
   const [databaseReady, setDatabaseReady] = useState(true)
   const [selectedSource, setSelectedSource] = useState<string>('')
   const [running, setRunning] = useState(false)
   const [runningCommonsFetch, setRunningCommonsFetch] = useState(false)
   const [runningMemberDetailFetch, setRunningMemberDetailFetch] = useState(false)
+  const [manualProvinces, setManualProvinces] = useState<ProvinceOption[]>(provincesFallback)
+  const [manualProvinceCode, setManualProvinceCode] = useState('')
+  const [manualCommunities, setManualCommunities] = useState<CommunityOption[]>([])
+  const [manualToolsOpen, setManualToolsOpen] = useState(false)
+  const [loadingManualCommunities, setLoadingManualCommunities] = useState(false)
+  const [savingByElection, setSavingByElection] = useState(false)
+  const [editingByElectionId, setEditingByElectionId] = useState<string | null>(null)
+  const [byElectionForm, setByElectionForm] = useState({
+    communitySlug: '',
+    status: 'draft' as ByElectionStatusValue,
+    title: '',
+    tagline: '',
+    electionsCanadaUrl: '',
+    electionDayAt: '',
+    electionDayLabel: '',
+    advanceVotingLabel: '',
+    electionDayHoursLabel: '',
+  })
   const [summary, setSummary] = useState<ImportSummary | null>(null)
   const [commonsSummary, setCommonsSummary] = useState<FederalMemberFetchSummary | null>(null)
   const [memberDetailSummary, setMemberDetailSummary] = useState<FederalMemberDetailFetchSummary | null>(null)
 
   const numberFormatter = useMemo(() => new Intl.NumberFormat('en-CA'), [])
+  const byElectionStatusLabel = useCallback((value: ByElectionStatusValue) => {
+    switch (value) {
+      case 'published':
+        return 'Published'
+      case 'completed':
+        return 'Completed'
+      case 'draft':
+      default:
+        return 'Draft'
+    }
+  }, [])
   const statusCopy = useMemo(
     () => ({
       up_to_date: {
@@ -165,6 +246,11 @@ export default function AdminEdaPage() {
       },
     }),
     [],
+  )
+
+  const activeByElections = useMemo(
+    () => byElections.filter((item) => item.status !== 'completed'),
+    [byElections],
   )
 
   const load = useCallback(async () => {
@@ -195,6 +281,7 @@ export default function AdminEdaPage() {
       const payload = (await res.json()) as AdminEdaResponse
       setDatabaseReady(payload.databaseReady !== false)
       setSources(payload.sources ?? [])
+      setByElections(Array.isArray(payload.byElections) ? payload.byElections : [])
       setStats(payload.stats ?? null)
       setSelectedSource((current) => current || payload.sources.find((source) => source.available)?.key || '')
       setStatus('ready')
@@ -209,6 +296,163 @@ export default function AdminEdaPage() {
     if (!isSuperAdmin || !token) return
     void load()
   }, [isSuperAdmin, load, token])
+
+  useEffect(() => {
+    let cancelled = false
+
+    void (async () => {
+      try {
+        const res = await fetch(buildApiUrl('/communities/provinces'), {
+          cache: 'no-store',
+        })
+        if (!res.ok) return
+        const payload = (await res.json().catch(() => null)) as ItemsResponse<ProvinceOption> | null
+        if (!cancelled && Array.isArray(payload?.items) && payload.items.length) {
+          setManualProvinces(payload.items)
+        }
+      } catch {
+        if (!cancelled) {
+          setManualProvinces(provincesFallback)
+        }
+      }
+    })()
+
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  useEffect(() => {
+    if (!manualProvinceCode) {
+      setManualCommunities([])
+      setByElectionForm((current) => ({ ...current, communitySlug: '' }))
+      return
+    }
+
+    let cancelled = false
+    setLoadingManualCommunities(true)
+
+    void (async () => {
+      try {
+        const res = await fetch(buildApiUrl(`/communities/${encodeURIComponent(manualProvinceCode)}`), {
+          cache: 'no-store',
+        })
+        if (!res.ok) throw new Error('communities_failed')
+        const payload = (await res.json().catch(() => null)) as ItemsResponse<CommunityOption> | null
+        const items = Array.isArray(payload?.items) ? payload.items : []
+        if (!cancelled) {
+          setManualCommunities(items)
+          setByElectionForm((current) => {
+            if (!current.communitySlug) return current
+            return items.some((item) => item.slug === current.communitySlug)
+              ? current
+              : { ...current, communitySlug: '' }
+          })
+        }
+      } catch {
+        if (!cancelled) {
+          setManualCommunities([])
+          setByElectionForm((current) => ({ ...current, communitySlug: '' }))
+        }
+      } finally {
+        if (!cancelled) {
+          setLoadingManualCommunities(false)
+        }
+      }
+    })()
+
+    return () => {
+      cancelled = true
+    }
+  }, [manualProvinceCode])
+
+  const resetByElectionForm = useCallback(() => {
+    setEditingByElectionId(null)
+    setManualProvinceCode('')
+    setManualCommunities([])
+    setByElectionForm({
+      communitySlug: '',
+      status: 'draft',
+      title: '',
+      tagline: '',
+      electionsCanadaUrl: '',
+      electionDayAt: '',
+      electionDayLabel: '',
+      advanceVotingLabel: '',
+      electionDayHoursLabel: '',
+    })
+  }, [])
+
+  const startEditingByElection = useCallback((entry: AdminByElectionEntry) => {
+    setManualToolsOpen(true)
+    setEditingByElectionId(entry.id)
+    setManualProvinceCode(entry.provinceCode)
+    setByElectionForm({
+      communitySlug: entry.communitySlug,
+      status: entry.status,
+      title: entry.title,
+      tagline: entry.tagline ?? '',
+      electionsCanadaUrl: entry.electionsCanadaUrl ?? '',
+      electionDayAt: entry.electionDayAt ? entry.electionDayAt.slice(0, 10) : '',
+      electionDayLabel: entry.electionDayLabel ?? '',
+      advanceVotingLabel: entry.advanceVotingLabel ?? '',
+      electionDayHoursLabel: entry.electionDayHoursLabel ?? '',
+    })
+  }, [])
+
+  const saveByElection = useCallback(async () => {
+    if (!token || !manualProvinceCode || !byElectionForm.communitySlug || !byElectionForm.title.trim()) return
+    setSavingByElection(true)
+    setError(null)
+    try {
+      const res = await fetch(
+        buildApiUrl(
+          editingByElectionId
+            ? `/admin/eda/by-elections/${encodeURIComponent(editingByElectionId)}`
+            : '/admin/eda/by-elections',
+        ),
+        {
+          method: editingByElectionId ? 'PATCH' : 'POST',
+          headers: {
+            authorization: `Bearer ${token}`,
+            'content-type': 'application/json',
+          },
+          body: JSON.stringify({
+            provinceCode: manualProvinceCode,
+            communitySlug: byElectionForm.communitySlug,
+            status: byElectionForm.status,
+            title: byElectionForm.title,
+            tagline: byElectionForm.tagline,
+            electionsCanadaUrl: byElectionForm.electionsCanadaUrl,
+            electionDayAt: byElectionForm.electionDayAt,
+            electionDayLabel: byElectionForm.electionDayLabel,
+            advanceVotingLabel: byElectionForm.advanceVotingLabel,
+            electionDayHoursLabel: byElectionForm.electionDayHoursLabel,
+          }),
+        },
+      )
+
+      if (!res.ok) {
+        const payload = (await res.json().catch(() => null)) as { error?: string } | null
+        setError(
+          payload?.error === 'by_election_conflict'
+            ? 'There is already a manual by-election entry for that riding.'
+            : payload?.error === 'political_tables_not_ready'
+              ? 'Political tables are not ready in this environment yet. Run the new Prisma migration first.'
+              : payload?.error ?? 'Unable to save the by-election entry.',
+        )
+        return
+      }
+
+      await load()
+      resetByElectionForm()
+    } catch (saveError) {
+      console.error('[admin/eda] Save by-election failed', saveError)
+      setError('Unable to save the by-election entry.')
+    } finally {
+      setSavingByElection(false)
+    }
+  }, [byElectionForm, editingByElectionId, load, manualProvinceCode, resetByElectionForm, token])
 
   const runImport = useCallback(async () => {
     if (!token || !selectedSource) return
@@ -500,6 +744,270 @@ export default function AdminEdaPage() {
                 </p>
               </div>
             </div>
+          ) : null}
+        </section>
+
+        <section className="surface-card space-y-5 px-6 py-5 shadow-subtle">
+          <button
+            type="button"
+            onClick={() => setManualToolsOpen((current) => !current)}
+            className="flex w-full items-center justify-between gap-4 rounded-3xl border border-slate-200 bg-white px-5 py-4 text-left transition hover:bg-slate-50"
+            aria-expanded={manualToolsOpen}
+          >
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-[0.3em] text-slate-400">Manual Tools</p>
+              <h2 className="mt-2 text-lg font-semibold text-slate-900">Upcoming By-Elections</h2>
+              <p className="mt-1 text-sm text-slate-600">
+                {activeByElections.length} active record{activeByElections.length === 1 ? '' : 's'}
+                {editingByElectionId ? ' • Editing entry' : ''}
+              </p>
+            </div>
+            <span
+              className={`inline-flex h-10 w-10 items-center justify-center rounded-full border border-slate-200 text-slate-500 transition ${
+                manualToolsOpen ? 'rotate-180' : ''
+              }`}
+              aria-hidden="true"
+            >
+              <svg viewBox="0 0 20 20" className="h-5 w-5 fill-current">
+                <path d="M5.2 7.7a.75.75 0 0 1 1.06 0L10 11.44l3.74-3.74a.75.75 0 1 1 1.06 1.06l-4.27 4.27a.75.75 0 0 1-1.06 0L5.2 8.76a.75.75 0 0 1 0-1.06Z" />
+              </svg>
+            </span>
+          </button>
+
+          {manualToolsOpen ? (
+            <>
+              <div className="flex flex-wrap items-start justify-end gap-3">
+                {editingByElectionId ? (
+                  <button
+                    type="button"
+                    onClick={resetByElectionForm}
+                    className="rounded-full border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
+                  >
+                    Cancel edit
+                  </button>
+                ) : null}
+              </div>
+
+              <div className="rounded-3xl border border-slate-200 bg-slate-50 p-5">
+                <div className="grid gap-4 xl:grid-cols-2">
+                  <label className="grid gap-2 text-sm font-medium text-slate-700">
+                    Province
+                    <select
+                      value={manualProvinceCode}
+                      onChange={(event) => setManualProvinceCode(event.target.value)}
+                      disabled={!databaseReady || savingByElection}
+                      className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm focus:border-[var(--cc-primary)] focus:outline-none"
+                    >
+                      <option value="">Select a province</option>
+                      {manualProvinces.map((province) => (
+                        <option key={province.code} value={province.code}>
+                          {province.name}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+
+                  <label className="grid gap-2 text-sm font-medium text-slate-700">
+                    Select EDA
+                    <select
+                      value={byElectionForm.communitySlug}
+                      onChange={(event) => setByElectionForm((current) => ({ ...current, communitySlug: event.target.value }))}
+                      disabled={!databaseReady || !manualProvinceCode || loadingManualCommunities || savingByElection}
+                      className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm focus:border-[var(--cc-primary)] focus:outline-none"
+                    >
+                      <option value="">{loadingManualCommunities ? 'Loading EDAs…' : 'Select an electoral district'}</option>
+                      {manualCommunities.map((community) => (
+                        <option key={`${community.province}:${community.slug}`} value={community.slug}>
+                          {community.name ?? community.slug}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+
+                  <label className="grid gap-2 text-sm font-medium text-slate-700">
+                    Status
+                    <select
+                      value={byElectionForm.status}
+                      onChange={(event) => setByElectionForm((current) => ({ ...current, status: event.target.value as ByElectionStatusValue }))}
+                      disabled={!databaseReady || savingByElection}
+                      className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm focus:border-[var(--cc-primary)] focus:outline-none"
+                    >
+                      <option value="draft">Draft</option>
+                      <option value="published">Published</option>
+                      <option value="completed">Completed</option>
+                    </select>
+                  </label>
+
+                  <label className="grid gap-2 text-sm font-medium text-slate-700">
+                    Election day date
+                    <input
+                      type="date"
+                      value={byElectionForm.electionDayAt}
+                      onChange={(event) => setByElectionForm((current) => ({ ...current, electionDayAt: event.target.value }))}
+                      disabled={!databaseReady || savingByElection}
+                      className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm focus:border-[var(--cc-primary)] focus:outline-none"
+                    />
+                  </label>
+
+                  <label className="grid gap-2 text-sm font-medium text-slate-700 xl:col-span-2">
+                    Elections Canada Information
+                    <input
+                      type="url"
+                      value={byElectionForm.electionsCanadaUrl}
+                      onChange={(event) => setByElectionForm((current) => ({ ...current, electionsCanadaUrl: event.target.value }))}
+                      disabled={!databaseReady || savingByElection}
+                      placeholder="https://www.elections.ca/content.aspx?section=ele&dir=2026/24073&document=index&lang=e"
+                      className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm focus:border-[var(--cc-primary)] focus:outline-none"
+                    />
+                  </label>
+
+                  <label className="grid gap-2 text-sm font-medium text-slate-700 xl:col-span-2">
+                    Title
+                    <input
+                      type="text"
+                      value={byElectionForm.title}
+                      onChange={(event) => setByElectionForm((current) => ({ ...current, title: event.target.value }))}
+                      disabled={!databaseReady || savingByElection}
+                      placeholder="By-election in Terrebonne (QC)"
+                      className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm focus:border-[var(--cc-primary)] focus:outline-none"
+                    />
+                  </label>
+
+                  <label className="grid gap-2 text-sm font-medium text-slate-700 xl:col-span-2">
+                    Tagline
+                    <input
+                      type="text"
+                      value={byElectionForm.tagline}
+                      onChange={(event) => setByElectionForm((current) => ({ ...current, tagline: event.target.value }))}
+                      disabled={!databaseReady || savingByElection}
+                      placeholder="It's Our Vote!"
+                      className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm focus:border-[var(--cc-primary)] focus:outline-none"
+                    />
+                  </label>
+
+                  <label className="grid gap-2 text-sm font-medium text-slate-700 xl:col-span-2">
+                    Election day label
+                    <input
+                      type="text"
+                      value={byElectionForm.electionDayLabel}
+                      onChange={(event) => setByElectionForm((current) => ({ ...current, electionDayLabel: event.target.value }))}
+                      disabled={!databaseReady || savingByElection}
+                      placeholder="Election day: Monday, April 13, 2026"
+                      className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm focus:border-[var(--cc-primary)] focus:outline-none"
+                    />
+                  </label>
+
+                  <label className="grid gap-2 text-sm font-medium text-slate-700 xl:col-span-2">
+                    Advance voting days
+                    <textarea
+                      value={byElectionForm.advanceVotingLabel}
+                      onChange={(event) => setByElectionForm((current) => ({ ...current, advanceVotingLabel: event.target.value }))}
+                      disabled={!databaseReady || savingByElection}
+                      rows={3}
+                      placeholder="Advance voting days: Friday, April 3; Saturday, April 4; Sunday, April 5 and Monday, April 6, from 9 a.m. to 9 p.m. local time (EDT)"
+                      className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm focus:border-[var(--cc-primary)] focus:outline-none"
+                    />
+                  </label>
+
+                  <label className="grid gap-2 text-sm font-medium text-slate-700 xl:col-span-2">
+                    Election day hours
+                    <textarea
+                      value={byElectionForm.electionDayHoursLabel}
+                      onChange={(event) => setByElectionForm((current) => ({ ...current, electionDayHoursLabel: event.target.value }))}
+                      disabled={!databaseReady || savingByElection}
+                      rows={2}
+                      placeholder="Election day: Monday, April 13, from 8:30 a.m. to 8:30 p.m. (local time)"
+                      className="rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm focus:border-[var(--cc-primary)] focus:outline-none"
+                    />
+                  </label>
+                </div>
+
+                <div className="mt-4 flex flex-wrap justify-end gap-3">
+                  <button
+                    type="button"
+                    onClick={() => void saveByElection()}
+                    disabled={!databaseReady || savingByElection || !manualProvinceCode || !byElectionForm.communitySlug || !byElectionForm.title.trim()}
+                    className="rounded-full bg-rose-600 px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-rose-500 disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    {savingByElection ? 'Saving…' : editingByElectionId ? 'Update by-election' : 'Add by-election'}
+                  </button>
+                </div>
+              </div>
+
+              {activeByElections.length ? (
+                <div className="overflow-hidden rounded-3xl border border-slate-200 bg-white">
+                  <div className="overflow-x-auto">
+                    <table className="min-w-full divide-y divide-slate-200 text-sm">
+                      <thead className="bg-slate-50 text-left text-xs font-semibold uppercase tracking-wide text-slate-500">
+                        <tr>
+                          <th className="px-4 py-3">EDA</th>
+                          <th className="px-4 py-3">Status</th>
+                          <th className="px-4 py-3">Election day</th>
+                          <th className="px-4 py-3">Source</th>
+                          <th className="px-4 py-3">Updated</th>
+                          <th className="px-4 py-3 text-right">Action</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {activeByElections.map((entry) => (
+                          <tr key={entry.id} className="align-top">
+                            <td className="px-4 py-3">
+                              <div className="font-semibold text-slate-900">{entry.communityName}</div>
+                              <div className="mt-1 text-xs text-slate-500">
+                                {entry.provinceName}
+                                {entry.title ? ` • ${entry.title}` : ''}
+                              </div>
+                            </td>
+                            <td className="px-4 py-3">
+                              <span
+                                className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-semibold ${
+                                  entry.status === 'published'
+                                    ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+                                    : entry.status === 'completed'
+                                      ? 'border-slate-200 bg-slate-100 text-slate-500'
+                                      : 'border-amber-200 bg-amber-50 text-amber-700'
+                                }`}
+                              >
+                                {byElectionStatusLabel(entry.status)}
+                              </span>
+                            </td>
+                            <td className="px-4 py-3 text-slate-700">{entry.electionDayLabel || 'Not set'}</td>
+                            <td className="px-4 py-3">
+                              {entry.electionsCanadaUrl ? (
+                                <a
+                                  href={entry.electionsCanadaUrl}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="text-[var(--cc-primary)] hover:underline"
+                                >
+                                  Elections Canada
+                                </a>
+                              ) : (
+                                <span className="text-slate-400">Not set</span>
+                              )}
+                            </td>
+                            <td className="px-4 py-3 text-slate-500">{new Date(entry.updatedAt).toLocaleString()}</td>
+                            <td className="px-4 py-3 text-right">
+                              <button
+                                type="button"
+                                onClick={() => startEditingByElection(entry)}
+                                className="rounded-full border border-slate-300 px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:bg-slate-50"
+                              >
+                                Edit
+                              </button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              ) : (
+                <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-4 py-4 text-sm text-slate-600">
+                  No active by-elections yet. Add one when a federal riding is heading to a vote.
+                </div>
+              )}
+            </>
           ) : null}
         </section>
 

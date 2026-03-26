@@ -163,9 +163,7 @@ export default function CommunityPoliticiansPage({ params }: PageProps) {
           federalSeat?.politician ? (
             <div className="space-y-4">
               {federalSeat.party ? (
-                <Link href={`/politicians/federal/${encodeURIComponent(federalSeat.party.slug)}`} className="inline-flex rounded-full">
-                  <PartyChip party={federalSeat.party} jurisdiction="federal" className="transition hover:brightness-95" />
-                </Link>
+                <PartyChip party={federalSeat.party} jurisdiction="federal" className="transition hover:brightness-95" />
               ) : null}
               <PoliticianContactCard
                 displayName={federalSeat.politician.displayName}
@@ -202,9 +200,7 @@ export default function CommunityPoliticiansPage({ params }: PageProps) {
                   <div>
                     <p className="text-base font-semibold text-slate-900">{association.associationName}</p>
                     <div className="mt-2 flex flex-wrap items-center gap-2">
-                      <Link href={`/politicians/federal/${encodeURIComponent(association.party.slug)}`} className="inline-flex rounded-full">
-                        <PartyChip party={association.party} jurisdiction="federal" className="transition hover:brightness-95" />
-                      </Link>
+                      <PartyChip party={association.party} jurisdiction="federal" className="transition hover:brightness-95" />
                       {association.registrationStatus ? <span className="text-sm text-slate-600">{association.registrationStatus}</span> : null}
                     </div>
 

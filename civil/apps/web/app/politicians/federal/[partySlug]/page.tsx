@@ -1,12 +1,13 @@
 'use client'
 
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import Link from 'next/link'
 import type { ElectoralDistrictBrowserResponse } from '@civil/shared'
 import { PROVINCES } from '@civil/shared'
 import DashboardShell from '../../../_components/DashboardShell'
 import PoliticianContactCard from '../../../_components/PoliticianContactCard'
 import { CivilDistrictBrowserMap } from '../../../_components/map/CivilDistrictBrowserMap'
+import CivilMapLoadingState from '../../../_components/map/CivilMapLoadingState'
 import PartyChip from '../../../_components/politics/PartyChip'
 import { buildApiUrl } from '../../../_lib/api'
 import { resolvePartyVisual } from '../../../_lib/politics'
@@ -171,7 +172,7 @@ function FederalPartyRightRail({
                 >
                   <div className="w-full">
                     <div className="w-full">
-                      <PartyChip party={party} jurisdiction="federal" className="transition group-hover:brightness-95" />
+                      <PartyChip party={party} jurisdiction="federal" className="transition group-hover:brightness-95" linkable={false} />
                     </div>
                     <p className={`mt-3 whitespace-normal break-words text-sm font-semibold leading-5 ${isSelected ? 'text-[var(--cc-primary)]' : 'text-slate-900'}`}>
                       {party.name}
@@ -205,8 +206,11 @@ export default function FederalPartyPage({ params }: PageProps) {
   const [districtBrowser, setDistrictBrowser] = useState<ElectoralDistrictBrowserResponse | null>(null)
   const [districtBrowserStatus, setDistrictBrowserStatus] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle')
   const [selectedDistrictCode, setSelectedDistrictCode] = useState<number | null>(null)
+  const [mapFocusRequestToken, setMapFocusRequestToken] = useState(0)
+  const [pendingMapFocus, setPendingMapFocus] = useState<{ provinceCode: string; districtSlug: string } | null>(null)
   const [otherParties, setOtherParties] = useState<FederalPartyListItem[]>([])
   const [otherPartiesStatus, setOtherPartiesStatus] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle')
+  const mapSectionRef = useRef<HTMLElement | null>(null)
 
   useEffect(() => {
     let cancelled = false
@@ -429,6 +433,34 @@ export default function FederalPartyPage({ params }: PageProps) {
       }, {}),
     [districtBrowser],
   )
+  const handleShowOnMap = useCallback((district: { provinceCode: string; slug: string }) => {
+    const provinceCode = district.provinceCode.trim().toLowerCase()
+    const districtSlug = district.slug.trim().toLowerCase()
+    if (!provinceCode || !districtSlug) return
+
+    mapSectionRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    setPendingMapFocus({ provinceCode, districtSlug })
+
+    if (selectedProvince !== ALL_CANADA_CODE && selectedProvince !== provinceCode) {
+      setSelectedProvince(provinceCode)
+    }
+  }, [selectedProvince])
+
+  useEffect(() => {
+    if (!pendingMapFocus || !districtBrowser) return
+    if (selectedProvince !== ALL_CANADA_CODE && selectedProvince !== pendingMapFocus.provinceCode) return
+
+    const match = districtBrowser.districts.find((district) => {
+      return district.provinceCode.trim().toLowerCase() === pendingMapFocus.provinceCode
+        && district.slug.trim().toLowerCase() === pendingMapFocus.districtSlug
+    })
+
+    if (!match) return
+
+    setSelectedDistrictCode(match.code)
+    setMapFocusRequestToken((current) => current + 1)
+    setPendingMapFocus(null)
+  }, [districtBrowser, pendingMapFocus, selectedProvince])
 
   return (
     <DashboardShell
@@ -452,7 +484,7 @@ export default function FederalPartyPage({ params }: PageProps) {
         <p className="text-sm text-slate-600">Federal party directory and imported riding associations.</p>
       </section>
 
-      <section className="surface-card space-y-4 px-6 py-5">
+      <section ref={mapSectionRef} className="surface-card space-y-4 px-6 py-5">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
             <h2 className="text-lg font-semibold text-slate-900">Federal riding map</h2>
@@ -496,7 +528,7 @@ export default function FederalPartyPage({ params }: PageProps) {
             selectedDistrictCode={selectedDistrictCode}
             selectedDistrict={selectedDistrict}
             districtStatusByCode={districtStatusByCode}
-            focusRequestToken={0}
+            focusRequestToken={mapFocusRequestToken}
             isSelectedDistrictFollowing={false}
             isSelectedDistrictHome={false}
             isFollowPending={false}
@@ -512,12 +544,7 @@ export default function FederalPartyPage({ params }: PageProps) {
             District data is available, but the map preview is disabled because the configured tile server is not safe for this page.
           </div>
         ) : districtBrowserStatus === 'loading' ? (
-          <div className="relative flex h-[460px] w-full items-center justify-center overflow-hidden rounded-[24px] border border-[var(--cc-border)] bg-slate-100 shadow-subtle">
-            <div className="flex flex-col items-center gap-4 text-center">
-              <span className="inline-flex h-10 w-10 animate-spin rounded-full border-4 border-slate-200 border-t-[var(--cc-primary)]" aria-hidden="true" />
-              <p className="text-sm font-medium text-slate-600">Loading district boundaries…</p>
-            </div>
-          </div>
+          <CivilMapLoadingState />
         ) : districtBrowserStatus === 'error' ? (
           <div className="rounded-2xl border border-red-200 bg-red-50 px-4 py-4 text-sm text-red-700">Unable to load the riding map right now.</div>
         ) : (
@@ -561,6 +588,17 @@ export default function FederalPartyPage({ params }: PageProps) {
                   communityHref={politician.district ? `/${encodeURIComponent(politician.district.provinceCode.toLowerCase())}/${encodeURIComponent(politician.district.slug)}` : null}
                   email={politician.contact.email}
                   website={politician.contact.website}
+                  extraActions={
+                    politician.district ? (
+                      <button
+                        type="button"
+                        onClick={() => handleShowOnMap(politician.district!)}
+                        className="inline-flex items-center rounded-full border border-slate-200 bg-white px-3 py-1.5 font-semibold text-[var(--cc-primary)] hover:border-red-200 hover:bg-rose-50"
+                      >
+                        Show on Map
+                      </button>
+                    ) : null
+                  }
                 />
               </li>
             ))}
