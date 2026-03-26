@@ -1080,6 +1080,42 @@ export function RightRail({
           )}
         </Block>
 
+        <Block title="Upcoming By-Elections">
+          {upcomingByElections.length ? (
+            <ul className="space-y-3">
+              {upcomingByElections.map((entry) => (
+                <li
+                  key={entry.id}
+                  className={`rounded-xl border px-3 py-2 ${entry.isHome ? 'border-emerald-200 bg-emerald-50/70' : 'border-slate-200 bg-slate-900'}`}
+                >
+                  <Link href={entry.communityHref} className="block">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="min-w-0">
+                        <p className={`text-sm font-semibold ${entry.isHome ? 'text-slate-900' : 'text-white'}`}>{entry.communityName}</p>
+                        <p className={`mt-1 text-xs ${entry.isHome ? 'text-slate-600' : 'text-white/70'}`}>{entry.title}</p>
+                        {entry.electionDayLabel ? (
+                          <p className={`mt-1 text-xs ${entry.isHome ? 'text-slate-500' : 'text-white/60'}`}>{entry.electionDayLabel}</p>
+                        ) : null}
+                      </div>
+                      <span
+                        className={`shrink-0 rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${
+                          entry.isHome
+                            ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+                            : 'border-emerald-300/50 bg-emerald-500/15 text-emerald-100'
+                        }`}
+                      >
+                        Published
+                      </span>
+                    </div>
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="text-sm text-slate-500">No published by-elections in your communities right now.</p>
+          )}
+        </Block>
+
         {eventRsvps.length ? (
           <Block title="Your RSVPs" action={{ label: 'View all', href: '/events?mine=going' }}>
             <ul className="space-y-3">
