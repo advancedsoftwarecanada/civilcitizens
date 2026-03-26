@@ -965,13 +965,15 @@ export default function OrganizationMeetingRoomClient({
         }
       }
 
-      for (const track of stream?.getTracks() ?? []) {
-        const hasSender = existingSenders.some((sender) => sender.track?.id === track.id)
-        if (!hasSender) {
-          try {
-            pc.addTrack(track, stream)
-          } catch {
-            // ignore duplicate track errors
+      if (stream) {
+        for (const track of stream.getTracks()) {
+          const hasSender = existingSenders.some((sender) => sender.track?.id === track.id)
+          if (!hasSender) {
+            try {
+              pc.addTrack(track, stream)
+            } catch {
+              // ignore duplicate track errors
+            }
           }
         }
       }
@@ -1197,10 +1199,11 @@ export default function OrganizationMeetingRoomClient({
         connectionsRes.json().catch(() => null),
       ])
 
-      const nextFamily = (Array.isArray((familyPayload as FamilyResponse | null)?.profileRelationships)
-        ? (familyPayload as FamilyResponse).profileRelationships
+      const familyRelationships = Array.isArray((familyPayload as FamilyResponse | null)?.profileRelationships)
+        ? ((familyPayload as FamilyResponse | null)?.profileRelationships ?? [])
         : []
-      )
+
+      const nextFamily = familyRelationships
         .map((entry) => ({
           id: entry.id,
           handle: entry.handle,
