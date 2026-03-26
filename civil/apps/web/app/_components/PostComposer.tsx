@@ -3,7 +3,14 @@
 import { type ChangeEvent, type KeyboardEvent as ReactKeyboardEvent, type SyntheticEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import RichTextEditor from './RichTextEditor'
 import clsx from 'clsx'
-import { tokenizeTextEntities, type Jurisdiction, type PollResultsVisibility, type ReactionType } from '@civil/shared'
+import {
+  CAUSE_MAXIMUM_GOAL_CENTS,
+  CAUSE_MINIMUM_GOAL_CENTS,
+  tokenizeTextEntities,
+  type Jurisdiction,
+  type PollResultsVisibility,
+  type ReactionType,
+} from '@civil/shared'
 import { LuImagePlus, LuVideo } from 'react-icons/lu'
 import { redirectToAuthModal } from '../_lib/authModal'
 import { buildApiUrl } from '../_lib/api'
@@ -14,13 +21,14 @@ import CivilComposerShell from './CivilComposerShell'
 import LinkPreviewCard, { type LinkPreviewRecord } from './LinkPreviewCard'
 import VerifiedAvatar from './VerifiedAvatar'
 
-export type PostType = 'post' | 'article' | 'photo' | 'poll'
+export type PostType = 'post' | 'article' | 'photo' | 'poll' | 'cause'
 export type PostVisibility = 'public' | 'members'
 
 const POST_TYPE_CHOICES: Array<{ type: PostType; label: string; icon: string }> = [
   { type: 'post', label: 'Post', icon: '📝' },
   { type: 'article', label: 'Article', icon: '📄' },
   { type: 'poll', label: 'Poll', icon: '📊' },
+  { type: 'cause', label: 'Cause', icon: '🎯' },
 ]
 
 export type ApiPost = {
@@ -59,6 +67,25 @@ export type ApiPost = {
     communitySlug: string | null
   } | null
   showBusinessAuthor?: boolean
+  cause?: {
+    draftId?: string | null
+    goalAmountCents: number
+    stageGoals: Array<{
+      id: string
+      amountCents: number
+      description: string
+      sortOrder: number
+    }>
+    raisedAmountCents: number
+    remainingAmountCents: number
+    contributionCount: number
+    progressPercent: number
+    status: 'active' | 'funded' | 'closed'
+    createdAt: string | null
+    updatedAt: string | null
+    lastContributionAt: string | null
+  } | null
+  causeDraftId?: string | null
   poll?: {
     id: string
     resultsVisibility: PollResultsVisibility
@@ -176,6 +203,7 @@ type PostComposerProps = {
 const MAX_POST_LENGTH = 5000
 const MIN_ARTICLE_TITLE_LENGTH = 3
 const MIN_ARTICLE_BODY_LENGTH = 100
+const MIN_CAUSE_BODY_LENGTH = 30
 const MIN_POLL_OPTIONS = 2
 const MAX_POLL_OPTIONS = 10
 const PHOTO_MAX_BYTES = 25 * 1024 * 1024
@@ -262,9 +290,16 @@ const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
 
 const MAX_IMAGE_DIMENSION = 8000
 const MAX_IMAGE_MEGA_PIXELS = 40
+const DEFAULT_CAUSE_GOAL_DOLLARS = '2500'
 
 function normalizeComposerPostType(postType: PostType): PostType {
   return postType === 'photo' ? 'post' : postType
+}
+
+function readCauseGoalAmountCents(value: string) {
+  const numeric = Number.parseFloat(value)
+  if (!Number.isFinite(numeric)) return 0
+  return Math.round(numeric * 100)
 }
 
 const readImageDimensions = async (file: File): Promise<{ width: number; height: number } | null> => {
@@ -501,6 +536,7 @@ export default function PostComposer({
   const [articleBody, setArticleBody] = useState('<p></p>')
   const [pollOptions, setPollOptions] = useState<string[]>(() => createInitialPollOptions())
   const [pollResultsVisibility, setPollResultsVisibility] = useState<PollResultsVisibility>('after_vote')
+  const [causeGoalInput, setCauseGoalInput] = useState(DEFAULT_CAUSE_GOAL_DOLLARS)
   const [photos, setPhotos] = useState<PhotoItem[]>([])
   const fileInputRef = useRef<HTMLInputElement | null>(null)
   const [submitting, setSubmitting] = useState(false)
@@ -543,6 +579,7 @@ export default function PostComposer({
   )
 
   const articleBodyPlain = useMemo(() => stripHtml(articleBody), [articleBody])
+  const causeGoalAmountCents = useMemo(() => readCauseGoalAmountCents(causeGoalInput), [causeGoalInput])
   const composerPreviewSource = useMemo(() => {
     if (postType === 'article') return articleBodyPlain
     return draft
@@ -1013,11 +1050,18 @@ export default function PostComposer({
       const trimmed = draft.trim()
       return (trimmed.length > 0 || readyPhotoUrls.length > 0) && trimmed.length <= MAX_POST_LENGTH && photosReady && !submitting
     }
+    if (postType === 'cause') {
+      const trimmed = draft.trim()
+      const titleOk = articleTitle.trim().length >= MIN_ARTICLE_TITLE_LENGTH
+      const bodyOk = trimmed.length >= MIN_CAUSE_BODY_LENGTH && trimmed.length <= MAX_POST_LENGTH
+      const goalOk = causeGoalAmountCents >= CAUSE_MINIMUM_GOAL_CENTS && causeGoalAmountCents <= CAUSE_MAXIMUM_GOAL_CENTS
+      return titleOk && bodyOk && goalOk && photosReady && !submitting
+    }
 
     const titleOk = articleTitle.trim().length >= MIN_ARTICLE_TITLE_LENGTH
     const bodyOk = articleBodyPlain.length >= MIN_ARTICLE_BODY_LENGTH
     return titleOk && bodyOk && photosReady && !submitting
-  }, [articleBodyPlain, articleTitle, draft, normalizedPollOptions, photosReady, postType, readyPhotoUrls.length, submitting])
+  }, [articleBodyPlain, articleTitle, causeGoalAmountCents, draft, normalizedPollOptions, photosReady, postType, readyPhotoUrls.length, submitting])
 
   const resetComposer = useCallback(() => {
     setDraft('')
@@ -1025,6 +1069,7 @@ export default function PostComposer({
     setArticleBody('<p></p>')
     setPollOptions(createInitialPollOptions())
     setPollResultsVisibility('after_vote')
+    setCauseGoalInput(DEFAULT_CAUSE_GOAL_DOLLARS)
     setPostType(normalizeComposerPostType(defaultPostType))
     setAudienceSelection(deriveInitialAudienceSelection(communityTarget, defaultAudience, selectableCommunityOptions, businessTarget))
     setVisibility('public')
@@ -1071,6 +1116,16 @@ export default function PostComposer({
         }
         if (postType === 'post') {
           return { type: 'post', body: draft }
+        }
+        if (postType === 'cause') {
+          return {
+            type: 'cause',
+            title: articleTitle.trim(),
+            body: draft,
+            cause: {
+              goalAmountCents: causeGoalAmountCents,
+            },
+          }
         }
         return { type: 'article', title: articleTitle.trim(), body: articleBody }
       })()
@@ -1140,7 +1195,7 @@ export default function PostComposer({
     } finally {
       setSubmitting(false)
     }
-  }, [activeBusinessTarget, activeCommunity, articleBody, articleTitle, audienceSelection, canSubmit, communityTarget, draft, normalizedPollOptions, onPostCreated, pollResultsVisibility, postType, readyPhotoUrls, resetComposer, showBusinessAuthor, submitting, visibility])
+  }, [activeBusinessTarget, activeCommunity, articleBody, articleTitle, audienceSelection, canSubmit, causeGoalAmountCents, communityTarget, draft, normalizedPollOptions, onPostCreated, pollResultsVisibility, postType, readyPhotoUrls, resetComposer, showBusinessAuthor, submitting, visibility])
 
   const composerAuthorName = useMemo(() => {
     if (!me) return 'You'
@@ -1612,6 +1667,96 @@ export default function PostComposer({
               </div>
             </div>
           </div>
+        ) : postType === 'cause' ? (
+          <div className="space-y-4">
+            <div>
+              <label className="block text-sm font-semibold text-slate-600" htmlFor="cause-title">
+                Cause title
+              </label>
+              <input
+                id="cause-title"
+                type="text"
+                className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 shadow-inner"
+                placeholder="What are you trying to fund?"
+                value={articleTitle}
+                onChange={(e) => setArticleTitle(e.target.value)}
+                maxLength={160}
+                disabled={submitting}
+              />
+            </div>
+
+            <div className="grid gap-3 sm:grid-cols-[minmax(0,1fr)_220px]">
+              <div className="space-y-2">
+                <label className="block text-sm font-semibold text-slate-600" htmlFor="cause-description">
+                  Description
+                </label>
+                <div ref={draftMentionMenuAnchorRef} className="relative">
+                  <div className="relative overflow-hidden rounded-2xl border border-slate-200 bg-slate-50 transition focus-within:border-[var(--cc-primary)] focus-within:bg-white">
+                    <div aria-hidden="true" className="pointer-events-none absolute inset-0 overflow-hidden rounded-[inherit]">
+                      <div
+                        className="min-h-full whitespace-pre-wrap break-words px-4 py-3 text-base leading-6 text-slate-800"
+                        style={{ transform: `translateY(-${draftScrollTop}px)` }}
+                      >
+                        {renderComposerHighlightedText(draft)}
+                      </div>
+                    </div>
+                    <textarea
+                      id="cause-description"
+                      ref={draftTextareaRef}
+                      className="relative z-10 block w-full resize-y border-0 bg-transparent px-4 py-3 text-base leading-6 text-transparent caret-slate-800 placeholder:text-slate-400 focus:outline-none focus:ring-0"
+                      style={{ caretColor: '#1e293b' }}
+                      placeholder="Explain the cause, who it helps, and what the funds will cover. Use @mentions and #hashtags if they help people find it."
+                      rows={6}
+                      value={draft}
+                      onChange={(event) => {
+                        setDraft(event.target.value)
+                        updateMentionQueryFromCursor(event.target.value, event.target.selectionStart)
+                      }}
+                      onSelect={handleDraftSelectionEvent}
+                      onClick={handleDraftSelectionEvent}
+                      onKeyDown={handleDraftTextKeyDown}
+                      onScroll={(event) => {
+                        setDraftScrollTop(event.currentTarget.scrollTop)
+                        updateMentionMenuPosition(event.currentTarget.selectionStart)
+                      }}
+                      maxLength={MAX_POST_LENGTH}
+                      disabled={submitting}
+                    />
+                  </div>
+                  {renderMentionSuggestionsMenu()}
+                </div>
+                <div className="flex items-center justify-end text-xs text-slate-500">
+                  <span>
+                    {draft.trim().length}/{MAX_POST_LENGTH}
+                  </span>
+                </div>
+              </div>
+
+              <div className="space-y-3 rounded-2xl border border-slate-200 bg-slate-50/70 p-4">
+                <div>
+                  <label className="block text-sm font-semibold text-slate-700" htmlFor="cause-goal">
+                    Funding goal
+                  </label>
+                  <input
+                    id="cause-goal"
+                    type="number"
+                    min={CAUSE_MINIMUM_GOAL_CENTS / 100}
+                    max={CAUSE_MAXIMUM_GOAL_CENTS / 100}
+                    step="50"
+                    className="mt-1 w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 focus:border-[var(--cc-primary)] focus:outline-none"
+                    value={causeGoalInput}
+                    onChange={(event) => setCauseGoalInput(event.target.value)}
+                    disabled={submitting}
+                  />
+                  <p className="mt-2 text-xs text-slate-500">Set a clear amount in CAD. The goal stays visible on the feed card and thread page.</p>
+                </div>
+                <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-3 py-3 text-xs text-emerald-900">
+                  <p className="font-semibold">Cause notes</p>
+                  <p className="mt-1">Funding goes into your Civil Wallet. You&apos;ll need a connected Stripe payout account before publishing.</p>
+                </div>
+              </div>
+            </div>
+          </div>
         ) : postType === 'poll' ? (
           <div className="space-y-4">
             <div className="space-y-2">
@@ -1837,7 +1982,7 @@ export default function PostComposer({
             onClick={submitPost}
             disabled={!canSubmit || submitting || audienceBlocked}
           >
-            {submitting ? 'Publishing…' : postType === 'article' ? 'Publish article' : 'Post'}
+            {submitting ? 'Publishing…' : postType === 'article' ? 'Publish article' : postType === 'cause' ? 'Start cause' : 'Post'}
           </button>
         </div>
       </div>

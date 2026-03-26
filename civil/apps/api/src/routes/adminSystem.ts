@@ -39,6 +39,10 @@ const AdminSubIndustryUpdateInput = z.object({
 
 const AdminIndustryIdParams = z.object({ industryId: z.string().cuid() })
 const AdminSubIndustryIdParams = z.object({ subIndustryId: z.string().cuid() })
+const AdminWalletSubscriptionsQuery = z.object({
+  status: z.enum(['all', 'active', 'paused', 'canceled']).default('active'),
+  limit: z.coerce.number().int().min(1).max(250).default(100),
+})
 
 const DEFAULT_JOB_TAXONOMY: Array<{
   name: string
@@ -246,6 +250,154 @@ export function registerAdminSystemRoutes(app: FastifyInstance, deps: AdminSyste
         inEscrowHoldingCents: Math.max(0, Number(escrow.holding_cents) || 0),
         activeEscrowCount: Math.max(0, Number(escrow.escrow_count) || 0),
       },
+      generatedAt: new Date().toISOString(),
+    })
+  })
+
+  app.get('/admin/wallet/subscriptions', async (req: FastifyRequest, reply: FastifyReply) => {
+    const user = await deps.loadAdminUserOrReply(req, reply)
+    if (!user) return
+
+    const query = AdminWalletSubscriptionsQuery.safeParse(req.query ?? {})
+    if (!query.success) {
+      return reply.code(400).send({ error: query.error.flatten() })
+    }
+
+    await ensureCitizenWalletTables()
+
+    const statusFilter = query.data.status === 'all' ? Prisma.empty : Prisma.sql`AND sub.status = ${query.data.status}`
+    const [summaryRows, itemRows] = await Promise.all([
+      prisma.$queryRaw<Array<{
+        active_count: number
+        paused_count: number
+        canceled_count: number
+        active_amount_cents: number
+        due_count: number
+      }>>`
+        SELECT
+          COUNT(*) FILTER (WHERE status = 'active')::int AS active_count,
+          COUNT(*) FILTER (WHERE status = 'paused')::int AS paused_count,
+          COUNT(*) FILTER (WHERE status = 'canceled')::int AS canceled_count,
+          COALESCE(SUM(amount_cents) FILTER (WHERE status = 'active'), 0)::int AS active_amount_cents,
+          COUNT(*) FILTER (WHERE status = 'active' AND next_charge_at IS NOT NULL AND next_charge_at <= NOW())::int AS due_count
+        FROM civil_cause_subscription
+      `,
+      prisma.$queryRaw<Array<{
+        id: string
+        amount_cents: number
+        interval_unit: string
+        status: string
+        next_charge_at: Date | null
+        last_charge_at: Date | null
+        paused_at: Date | null
+        canceled_at: Date | null
+        created_at: Date
+        updated_at: Date
+        post_id: string
+        post_title: string | null
+        post_slug: string | null
+        province_code: string | null
+        community_slug: string | null
+        subscriber_id: string
+        subscriber_handle: string | null
+        subscriber_name: string | null
+        subscriber_email: string | null
+        recipient_id: string
+        recipient_handle: string | null
+        recipient_name: string | null
+        recipient_email: string | null
+      }>>(
+        Prisma.sql`
+          SELECT
+            sub.id,
+            sub.amount_cents,
+            sub.interval_unit,
+            sub.status,
+            sub.next_charge_at,
+            sub.last_charge_at,
+            sub.paused_at,
+            sub.canceled_at,
+            sub.created_at,
+            sub.updated_at,
+            post.id AS post_id,
+            post.title AS post_title,
+            post."seoSlug" AS post_slug,
+            post."provinceCode" AS province_code,
+            post."communitySlug" AS community_slug,
+            subscriber.id AS subscriber_id,
+            subscriber.handle AS subscriber_handle,
+            subscriber.name AS subscriber_name,
+            subscriber.email AS subscriber_email,
+            recipient.id AS recipient_id,
+            recipient.handle AS recipient_handle,
+            recipient.name AS recipient_name,
+            recipient.email AS recipient_email
+          FROM civil_cause_subscription sub
+          JOIN "Post" post ON post.id = sub.post_id
+          JOIN "User" subscriber ON subscriber.id = sub.subscriber_user_id
+          JOIN "User" recipient ON recipient.id = sub.recipient_user_id
+          WHERE 1 = 1
+          ${statusFilter}
+          ORDER BY
+            CASE sub.status WHEN 'active' THEN 0 WHEN 'paused' THEN 1 ELSE 2 END,
+            sub.next_charge_at ASC NULLS LAST,
+            sub.updated_at DESC
+          LIMIT ${query.data.limit}
+        `,
+      ),
+    ])
+
+    const summary = summaryRows[0] ?? {
+      active_count: 0,
+      paused_count: 0,
+      canceled_count: 0,
+      active_amount_cents: 0,
+      due_count: 0,
+    }
+
+    return reply.send({
+      summary: {
+        activeCount: Math.max(0, Number(summary.active_count) || 0),
+        pausedCount: Math.max(0, Number(summary.paused_count) || 0),
+        canceledCount: Math.max(0, Number(summary.canceled_count) || 0),
+        activeAmountCents: Math.max(0, Number(summary.active_amount_cents) || 0),
+        dueCount: Math.max(0, Number(summary.due_count) || 0),
+      },
+      items: itemRows.map((row) => ({
+        id: row.id,
+        amountCents: Math.max(0, Number(row.amount_cents) || 0),
+        intervalUnit: row.interval_unit === 'monthly' ? 'monthly' : row.interval_unit,
+        status: row.status,
+        nextChargeAt: row.next_charge_at?.toISOString() ?? null,
+        lastChargeAt: row.last_charge_at?.toISOString() ?? null,
+        pausedAt: row.paused_at?.toISOString() ?? null,
+        canceledAt: row.canceled_at?.toISOString() ?? null,
+        createdAt: row.created_at.toISOString(),
+        updatedAt: row.updated_at.toISOString(),
+        post: {
+          id: row.post_id,
+          title: row.post_title,
+          slug: row.post_slug,
+          path:
+            row.province_code && row.community_slug && row.post_slug
+              ? `/${row.province_code.toLowerCase()}/${row.community_slug.toLowerCase()}/causes/${row.post_slug}`
+              : row.recipient_handle && row.post_slug
+                ? `/u/${row.recipient_handle}/posts/${row.post_slug}`
+                : null,
+        },
+        subscriber: {
+          id: row.subscriber_id,
+          handle: row.subscriber_handle,
+          name: row.subscriber_name,
+          email: row.subscriber_email,
+        },
+        recipient: {
+          id: row.recipient_id,
+          handle: row.recipient_handle,
+          name: row.recipient_name,
+          email: row.recipient_email,
+        },
+      })),
       generatedAt: new Date().toISOString(),
     })
   })

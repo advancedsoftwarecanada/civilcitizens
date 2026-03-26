@@ -5,7 +5,8 @@ import { prisma } from '@civil/db'
 import { MessageParticipantRole, MessageThreadType, MessageType, Prisma } from '@prisma/client'
 import { z } from 'zod'
 import { computeCivilPayFeeCents } from '../civilPayFees.js'
-import { buildWalletMetaValue, insertCivilCreditLedgerEntry, readWalletSummary, walletHasConnectPayoutsEnabled } from '../walletHelpers.js'
+import { readWalletSummary, walletHasConnectPayoutsEnabled } from '../walletHelpers.js'
+import { applyWalletUserTransfer } from '../walletTransactions.js'
 
 type MarketChatDeps = Record<string, any>
 
@@ -1354,108 +1355,45 @@ export function registerMarketChatRoutes(app: FastifyInstance, deps: MarketChatD
           if (freshListing.civil_pay_paid_at || freshListing.civil_pay_status === 'completed') throw new Error('civil_pay_already_completed')
           if (String(freshListing.status || '').toLowerCase() !== 'pending') throw new Error('sale_not_pending')
 
-          const freshBuyerWallet = readWalletSummary(freshBuyer.communityMeta)
-          const freshSellerWallet = readWalletSummary(freshSeller.communityMeta)
-          if (!freshSellerWallet.enabled || !walletHasConnectPayoutsEnabled(freshSellerWallet)) throw new Error('seller_wallet_not_available')
-          if (freshBuyerWallet.civilCreditsCents < totalChargeCents) throw new Error('insufficient_wallet_balance')
+          if (!freshSeller.communityMeta) throw new Error('seller_wallet_not_available')
 
-          const buyerMeta = deps.readBaseCommunityMeta(freshBuyer.communityMeta)
-          buyerMeta.wallet = buildWalletMetaValue({
-            ...freshBuyerWallet,
-            civilCreditsCents: freshBuyerWallet.civilCreditsCents - totalChargeCents,
-          })
-
-          const sellerMeta = deps.readBaseCommunityMeta(freshSeller.communityMeta)
-          sellerMeta.wallet = buildWalletMetaValue({
-            ...freshSellerWallet,
-            civilCreditsCents: freshSellerWallet.civilCreditsCents + amountCents,
-          })
-
-          await Promise.all([
-            tx.user.update({ where: { id: buyer.id }, data: { communityMeta: buyerMeta } }),
-            tx.user.update({ where: { id: seller.id }, data: { communityMeta: sellerMeta } }),
-          ])
-
-          await tx.$executeRaw`
-            INSERT INTO citizen_wallet_transaction (
-              id,
-              kind,
-              status,
-              user_id,
-              counterparty_user_id,
-              amount_cents,
-              currency,
-              stripe_connect_account_id,
-              metadata,
-              updated_at
-            )
-            VALUES (
-              ${transactionId},
-              ${'market_civil_pay'},
-              ${'completed'},
-              ${buyer.id},
-              ${seller.id},
-              ${totalChargeCents},
-              ${'cad'},
-              ${freshSellerWallet.stripeConnect.accountId},
-              ${JSON.stringify({ kind: 'market_civil_pay', listingId: listing.id, amountCents, feeCents, buyerUserId: buyer.id, sellerUserId: seller.id })}::jsonb,
-              NOW()
-            )
-          `
-
-          await insertCivilCreditLedgerEntry(tx, {
-            id: `market-civil-pay:sale:${transactionId}`,
-            eventId,
-            entryType: 'transfer',
-            status: 'completed',
+          await applyWalletUserTransfer(tx, {
+            senderUserId: buyer.id,
+            recipientUserId: seller.id,
             amountCents,
-            currency: 'cad',
-            from: {
-              entityType: 'user_wallet',
-              userId: buyer.id,
-              handle: buyer.handle ?? null,
-              name: buyer.name ?? null,
-              entityLabel: 'Civil Wallet',
+            feeCents,
+            totalChargeCents,
+            transactionId,
+            transactionKind: 'market_civil_pay',
+            transactionAmountCents: totalChargeCents,
+            transactionMetadata: { kind: 'market_civil_pay', listingId: listing.id, amountCents, feeCents, buyerUserId: buyer.id, sellerUserId: seller.id },
+            requireRecipientWalletEnabled: true,
+            requireRecipientConnectPayouts: true,
+            errors: {
+              recipientWalletUnavailable: 'seller_wallet_not_available',
+              insufficientFunds: 'insufficient_wallet_balance',
             },
-            to: {
-              entityType: 'user_wallet',
-              userId: seller.id,
-              handle: seller.handle ?? null,
-              name: seller.name ?? null,
-              entityLabel: 'Civil Wallet',
+            transferLedger: {
+              id: `market-civil-pay:sale:${transactionId}`,
+              eventId,
+              sourceType: 'market_civil_pay_sale',
+              sourceReferenceId: `${transactionId}:sale`,
+              description: `Civil Pay purchase for ${listing.title}`,
+              metadata: { kind: 'market_civil_pay_sale', listingId: listing.id, buyerUserId: buyer.id, sellerUserId: seller.id },
             },
-            sourceType: 'market_civil_pay_sale',
-            sourceReferenceId: `${transactionId}:sale`,
-            stripeConnectAccountId: freshSellerWallet.stripeConnect.accountId,
-            description: `Civil Pay purchase for ${listing.title}`,
-            metadata: { kind: 'market_civil_pay_sale', listingId: listing.id, buyerUserId: buyer.id, sellerUserId: seller.id },
-          })
-
-          await insertCivilCreditLedgerEntry(tx, {
-            id: `market-civil-pay:fee:${transactionId}`,
-            eventId,
-            entryType: 'transfer',
-            status: 'completed',
-            amountCents: feeCents,
-            currency: 'cad',
-            from: {
-              entityType: 'user_wallet',
-              userId: buyer.id,
-              handle: buyer.handle ?? null,
-              name: buyer.name ?? null,
-              entityLabel: 'Civil Wallet',
+            feeLedger: {
+              id: `market-civil-pay:fee:${transactionId}`,
+              eventId,
+              entryType: 'transfer',
+              sourceType: 'market_civil_pay_fee',
+              sourceReferenceId: `${transactionId}:fee`,
+              description: `Civil Pay fee for ${listing.title}`,
+              toEntityType: 'platform_wallet',
+              toEntityLabel: 'CIVIL',
+              toHandle: CIVIL_LEDGER_ACCOUNT_ID,
+              toName: 'Civil',
+              metadata: { kind: 'market_civil_pay_fee', listingId: listing.id, buyerUserId: buyer.id, sellerUserId: seller.id, platformAccountId: CIVIL_LEDGER_ACCOUNT_ID },
             },
-            to: {
-              entityType: 'platform_wallet',
-              userId: null,
-              handle: CIVIL_LEDGER_ACCOUNT_ID,
-              name: 'Civil',
-              entityLabel: 'CIVIL',
-            },
-            sourceType: 'market_civil_pay_fee',
-            sourceReferenceId: `${transactionId}:fee`,
-            description: `Civil Pay fee for ${listing.title}`,
-            metadata: { kind: 'market_civil_pay_fee', listingId: listing.id, buyerUserId: buyer.id, sellerUserId: seller.id, platformAccountId: CIVIL_LEDGER_ACCOUNT_ID },
           })
 
           const updatedRows = await tx.$queryRaw<Array<{ id: string }>>`

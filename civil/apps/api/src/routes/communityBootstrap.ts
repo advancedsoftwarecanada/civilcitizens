@@ -111,7 +111,7 @@ export function registerCommunityBootstrapRoutes(app: FastifyInstance, deps: Com
         items = queryResult
       }
 
-      const { reactionsByPost, pollSelectionsByPost, recentCommentsByPost } = await deps.loadViewerPostFormattingContext(
+      const { reactionsByPost, pollSelectionsByPost, recentCommentsByPost, causeByPost } = await deps.loadViewerPostFormattingContext(
         viewerId,
         items.map((item) => item.id),
         5,
@@ -125,6 +125,7 @@ export function registerCommunityBootstrapRoutes(app: FastifyInstance, deps: Com
             viewerReaction: reactionsByPost[item.id] ?? null,
             viewerPollOptionId: pollSelectionsByPost[item.id] ?? null,
             recentComments: recentCommentsByPost[item.id] ?? [],
+            cause: causeByPost[item.id] ?? null,
           }),
         ),
         nextCursor,

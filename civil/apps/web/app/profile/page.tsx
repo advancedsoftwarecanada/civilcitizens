@@ -13,6 +13,7 @@ import { pushToast } from '../_components/useToasts'
 import { redirectToAuthModal } from '../_lib/authModal'
 import { clearAuthSession } from '../_lib/authSession'
 import { buildApiUrl } from '../_lib/api'
+import { buildPostPath } from '../_lib/shareTarget'
 import { COUNTRY_OPTIONS } from '../_lib/countries'
 import { hasHomeCommunity, type CivicStatusValue, type WorkAuthorizationValue } from '../_lib/me'
 import { useViewerStore } from '../_lib/viewerStore'
@@ -273,12 +274,8 @@ const buildPostPermalink = (post: {
   communitySlug?: string | null
   author?: { handle?: string | null } | null
 }) => {
-  const slug = post.seoSlug ?? post.id
-  if (post.provinceCode && post.communitySlug) {
-    return `/${post.provinceCode.toLowerCase()}/${post.communitySlug.toLowerCase()}/posts/${slug}`
-  }
   if (post.author?.handle) {
-    return `/u/${post.author.handle}/posts/${slug}`
+    return buildPostPath(post as ApiPost)
   }
   return `/post/${post.id}`
 }

@@ -6,6 +6,7 @@ import { loadStripe } from '@stripe/stripe-js'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { FaWallet } from 'react-icons/fa'
 import { HiOutlineCheckCircle } from 'react-icons/hi2'
+import { LuSettings2 } from 'react-icons/lu'
 import DashboardShell from '../_components/DashboardShell'
 import Modal from '../_components/Modal'
 import { pushToast } from '../_components/useToasts'
@@ -57,6 +58,28 @@ type WalletSummaryPayload = {
     title: string
     detail?: string | null
   }> | null
+  causeSubscriptions?: Array<{
+    id: string
+    postId: string
+    postTitle?: string | null
+    postSlug?: string | null
+    provinceCode?: string | null
+    communitySlug?: string | null
+    creatorUserId: string
+    creatorHandle?: string | null
+    creatorName?: string | null
+    amountCents: number
+    intervalUnit: 'monthly'
+    status: 'active' | 'paused' | 'canceled'
+    nextChargeAt?: string | null
+    lastChargeAt?: string | null
+    pausedAt?: string | null
+    canceledAt?: string | null
+    createdAt: string
+    updatedAt: string
+    communityPath?: string | null
+    userPath?: string | null
+  }> | null
   stripeConnect?: {
     accountId?: string | null
     chargesEnabled?: boolean
@@ -66,6 +89,7 @@ type WalletSummaryPayload = {
 } | null
 
 type WalletRecentTransaction = NonNullable<NonNullable<WalletSummaryPayload>['recentTransactions']>[number]
+type WalletCauseSubscription = NonNullable<NonNullable<WalletSummaryPayload>['causeSubscriptions']>[number]
 
 const WALLET_TOP_UP_PRESETS = ['25.00', '50.00', '100.00', '250.00', '500.00', '1000.00'] as const
 
@@ -268,8 +292,10 @@ export default function WalletPage() {
   const pendingCreditsCents = wallet?.pendingCreditsCents ?? 0
   const settlementHoldDays = wallet?.settlementHoldDays ?? 7
   const recentTransactions = (wallet?.recentTransactions ?? []) as WalletRecentTransaction[]
+  const causeSubscriptions = (wallet?.causeSubscriptions ?? []) as WalletCauseSubscription[]
   const driveTransactions = recentTransactions.filter((transaction) => isDriveWalletTransaction(transaction.sourceType))
   const otherTransactions = recentTransactions.filter((transaction) => !isDriveWalletTransaction(transaction.sourceType))
+  const [subscriptionModal, setSubscriptionModal] = useState<WalletCauseSubscription | null>(null)
   const normalizedInput = normalizeEmail(eTransferEmail)
   const hasChanges =
     normalizedInput !== storedEmail ||
@@ -595,6 +621,63 @@ export default function WalletPage() {
       <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
+            <p className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-400">Subscriptions</p>
+            <h2 className="mt-1 text-xl font-semibold text-slate-900">Cause subscriptions</h2>
+            <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-600">
+              Monthly Cause support renews from your Civil Wallet. Pause or cancel any subscription without leaving the app.
+            </p>
+          </div>
+        </div>
+
+        <div className="mt-5 space-y-3">
+          {causeSubscriptions.length ? (
+            causeSubscriptions.map((subscription) => {
+              const href = subscription.communityPath ?? subscription.userPath ?? '#'
+              const nextDate = subscription.nextChargeAt ? formatDateLabel(subscription.nextChargeAt) : ''
+
+              return (
+                <div key={subscription.id} className="flex flex-wrap items-center justify-between gap-4 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4">
+                  <div className="min-w-0 flex-1">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className={`inline-flex rounded-full border px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] ${subscription.status === 'active' ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : subscription.status === 'paused' ? 'border-amber-200 bg-amber-50 text-amber-700' : 'border-slate-200 bg-white text-slate-500'}`}>
+                        {subscription.status}
+                      </span>
+                      <Link href={href} className="truncate text-base font-semibold text-slate-900 hover:text-[var(--cc-primary)]">
+                        {subscription.postTitle ?? 'Cause'}
+                      </Link>
+                    </div>
+                    <p className="mt-1 text-sm text-slate-600">
+                      Supporting {subscription.creatorName ?? subscription.creatorHandle ?? 'Cause creator'}
+                    </p>
+                    <p className="mt-1 text-sm text-slate-500">
+                      {formatCredits(subscription.amountCents)} monthly
+                      {subscription.status === 'active' && nextDate ? ` • next charge ${nextDate}` : ''}
+                      {subscription.status === 'paused' && subscription.pausedAt ? ` • paused ${formatDateLabel(subscription.pausedAt)}` : ''}
+                      {subscription.status === 'canceled' && subscription.canceledAt ? ` • canceled ${formatDateLabel(subscription.canceledAt)}` : ''}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setSubscriptionModal(subscription)}
+                    className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-600 transition hover:border-slate-300 hover:text-slate-900"
+                    aria-label="Manage subscription"
+                  >
+                    <LuSettings2 className="h-4 w-4" />
+                  </button>
+                </div>
+              )
+            })
+          ) : (
+            <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-4 py-6 text-sm text-slate-500">
+              No Cause subscriptions yet.
+            </div>
+          )}
+        </div>
+      </section>
+
+      <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div>
             <p className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-400">Your Transactions</p>
             <h2 className="mt-1 text-xl font-semibold text-slate-900">Recent wallet activity</h2>
             <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-600">
@@ -803,7 +886,140 @@ export default function WalletPage() {
           setPayoutModalOpen(false)
         }}
       />
+
+      <WalletCauseSubscriptionModal
+        subscription={subscriptionModal}
+        token={getAuthToken()}
+        onClose={() => setSubscriptionModal(null)}
+        onComplete={async () => {
+          await refreshWallet()
+          setSubscriptionModal(null)
+        }}
+      />
     </DashboardShell>
+  )
+}
+
+function WalletCauseSubscriptionModal({
+  subscription,
+  token,
+  onClose,
+  onComplete,
+}: {
+  subscription: WalletCauseSubscription | null
+  token: string | null
+  onClose: () => void
+  onComplete: () => Promise<void>
+}) {
+  const [confirmAction, setConfirmAction] = useState<'pause' | 'cancel' | null>(null)
+  const [submitting, setSubmitting] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (!subscription) {
+      setConfirmAction(null)
+      setSubmitting(false)
+      setError(null)
+    }
+  }, [subscription])
+
+  const handleAction = async (action: 'pause' | 'cancel') => {
+    if (!subscription || !token) return
+    setSubmitting(true)
+    setError(null)
+    try {
+      const response = await fetch(buildApiUrl(`/causes/subscriptions/${subscription.id}/${action}`), {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${token}`,
+        },
+      })
+      const payload = (await response.json().catch(() => null)) as { error?: string } | null
+      if (!response.ok) {
+        setError(payload?.error === 'cause_subscription_not_found' ? 'This subscription could not be found.' : 'Unable to update this subscription right now.')
+        setSubmitting(false)
+        return
+      }
+      pushToast(action === 'pause' ? 'Subscription paused.' : 'Subscription canceled.', 'success')
+      await onComplete()
+    } catch {
+      setError('Unable to update this subscription right now.')
+      setSubmitting(false)
+    }
+  }
+
+  if (!subscription) return null
+
+  return (
+    <Modal open onClose={onClose} title="Manage subscription" maxWidthClassName="max-w-lg">
+      <div className="space-y-4 p-1">
+        <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4">
+          <p className="text-sm font-semibold text-slate-900">{subscription.postTitle ?? 'Cause'}</p>
+          <p className="mt-1 text-sm text-slate-600">{formatCredits(subscription.amountCents)} monthly</p>
+          <p className="mt-1 text-sm text-slate-500">
+            {subscription.status === 'active' && subscription.nextChargeAt ? `Next charge ${formatDateLabel(subscription.nextChargeAt)}` : null}
+            {subscription.status === 'paused' && subscription.pausedAt ? `Paused ${formatDateLabel(subscription.pausedAt)}` : null}
+            {subscription.status === 'canceled' && subscription.canceledAt ? `Canceled ${formatDateLabel(subscription.canceledAt)}` : null}
+          </p>
+        </div>
+
+        <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-4">
+          <p className="text-sm font-semibold text-amber-900">Pause</p>
+          <p className="mt-1 text-sm text-amber-800">Pause stops future charges but keeps the subscription record in your wallet.</p>
+          {confirmAction === 'pause' ? (
+            <div className="mt-4 space-y-3">
+              <p className="text-sm text-amber-900">Pause this subscription?</p>
+              <div className="flex justify-end gap-2">
+                <button type="button" onClick={() => setConfirmAction(null)} disabled={submitting} className="rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700">
+                  Keep active
+                </button>
+                <button type="button" onClick={() => void handleAction('pause')} disabled={submitting} className="rounded-full bg-amber-500 px-4 py-2 text-sm font-semibold text-white disabled:opacity-60">
+                  {submitting ? 'Pausing…' : 'Confirm pause'}
+                </button>
+              </div>
+            </div>
+          ) : (
+            <button
+              type="button"
+              onClick={() => setConfirmAction('pause')}
+              disabled={subscription.status !== 'active' || submitting}
+              className="mt-4 rounded-full bg-amber-500 px-4 py-2 text-sm font-semibold text-white disabled:opacity-60"
+            >
+              Pause subscription
+            </button>
+          )}
+        </div>
+
+        <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-4">
+          <p className="text-sm font-semibold text-rose-900">Cancel</p>
+          <p className="mt-1 text-sm text-rose-800">Cancel permanently stops future Cause charges for this subscription.</p>
+          {confirmAction === 'cancel' ? (
+            <div className="mt-4 space-y-3">
+              <p className="text-sm text-rose-900">Cancel this subscription?</p>
+              <div className="flex justify-end gap-2">
+                <button type="button" onClick={() => setConfirmAction(null)} disabled={submitting} className="rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700">
+                  Keep subscription
+                </button>
+                <button type="button" onClick={() => void handleAction('cancel')} disabled={submitting} className="rounded-full bg-rose-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-60">
+                  {submitting ? 'Canceling…' : 'Confirm cancel'}
+                </button>
+              </div>
+            </div>
+          ) : (
+            <button
+              type="button"
+              onClick={() => setConfirmAction('cancel')}
+              disabled={subscription.status === 'canceled' || submitting}
+              className="mt-4 rounded-full bg-rose-600 px-4 py-2 text-sm font-semibold text-white disabled:opacity-60"
+            >
+              Cancel subscription
+            </button>
+          )}
+        </div>
+
+        {error ? <div className="rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">{error}</div> : null}
+      </div>
+    </Modal>
   )
 }
 

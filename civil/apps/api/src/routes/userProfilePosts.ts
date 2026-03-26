@@ -595,7 +595,7 @@ export function registerUserProfilePostRoutes(app: FastifyInstance, deps: UserPr
           posts = queryResult
         }
 
-        const { reactionsByPost, pollSelectionsByPost, recentCommentsByPost } = await deps.loadViewerPostFormattingContext(
+        const { reactionsByPost, pollSelectionsByPost, recentCommentsByPost, causeByPost } = await deps.loadViewerPostFormattingContext(
           viewerId,
           posts.map((post: (typeof posts)[number]) => post.id),
           5,
@@ -613,6 +613,7 @@ export function registerUserProfilePostRoutes(app: FastifyInstance, deps: UserPr
               viewerReaction: reactionsByPost[post.id] ?? null,
               viewerPollOptionId: pollSelectionsByPost[post.id] ?? null,
               recentComments: recentCommentsByPost[post.id] ?? [],
+              cause: causeByPost[post.id] ?? null,
             }),
           ),
           nextCursor,

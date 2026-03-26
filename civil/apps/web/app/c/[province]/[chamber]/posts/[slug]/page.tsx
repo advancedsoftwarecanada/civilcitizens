@@ -2,17 +2,19 @@
 
 import Link from 'next/link'
 import { useCallback, useEffect, useMemo, useState } from 'react'
-import { useRouter } from 'next/navigation'
+import { usePathname, useRouter } from 'next/navigation'
 import { LuMessageCircle, LuRepeat2, LuShare } from 'react-icons/lu'
-import { HiTrash } from 'react-icons/hi2'
+import { HiPencil, HiTrash } from 'react-icons/hi2'
 import type { ReactionType } from '@civil/shared'
 import CivilCard from '../../../../../_components/CivilCard'
 import PostAuthorMiniCard from '../../../../../_components/PostAuthorMiniCard'
 import ContentModerationMenu from '../../../../../_components/ContentModerationMenu'
 import { JURISDICTION_LABELS, type ApiPost } from '../../../../../_components/PostComposer'
+import RichTextEditor from '../../../../../_components/RichTextEditor'
 import CommentComposer from '../../../../../_components/CommentComposer'
 import CommentThread, { type ApiComment } from '../../../../../_components/CommentThread'
 import CivilLinkPreviewList from '../../../../../_components/CivilLinkPreviewList'
+import CauseSummaryCard from '../../../../../_components/CauseSummaryCard'
 import LinkPreviewCard from '../../../../../_components/LinkPreviewCard'
 import LinkifiedText from '../../../../../_components/LinkifiedText'
 import PostReactionBar from '../../../../../_components/PostReactionBar'
@@ -20,6 +22,7 @@ import PollCard from '../../../../../_components/PollCard'
 import ThreadBottomCommentComposer from '../../../../../_components/ThreadBottomCommentComposer'
 import SharePostModal from '../../../../../_components/SharePostModal'
 import ShareSendModal from '../../../../../_components/ShareSendModal'
+import Modal from '../../../../../_components/Modal'
 import { pushToast } from '../../../../../_components/useToasts'
 import { hasHomeCommunity } from '../../../../../_lib/me'
 import { redirectToAuthModal } from '../../../../../_lib/authModal'
@@ -30,6 +33,7 @@ import { useViewerStore } from '../../../../../_lib/viewerStore'
 import { addCommentToTree, normalizeCommentTree, removeCommentFromTree, removeCommentsByAuthorFromTree, updateCommentInTree } from '../../../../../_lib/comments'
 import { formatUserDisplayName } from '../../../../../_lib/text'
 import { buildApiUrl } from '../../../../../_lib/api'
+import { buildPostPath } from '../../../../../_lib/shareTarget'
 import { getStoredToken } from '../../../../../_lib/tokenStorage'
 import DashboardShell from '../../../../../_components/DashboardShell'
 import { useRegisterPageView } from '../../../../../_components/AnalyticsTracker'
@@ -68,6 +72,22 @@ type CommunityOrgItem = {
   coverUrl?: string | null
 }
 
+type CauseContributorItem = {
+  id: string
+  amountCents: number
+  createdAt: string
+  sourceType: string
+  user: {
+    id: string
+    handle: string
+    name: string | null
+    avatarUrl: string | null
+    coverUrl: string | null
+    isPremium: boolean
+    isVerified: boolean
+  }
+}
+
 const COMMENT_SORT_OPTIONS: Array<{ value: 'hot' | 'new'; label: string }> = [
   { value: 'hot', label: 'Hot' },
   { value: 'new', label: 'New' },
@@ -85,8 +105,13 @@ function formatDateTime(iso: string) {
   })
 }
 
+function formatCurrency(amountCents: number) {
+  return new Intl.NumberFormat('en-CA', { style: 'currency', currency: 'CAD', maximumFractionDigits: 0 }).format(amountCents / 100)
+}
+
 export default function ChamberPostPage({ params }: PageProps) {
   const router = useRouter()
+  const pathname = usePathname()
   const provinceParam = decodeURIComponent(params.province)
   const chamberParam = decodeURIComponent(params.chamber)
   const slugParam = decodeURIComponent(params.slug)
@@ -100,8 +125,13 @@ export default function ChamberPostPage({ params }: PageProps) {
   const [pendingVote, setPendingVote] = useState(false)
   const [repostModalOpen, setRepostModalOpen] = useState(false)
   const [shareModalOpen, setShareModalOpen] = useState(false)
+  const [isEditing, setIsEditing] = useState(false)
+  const [editTitle, setEditTitle] = useState('')
+  const [editBody, setEditBody] = useState('')
+  const [savingPost, setSavingPost] = useState(false)
   const [railPosts, setRailPosts] = useState<ApiPost[]>([])
   const [railOrganizations, setRailOrganizations] = useState<CommunityOrgItem[]>([])
+  const [railContributors, setRailContributors] = useState<CauseContributorItem[]>([])
 
   useEffect(() => {
     if (typeof window === 'undefined') return
@@ -171,6 +201,44 @@ export default function ChamberPostPage({ params }: PageProps) {
       const canonical = data.paths as CanonicalPaths
       const commentTree = normalizeCommentTree((data as { comments?: ApiComment[] }).comments ?? [])
 
+      const normalizePath = (value: string) => {
+        const trimmed = value.trim()
+        if (!trimmed) return '/'
+        const withoutQuery = trimmed.split('?')[0]?.split('#')[0] ?? trimmed
+        const normalized = withoutQuery.replace(/\/+$/, '')
+        return normalized || '/'
+      }
+
+      if (canonical?.community) {
+        const canonicalPath = /^https?:\/\//i.test(canonical.community)
+          ? (() => {
+              try {
+                return new URL(canonical.community).pathname
+              } catch {
+                return canonical.community
+              }
+            })()
+          : canonical.community
+
+        if (normalizePath(canonicalPath) !== normalizePath(pathname)) {
+          if (/^https?:\/\//i.test(canonical.community)) {
+            try {
+              const url = new URL(canonical.community)
+              if (url.origin === window.location.origin) {
+                router.replace(`${url.pathname}${url.search}${url.hash}`)
+              } else {
+                window.location.replace(canonical.community)
+              }
+            } catch {
+              window.location.replace(canonical.community)
+            }
+          } else {
+            router.replace(canonical.community)
+          }
+          return
+        }
+      }
+
       const provinceMatches = retrievedPost.provinceCode?.toLowerCase() === provinceParam.toLowerCase()
       const communityMatches = retrievedPost.communitySlug?.toLowerCase() === chamberParam.toLowerCase()
 
@@ -203,7 +271,7 @@ export default function ChamberPostPage({ params }: PageProps) {
       setComments([])
       setStatus('error')
     }
-  }, [chamberParam, provinceParam, router, slugParam])
+  }, [chamberParam, pathname, provinceParam, router, slugParam])
 
   const postId = post?.id
   useRegisterPageView(postId)
@@ -279,6 +347,11 @@ export default function ChamberPostPage({ params }: PageProps) {
   }, [loadViewer])
 
   useEffect(() => {
+    setEditTitle(post?.title ?? '')
+    setEditBody(post?.body ?? '')
+  }, [post?.id, post?.title, post?.body])
+
+  useEffect(() => {
     loadPost('hot').catch(() => {
       /* noop */
     })
@@ -297,25 +370,40 @@ export default function ChamberPostPage({ params }: PageProps) {
       const token = typeof window !== 'undefined' ? localStorage.getItem('token') : null
       const headers = token ? { authorization: `Bearer ${token}` } : undefined
 
-      const [postsRes, orgsRes] = await Promise.all([
-        fetch(buildApiUrl(`/posts?scope=communities&province=${encodeURIComponent(provinceParam)}&community=${encodeURIComponent(chamberParam)}&limit=12`), {
-          headers,
-          cache: 'no-store',
-        }),
+      const [primaryRes, orgsRes] = await Promise.all([
+        post?.type === 'cause' && post.id
+          ? fetch(buildApiUrl(`/causes/posts/${encodeURIComponent(post.id)}/contributors?limit=10`), {
+              headers,
+              cache: 'no-store',
+            })
+          : fetch(buildApiUrl(`/posts?scope=communities&province=${encodeURIComponent(provinceParam)}&community=${encodeURIComponent(chamberParam)}&limit=12`), {
+              headers,
+              cache: 'no-store',
+            }),
         fetch(buildApiUrl(`/communities/${encodeURIComponent(provinceParam)}/${encodeURIComponent(chamberParam)}/orgs?limit=5`), {
           headers,
         }),
       ])
 
-      if (postsRes.ok) {
-        const postsPayload = (await postsRes.json().catch(() => null)) as { items?: ApiPost[] } | null
+      if (post?.type === 'cause') {
+        if (primaryRes.ok) {
+          const contributorsPayload = (await primaryRes.json().catch(() => null)) as { items?: CauseContributorItem[] } | null
+          setRailContributors(Array.isArray(contributorsPayload?.items) ? contributorsPayload.items : [])
+        } else {
+          setRailContributors([])
+        }
+        setRailPosts([])
+      } else if (primaryRes.ok) {
+        const postsPayload = (await primaryRes.json().catch(() => null)) as { items?: ApiPost[] } | null
         const items = Array.isArray(postsPayload?.items) ? postsPayload.items : []
         const filtered = post
           ? items.filter((item) => item.id !== post.id)
           : items
         setRailPosts(filtered.slice(0, 5))
+        setRailContributors([])
       } else {
         setRailPosts([])
+        setRailContributors([])
       }
 
       if (orgsRes.ok) {
@@ -328,6 +416,7 @@ export default function ChamberPostPage({ params }: PageProps) {
       console.error('Unable to load community right rail', err)
       setRailPosts([])
       setRailOrganizations([])
+      setRailContributors([])
     }
   }, [chamberParam, post, provinceParam])
 
@@ -417,66 +506,185 @@ export default function ChamberPostPage({ params }: PageProps) {
     setComments((prev) => removeCommentsByAuthorFromTree(prev, authorId))
   }, [])
 
+  const handleUpdate = useCallback(async () => {
+    if (!post || savingPost) return
+
+    setSavingPost(true)
+    try {
+      const token = getStoredToken()
+      if (!token) {
+        redirectToAuthModal('login')
+        return
+      }
+
+      const response = await fetch(buildApiUrl(`/posts/${post.id}`), {
+        method: 'PATCH',
+        headers: {
+          'content-type': 'application/json',
+          authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          title: post.type === 'article' || post.type === 'cause' ? editTitle : undefined,
+          body: editBody,
+        }),
+      })
+
+      if (!response.ok) {
+        pushToast('Failed to update post.', 'error')
+        return
+      }
+
+      const updated = (await response.json().catch(() => null)) as ApiPost | null
+      if (updated) {
+        setPost(updated)
+      }
+      setIsEditing(false)
+      pushToast('Post updated.', 'success')
+    } catch {
+      pushToast('Failed to update post.', 'error')
+    } finally {
+      setSavingPost(false)
+    }
+  }, [editBody, editTitle, post, savingPost])
+
+  const handleEdit = useCallback(async () => {
+    if (!post) return
+
+    if (post.type === 'cause') {
+      const existingDraftId = post.causeDraftId ?? post.cause?.draftId ?? null
+      if (existingDraftId) {
+        router.push(`/causes/drafts/${encodeURIComponent(existingDraftId)}`)
+        return
+      }
+
+      try {
+        const token = getStoredToken()
+        if (!token) {
+          redirectToAuthModal('login')
+          return
+        }
+        const response = await fetch(buildApiUrl(`/causes/posts/${encodeURIComponent(post.id)}/draft`), {
+          headers: {
+            authorization: `Bearer ${token}`,
+          },
+        })
+        if (!response.ok) {
+          pushToast('Unable to open cause editor.', 'error')
+          return
+        }
+        const payload = (await response.json().catch(() => null)) as { draft?: { id?: string | null } } | null
+        const resolvedDraftId = payload?.draft?.id?.trim()
+        if (!resolvedDraftId) {
+          pushToast('Unable to open cause editor.', 'error')
+          return
+        }
+        router.push(`/causes/drafts/${encodeURIComponent(resolvedDraftId)}`)
+        return
+      } catch {
+        pushToast('Unable to open cause editor.', 'error')
+        return
+      }
+    }
+
+    setIsEditing(true)
+  }, [post, router])
+
   const communityDisplayName = (post?.communityName ?? chamberParam)
     .split('-')
     .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
     .join(' ')
+  const contributorsHref = post ? `${buildPostPath(post)}/contributors` : `/${provinceParam.toLowerCase()}/${chamberParam.toLowerCase()}/causes/${slugParam}/contributors`
 
   const rightRail = (
     <div className="space-y-4">
-      <div className="rounded border bg-white p-4 shadow-sm">
-        <div className="flex items-center justify-between gap-2">
-          <div className="text-sm font-semibold text-gray-900">More in {communityDisplayName}</div>
-          <Link href={`/${provinceParam.toLowerCase()}/${chamberParam.toLowerCase()}`} className="text-xs font-semibold text-[var(--cc-primary)] hover:underline">
-            View all
-          </Link>
-        </div>
-        {railPosts.length ? (
-          <ul className="mt-3 space-y-3">
-            {railPosts.map((item) => {
-              const itemCommunityHref = item.provinceCode && item.communitySlug
-                ? `/${item.provinceCode.toLowerCase()}/${item.communitySlug.toLowerCase()}/posts/${item.seoSlug ?? item.id}`
-                : `/u/${item.author.handle}/posts/${item.seoSlug ?? item.id}`
-              const itemCover = item.organization?.coverUrl ?? item.author.coverUrl ?? null
-              const itemAvatar = item.organization?.logoUrl ?? item.author.avatarUrl
-              const itemName = item.organization?.name ?? (formatUserDisplayName(item.author.name, item.author.handle) || item.author.handle)
-              const imageThumb = item.mediaUrl ?? (Array.isArray(item.images) ? item.images[0] ?? null : null)
-
-              return (
-                <li key={item.id}>
-                  <Link href={itemCommunityHref} className="block rounded-lg border border-slate-200 p-2 hover:bg-slate-50">
+      {post?.type === 'cause' ? (
+        <div className="rounded border bg-white p-4 shadow-sm">
+          <div className="flex items-center justify-between gap-2">
+            <div className="text-sm font-semibold text-gray-900">Contributors</div>
+            <Link href={contributorsHref} className="text-xs font-semibold text-[var(--cc-primary)] hover:underline">
+              View all
+            </Link>
+          </div>
+          {railContributors.length ? (
+            <ul className="mt-3 space-y-3">
+              {railContributors.map((entry) => {
+                const displayName = formatUserDisplayName(entry.user.name, entry.user.handle) || entry.user.handle
+                return (
+                  <li key={entry.id}>
                     <CivilCard
-                      href={itemCommunityHref}
-                      size="sm"
-                      name={itemName}
-                      avatarAlt={itemName}
-                      avatarInitials={itemName}
-                      avatarSrc={itemAvatar}
-                      coverUrl={itemCover}
-                      isVerified={Boolean(item.organization?.isVerified ?? item.author.isVerified)}
-                      isBusiness={Boolean(item.organization) || Boolean(item.author.isPremium)}
-                      className="w-full border-slate-200"
+                      href={`/u/${entry.user.handle}`}
+                      size="md"
+                      name={displayName}
+                      avatarAlt={displayName}
+                      avatarInitials={displayName}
+                      avatarSrc={entry.user.avatarUrl}
+                      coverUrl={entry.user.coverUrl}
+                      subtitle={`@${entry.user.handle}`}
+                      details={`${formatCurrency(entry.amountCents)} • ${formatDateTime(entry.createdAt)}`}
+                      isVerified={entry.user.isVerified}
+                      isBusiness={entry.user.isPremium}
                     />
+                  </li>
+                )
+              })}
+            </ul>
+          ) : (
+            <p className="mt-2 text-sm text-gray-600">No contributors yet.</p>
+          )}
+        </div>
+      ) : (
+        <div className="rounded border bg-white p-4 shadow-sm">
+          <div className="flex items-center justify-between gap-2">
+            <div className="text-sm font-semibold text-gray-900">More in {communityDisplayName}</div>
+            <Link href={`/${provinceParam.toLowerCase()}/${chamberParam.toLowerCase()}`} className="text-xs font-semibold text-[var(--cc-primary)] hover:underline">
+              View all
+            </Link>
+          </div>
+          {railPosts.length ? (
+            <ul className="mt-3 space-y-3">
+              {railPosts.map((item) => {
+                const itemCommunityHref = buildPostPath(item)
+                const itemCover = item.organization?.coverUrl ?? item.author.coverUrl ?? null
+                const itemAvatar = item.organization?.logoUrl ?? item.author.avatarUrl
+                const itemName = item.organization?.name ?? (formatUserDisplayName(item.author.name, item.author.handle) || item.author.handle)
+                const imageThumb = item.mediaUrl ?? (Array.isArray(item.images) ? item.images[0] ?? null : null)
 
-                    <div className="mt-2 flex items-start gap-2">
-                      <p className="line-clamp-2 min-w-0 flex-1 text-sm text-slate-700">
-                        {item.title?.trim() || item.body}
-                      </p>
-                      {imageThumb ? (
-                        <div className="h-12 w-12 shrink-0 overflow-hidden rounded-md border border-slate-200 bg-slate-100">
-                          <img src={imageThumb} alt="" className="h-full w-full object-cover" loading="lazy" />
-                        </div>
-                      ) : null}
-                    </div>
-                  </Link>
-                </li>
-              )
-            })}
-          </ul>
-        ) : (
-          <p className="mt-2 text-sm text-gray-600">No additional posts available yet.</p>
-        )}
-      </div>
+                return (
+                  <li key={item.id}>
+                    <Link href={itemCommunityHref} className="block rounded-lg border border-slate-200 p-2 hover:bg-slate-50">
+                      <CivilCard
+                        href={itemCommunityHref}
+                        size="sm"
+                        name={itemName}
+                        avatarAlt={itemName}
+                        avatarInitials={itemName}
+                        avatarSrc={itemAvatar}
+                        coverUrl={itemCover}
+                        isVerified={Boolean(item.organization?.isVerified ?? item.author.isVerified)}
+                        isBusiness={Boolean(item.organization) || Boolean(item.author.isPremium)}
+                        className="w-full border-slate-200"
+                      />
+
+                      <div className="mt-2 flex items-start gap-2">
+                        <p className="line-clamp-2 min-w-0 flex-1 text-sm text-slate-700">
+                          {item.title?.trim() || item.body}
+                        </p>
+                        {imageThumb ? (
+                          <div className="h-12 w-12 shrink-0 overflow-hidden rounded-md border border-slate-200 bg-slate-100">
+                            <img src={imageThumb} alt="" className="h-full w-full object-cover" loading="lazy" />
+                          </div>
+                        ) : null}
+                      </div>
+                    </Link>
+                  </li>
+                )
+              })}
+            </ul>
+          ) : (
+            <p className="mt-2 text-sm text-gray-600">No additional posts available yet.</p>
+          )}
+        </div>
+      )}
 
       <div className="rounded border bg-white p-4 shadow-sm">
         <div className="flex items-center justify-between gap-2">
@@ -543,6 +751,14 @@ export default function ChamberPostPage({ params }: PageProps) {
   const postDeletedRedirectHref = `/${provinceParam.toLowerCase()}/${chamberParam.toLowerCase()}`
   const postSettingsActions = isAuthor
     ? [
+        {
+          key: 'edit',
+          label: 'Edit',
+          icon: HiPencil,
+          onSelect: () => {
+            void handleEdit()
+          },
+        },
         {
           key: 'delete',
           label: 'Delete',
@@ -677,7 +893,7 @@ export default function ChamberPostPage({ params }: PageProps) {
                   />
                 </div>
               ) : null}
-              {post.type === 'article' && post.title ? (
+              {(post.type === 'article' || post.type === 'cause') && post.title ? (
                 <h1 className="text-2xl font-semibold text-gray-900">{post.title}</h1>
               ) : null}
               {post.type === 'article' ? (
@@ -688,6 +904,7 @@ export default function ChamberPostPage({ params }: PageProps) {
                 <LinkifiedText text={postBodyWithoutCivilLinks} className="whitespace-pre-wrap break-words" mentions={post.mentions} />
               ) : null}
               {post.linkPreview ? <LinkPreviewCard preview={post.linkPreview} /> : <CivilLinkPreviewList body={post.body} className="mt-3 space-y-2" />}
+              {post.type === 'cause' ? <CauseSummaryCard post={post} onPostUpdate={setPost} /> : null}
               {post.type === 'poll' && post.poll ? (
                 <PollCard
                   post={post}
@@ -802,6 +1019,66 @@ export default function ChamberPostPage({ params }: PageProps) {
               target={shareTarget}
               onClose={() => setShareModalOpen(false)}
             />
+          ) : null}
+          {isEditing ? (
+            <Modal open onClose={() => setIsEditing(false)} title="Edit post" maxWidthClassName="max-w-2xl" closeOnBackdrop={false} closeOnEscape={false}>
+              <div className="space-y-4 p-6">
+                <div className="grid gap-4">
+                  {post.type === 'article' || post.type === 'cause' ? (
+                    <div className="grid gap-2">
+                      <label htmlFor="title" className="text-sm font-medium text-slate-700">
+                        Title
+                      </label>
+                      <input
+                        id="title"
+                        type="text"
+                        value={editTitle}
+                        onChange={(event) => setEditTitle(event.target.value)}
+                        className="block w-full rounded-md border border-slate-300 px-3 py-2 text-sm shadow-sm focus:border-sky-500 focus:ring-1 focus:ring-sky-500"
+                        placeholder="Enter post title"
+                      />
+                    </div>
+                  ) : null}
+                  <div className="grid gap-2">
+                    <label htmlFor="body" className="text-sm font-medium text-slate-700">
+                      {post.type === 'article' || post.type === 'cause' ? 'Story' : 'Body'}
+                    </label>
+                    {post.type === 'article' || post.type === 'cause' ? (
+                      <>
+                        <RichTextEditor value={editBody} onChange={setEditBody} placeholder="Share something" minHeight={260} disabled={savingPost} />
+                        <div className="flex justify-end text-xs text-slate-500">
+                          <span>{editBody.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().length}/10000</span>
+                        </div>
+                      </>
+                    ) : (
+                      <textarea
+                        id="body"
+                        value={editBody}
+                        onChange={(event) => setEditBody(event.target.value)}
+                        className="block w-full rounded-md border border-slate-300 px-3 py-2 text-sm shadow-sm focus:border-sky-500 focus:ring-1 focus:ring-sky-500"
+                        rows={6}
+                        placeholder="Enter post content"
+                      />
+                    )}
+                  </div>
+                </div>
+                <div className="flex justify-end gap-3">
+                  <button
+                    onClick={() => setIsEditing(false)}
+                    className="rounded-md border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-sky-500 focus:ring-offset-2"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={() => void handleUpdate()}
+                    disabled={savingPost}
+                    className="rounded-md bg-sky-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-sky-700 focus:outline-none focus:ring-2 focus:ring-sky-500 focus:ring-offset-2 disabled:opacity-50"
+                  >
+                    {savingPost ? 'Saving...' : 'Save changes'}
+                  </button>
+                </div>
+              </div>
+            </Modal>
           ) : null}
           {viewer ? <ThreadBottomCommentComposer onSubmit={(body) => handleReply(null, body)} /> : null}
         </article>

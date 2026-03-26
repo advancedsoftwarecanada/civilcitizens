@@ -14,6 +14,7 @@ import CivilPost from './CivilPost'
 import CivilPostComments from './CivilPostComments'
 import CivilPostMedia from './CivilPostMedia'
 import CivilPostSharedReference from './CivilPostSharedReference'
+import CauseSummaryCard from './CauseSummaryCard'
 import PostAuthorMiniCard from './PostAuthorMiniCard'
 import ContentModerationMenu from './ContentModerationMenu'
 import { formatDisplayName } from '../_lib/text'
@@ -25,7 +26,7 @@ import RichTextEditor from './RichTextEditor'
 import SharePostModal from './SharePostModal'
 import ShareSendModal from './ShareSendModal'
 import { redirectToAuthModal } from '../_lib/authModal'
-import { buildPostShareTarget } from '../_lib/shareTarget'
+import { buildPostPath, buildPostShareTarget } from '../_lib/shareTarget'
 import CivilLinkPreviewList from './CivilLinkPreviewList'
 import LinkPreviewCard from './LinkPreviewCard'
 import LinkifiedText from './LinkifiedText'
@@ -54,11 +55,7 @@ function mergeRecentCommentList(current: FeedComment[], comment: FeedComment, re
 }
 
 function buildPostUrl(post: ApiPost) {
-  const slug = post.seoSlug ?? post.id
-  if (post.provinceCode && post.communitySlug) {
-    return `/${post.provinceCode.toLowerCase()}/${post.communitySlug.toLowerCase()}/posts/${slug}`
-  }
-  return `/u/${post.author.handle}/posts/${slug}`
+  return buildPostPath(post)
 }
 
 function buildCommunityUrl(post: ApiPost) {
@@ -140,7 +137,7 @@ export default function PostFeedItem({ post, onReact, onDelete, onUpdate, viewer
   const showOrganizationAuthorBox = Boolean(organization && post.showBusinessAuthor)
   const isAuthor = viewerId === post.author.id
   const postTypeLabel =
-    post.type === 'article' ? 'Article' : post.type === 'photo' ? 'Photo' : post.type === 'poll' ? 'Poll' : 'Post'
+    post.type === 'article' ? 'Article' : post.type === 'photo' ? 'Photo' : post.type === 'poll' ? 'Poll' : post.type === 'cause' ? 'Cause' : 'Post'
   const reportTargetLabel = post.title?.trim() || bodyWithoutCivilLinks.slice(0, 120) || authorDisplayName || post.author.handle
   const blockTarget = organization
     ? {
@@ -166,7 +163,9 @@ export default function PostFeedItem({ post, onReact, onDelete, onUpdate, viewer
           label: 'Edit',
           icon: HiPencil,
           disabled: isDeleting,
-          onSelect: () => setIsEditing(true),
+          onSelect: () => {
+            void handleEdit()
+          },
         },
         {
           key: 'delete',
@@ -249,7 +248,7 @@ export default function PostFeedItem({ post, onReact, onDelete, onUpdate, viewer
           authorization: `Bearer ${token}`,
         },
         body: JSON.stringify({
-          title: post.type === 'article' ? editTitle : undefined,
+          title: post.type === 'article' || post.type === 'cause' ? editTitle : undefined,
           body: editBody,
         }),
       })
@@ -266,6 +265,46 @@ export default function PostFeedItem({ post, onReact, onDelete, onUpdate, viewer
     } finally {
       setPending(false)
     }
+  }
+
+  const handleEdit = async () => {
+    if (post.type === 'cause') {
+      const existingDraftId = post.causeDraftId ?? post.cause?.draftId ?? null
+      if (existingDraftId) {
+        router.push(`/causes/drafts/${encodeURIComponent(existingDraftId)}`)
+        return
+      }
+
+      try {
+        const token = getStoredToken()
+        if (!token) {
+          redirectToAuthModal('login')
+          return
+        }
+        const response = await fetch(buildApiUrl(`/causes/posts/${encodeURIComponent(post.id)}/draft`), {
+          headers: {
+            authorization: `Bearer ${token}`,
+          },
+        })
+        if (!response.ok) {
+          pushToast('Unable to open cause editor', 'error')
+          return
+        }
+        const payload = (await response.json().catch(() => null)) as { draft?: { id?: string | null } } | null
+        const resolvedDraftId = payload?.draft?.id?.trim()
+        if (!resolvedDraftId) {
+          pushToast('Unable to open cause editor', 'error')
+          return
+        }
+        router.push(`/causes/drafts/${encodeURIComponent(resolvedDraftId)}`)
+        return
+      } catch {
+        pushToast('Unable to open cause editor', 'error')
+        return
+      }
+    }
+
+    setIsEditing(true)
   }
 
   const handleRepost = () => {
@@ -508,12 +547,13 @@ export default function PostFeedItem({ post, onReact, onDelete, onUpdate, viewer
           <>
             <CivilPostMedia images={post.images} mediaUrl={post.mediaUrl} postUrl={postUrl} />
 
-            {post.type === 'article' && post.title ? (
+            {(post.type === 'article' || post.type === 'cause') && post.title ? (
               <Link href={postUrl} className="text-lg font-semibold text-slate-900 hover:underline">
                 {post.title}
               </Link>
             ) : null}
-            {post.type === 'article' ? (
+            {post.type === 'cause' ? <CauseSummaryCard post={post} onPostUpdate={onUpdate} compact /> : null}
+            {post.type === 'article' || post.type === 'cause' ? (
               articleBodyWithoutCivilLinks ? (
                 <div className="space-y-3">
                   <div className="relative">
@@ -677,7 +717,7 @@ export default function PostFeedItem({ post, onReact, onDelete, onUpdate, viewer
         <Modal open onClose={() => setIsEditing(false)} title="Edit post" maxWidthClassName="max-w-2xl" closeOnBackdrop={false} closeOnEscape={false}>
           <div className="space-y-4 p-6">
             <div className="grid gap-4">
-              {post.type === 'article' ? (
+              {post.type === 'article' || post.type === 'cause' ? (
                 <div className="grid gap-2">
                   <label htmlFor="title" className="text-sm font-medium text-slate-700">
                     Title
@@ -694,9 +734,9 @@ export default function PostFeedItem({ post, onReact, onDelete, onUpdate, viewer
               ) : null}
               <div className="grid gap-2">
                 <label htmlFor="body" className="text-sm font-medium text-slate-700">
-                  {post.type === 'article' ? 'Story' : 'Body'}
+                  {post.type === 'article' || post.type === 'cause' ? 'Story' : 'Body'}
                 </label>
-                {post.type === 'article' ? (
+                {post.type === 'article' || post.type === 'cause' ? (
                   <>
                     <RichTextEditor value={editBody} onChange={setEditBody} placeholder="Share something" minHeight={260} disabled={pending} />
                     <div className="flex justify-end text-xs text-slate-500">

@@ -31,6 +31,7 @@ import PostComposer, { ApiPost, type PostType } from '../../_components/PostComp
 import PostFeedItem from '../../_components/PostFeedItem'
 import { RightRail } from '../../_components/RightRail'
 import { buildApiUrl } from '../../_lib/api'
+import { buildPostPath } from '../../_lib/shareTarget'
 import { buildAddressesHrefFromAddress } from '../../_lib/addressSearch'
 import { redirectToAuthModal } from '../../_lib/authModal'
 import VerifiedAvatar from '../../_components/VerifiedAvatar'
@@ -536,11 +537,7 @@ type PageProps = {
 }
 
 function buildPostUrl(post: ApiPost) {
-  const slug = post.seoSlug ?? post.id
-  if (post.provinceCode && post.communitySlug) {
-    return `/${post.provinceCode.toLowerCase()}/${post.communitySlug.toLowerCase()}/posts/${slug}`
-  }
-  return `/u/${post.author.handle}/posts/${slug}`
+  return buildPostPath(post)
 }
 
 export default function UserPostsPage({ params }: PageProps) {

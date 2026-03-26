@@ -22,7 +22,7 @@ import CivilComposerLauncher from './CivilComposerLauncher'
 import { formatDisplayName } from '../_lib/text'
 
 
-export type FeedScope = 'all' | 'friends' | 'network' | 'communities' | 'organizations'
+export type FeedScope = 'all' | 'friends' | 'network' | 'communities' | 'organizations' | 'causes'
 type FeedSortMode = 'new' | 'hot'
 
 export type FeedPageClientProps = {
@@ -40,6 +40,7 @@ export type FeedPageClientProps = {
   sortOptions?: Array<{ value: FeedSortMode; label: string; description?: string }>
   showFeedSummary?: boolean
   showSupplementalFeedItems?: boolean
+  hideComposerLauncher?: boolean
 }
 
 type CommunityFollowRow = {
@@ -331,6 +332,7 @@ export default function FeedPageClient(props: FeedPageClientProps) {
     sortOptions = [],
     showFeedSummary = true,
     showSupplementalFeedItems = true,
+    hideComposerLauncher = false,
   } = props
   const router = useRouter()
   const cachedMe = useViewerStore((s) => s.me)
@@ -729,7 +731,7 @@ export default function FeedPageClient(props: FeedPageClientProps) {
           return
         }
 
-        const shouldLoadPostableOrganizations = scope === 'organizations' || scope === 'all'
+        const shouldLoadPostableOrganizations = scope === 'organizations' || scope === 'all' || scope === 'causes'
 
         const followsPromise = fetch(buildApiUrl('/communities/follows'), {
           headers: { authorization: `Bearer ${token}` },
@@ -987,6 +989,19 @@ export default function FeedPageClient(props: FeedPageClientProps) {
       }
     }
 
+    if (scope === 'causes') {
+      return {
+        eyebrow: 'Cause Snapshot',
+        title: 'Funding campaigns posted in the communities you follow.',
+        cards: [
+          { label: 'Communities followed', value: formatSnapshotValue(communityOptions.length) },
+          { label: 'Causes loaded', value: formatSnapshotValue(visiblePosts.length) },
+          { label: 'New since visit', value: formatSnapshotValue(postsSinceLastVisit) },
+          { label: 'Communities represented', value: formatSnapshotValue(uniquePostCommunityCount) },
+        ],
+      }
+    }
+
     if (scope === 'network') {
       return {
         eyebrow: 'Network Snapshot',
@@ -1064,6 +1079,8 @@ export default function FeedPageClient(props: FeedPageClientProps) {
         return selectedOrganization?.name
           ? `Share an update as ${selectedOrganization.name}`
           : 'Share updates from your organization'
+      case 'causes':
+        return 'Start a cause'
       default:
         return 'Share something new'
     }
@@ -1084,14 +1101,17 @@ export default function FeedPageClient(props: FeedPageClientProps) {
 
   const emptyLabel = emptyState ?? "No updates yet. Once the community starts posting, you'll see them here."
   const composerDefaultAudience: 'friends' | 'network' | 'community' =
-    scope === 'communities' ? 'community' : scope === 'network' ? 'network' : 'friends'
+    scope === 'communities' || scope === 'causes' ? 'community' : scope === 'network' ? 'network' : 'friends'
 
   const resolvedRightRail = rightRail ?? <RightRail />
-  const composerActions: Array<{ type: PostType; label: string; icon: string }> = [
-    { type: 'post', label: 'Post', icon: '📝' },
-    { type: 'article', label: 'Article', icon: '📄' },
-    { type: 'poll', label: 'Poll', icon: '📊' },
-  ]
+  const composerActions: Array<{ type: PostType; label: string; icon: string }> =
+    scope === 'causes'
+      ? [{ type: 'cause', label: 'Start a Cause', icon: '🙏' }]
+      : [
+          { type: 'post', label: 'Post', icon: '📝' },
+          { type: 'article', label: 'Article', icon: '📄' },
+          { type: 'poll', label: 'Poll', icon: '📊' },
+        ]
 
   const renderSupplementalActivityCard = (item: SupplementalActivityItem) => {
     if (item.kind === 'event') {
@@ -1187,19 +1207,21 @@ export default function FeedPageClient(props: FeedPageClientProps) {
     <DashboardShell rightRail={resolvedRightRail} mainClassName="min-w-0 space-y-6">
       {headerContent ? <div>{headerContent}</div> : null}
 
-      <CivilComposerLauncher
-        coverUrl={composerCoverUrl}
-        avatarSrc={me?.avatarUrl ?? null}
-        avatarAlt={viewerDisplayName}
-        avatarInitials={viewerDisplayName}
-        avatarHref={me?.handle ? `/u/${me.handle}` : undefined}
-        isVerified={isVerifiedUser}
-        isBusiness={isBusinessUser}
-        prompt={`What's on your mind, ${friendlyFirstName}?`}
-        actions={composerActions}
-        onPrimaryClick={() => openComposer('post')}
-        onActionClick={(type) => openComposer(type as PostType)}
-      />
+      {!hideComposerLauncher ? (
+        <CivilComposerLauncher
+          coverUrl={composerCoverUrl}
+          avatarSrc={me?.avatarUrl ?? null}
+          avatarAlt={viewerDisplayName}
+          avatarInitials={viewerDisplayName}
+          avatarHref={me?.handle ? `/u/${me.handle}` : undefined}
+          isVerified={isVerifiedUser}
+          isBusiness={isBusinessUser}
+          prompt={scope === 'causes' ? `What needs backing in your communities, ${friendlyFirstName}?` : `What's on your mind, ${friendlyFirstName}?`}
+          actions={composerActions}
+          onPrimaryClick={() => openComposer(scope === 'causes' ? 'cause' : 'post')}
+          onActionClick={(type) => openComposer(type as PostType)}
+        />
+      ) : null}
 
       {showFeedSummary ? (
         <section className="overflow-hidden rounded-[var(--cc-radius)] border border-slate-200 bg-white shadow-subtle">

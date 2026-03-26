@@ -5,6 +5,7 @@ import bcrypt from 'bcryptjs'
 import { FriendshipStatus, type Prisma } from '@prisma/client'
 import { buildHandleBase, LoginInput, RegisterInput } from '@civil/shared'
 import { z, type ZodTypeAny } from 'zod'
+import { listViewerCauseSubscriptions } from '../causes.js'
 import {
   applyWalletTopUpFromPaymentIntent,
   buildWalletView,
@@ -14,6 +15,7 @@ import {
   readWalletSummary,
   walletHasConnectPayoutsEnabled,
 } from '../walletHelpers.js'
+import { applyWalletUserTransfer } from '../walletTransactions.js'
 
 type AuthJwtPayload = {
   sub?: string
@@ -82,6 +84,15 @@ function isStripeBalanceInsufficientError(error: unknown) {
   if (typeof code === 'string' && code === 'balance_insufficient') return true
   if (error instanceof Error) return /insufficient available funds/i.test(error.message)
   return false
+}
+
+async function buildWalletPayload(userId: string, communityMeta: any, transactionLimit?: number) {
+  const wallet = await buildWalletView(userId, communityMeta, transactionLimit)
+  const causeSubscriptions = await listViewerCauseSubscriptions(userId)
+  return {
+    ...wallet,
+    causeSubscriptions,
+  }
 }
 
 function readStripeAvailableBalanceCents(balance: any, currency: string) {
@@ -203,7 +214,7 @@ export function registerAuthRoutes(app: FastifyInstance, deps: AuthRoutesDeps) {
       const homeCommunity = await deps.buildHomeCommunitySummaryForUserId(payload.sub)
       const normalizedUser = deps.normalizeUserMedia(user)
       const communityMeta = deps.parseCommunityMeta(user.communityMeta ?? null)
-      const wallet = await buildWalletView(payload.sub, communityMeta)
+      const wallet = await buildWalletPayload(payload.sub, communityMeta)
 
       let familyMemberCount = 0
       try {
@@ -299,7 +310,7 @@ export function registerAuthRoutes(app: FastifyInstance, deps: AuthRoutesDeps) {
 
       return reply.send({
         wallet: {
-          ...(await buildWalletView(payload.sub, {
+          ...(await buildWalletPayload(payload.sub, {
             ...baseMeta,
             wallet: {
               civilCreditsCents: currentWallet.civilCreditsCents,
@@ -563,7 +574,7 @@ export function registerAuthRoutes(app: FastifyInstance, deps: AuthRoutesDeps) {
       await applyWalletTopUpFromPaymentIntent(paymentIntent)
 
       const updated = await prisma.user.findUnique({ where: { id: payload.sub }, select: { communityMeta: true } })
-      return reply.send({ wallet: await buildWalletView(payload.sub, updated?.communityMeta ?? null) })
+      return reply.send({ wallet: await buildWalletPayload(payload.sub, updated?.communityMeta ?? null) })
     } catch (error) {
       req.log.error({ err: error }, 'wallet_deposit_confirm_failed')
       return reply.code(500).send({ error: 'wallet_refresh_failed' })
@@ -588,7 +599,7 @@ export function registerAuthRoutes(app: FastifyInstance, deps: AuthRoutesDeps) {
       if (deps.isAccountSuspended(user.communityMeta)) return reply.code(403).send({ error: 'account_suspended' })
 
       const wallet = readWalletSummary(user.communityMeta)
-      const walletView = await buildWalletView(payload.sub, user.communityMeta)
+      const walletView = await buildWalletPayload(payload.sub, user.communityMeta)
       if (!walletHasConnectPayoutsEnabled(wallet)) {
         return reply.code(409).send({ error: 'wallet_connect_required' })
       }
@@ -631,7 +642,7 @@ export function registerAuthRoutes(app: FastifyInstance, deps: AuthRoutesDeps) {
           const freshUser = await tx.user.findUnique({ where: { id: userId }, select: { communityMeta: true } })
           if (!freshUser) throw new Error('unauthorized')
           const freshWallet = readWalletSummary(freshUser.communityMeta)
-          const freshWalletView = await buildWalletView(userId, freshUser.communityMeta, 1)
+          const freshWalletView = await buildWalletPayload(userId, freshUser.communityMeta, 1)
           if (freshWalletView.availableCreditsCents < body.data.amountCents) {
             throw new Error('insufficient_available_wallet_balance')
           }
@@ -716,7 +727,7 @@ export function registerAuthRoutes(app: FastifyInstance, deps: AuthRoutesDeps) {
       }
 
       const updated = await prisma.user.findUnique({ where: { id: payload.sub }, select: { communityMeta: true } })
-      return reply.send({ wallet: await buildWalletView(payload.sub, updated?.communityMeta ?? null) })
+      return reply.send({ wallet: await buildWalletPayload(payload.sub, updated?.communityMeta ?? null) })
     } catch (error) {
       const message = error instanceof Error ? error.message : ''
       if (message === 'Stripe is not configured. Set STRIPE_SECRET_KEY to enable billing features.') {
@@ -773,100 +784,33 @@ export function registerAuthRoutes(app: FastifyInstance, deps: AuthRoutesDeps) {
         return reply.code(403).send({ error: 'wallet_not_available' })
       }
 
-        await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
-        const [freshSender, freshRecipient] = await Promise.all([
-          tx.user.findUnique({ where: { id: sender.id }, select: { communityMeta: true } }),
-          tx.user.findUnique({ where: { id: recipient.id }, select: { communityMeta: true } }),
-        ])
-        if (!freshSender || !freshRecipient) throw new Error('user_not_found')
-
-        const freshSenderWallet = readWalletSummary(freshSender.communityMeta)
-        const freshRecipientWallet = readWalletSummary(freshRecipient.communityMeta)
-        if (freshSenderWallet.civilCreditsCents < body.data.amountCents) {
-          throw new Error('insufficient_wallet_balance')
-        }
-        if (!walletHasConnectPayoutsEnabled(freshRecipientWallet)) {
-          throw new Error('wallet_not_available')
-        }
-
-        const senderMeta = deps.readBaseCommunityMeta(freshSender.communityMeta)
-        senderMeta.wallet = buildWalletMetaValue({
-          ...freshSenderWallet,
-          civilCreditsCents: freshSenderWallet.civilCreditsCents - body.data.amountCents,
-        })
-
-        const recipientMeta = deps.readBaseCommunityMeta(freshRecipient.communityMeta)
-        recipientMeta.wallet = buildWalletMetaValue({
-          ...freshRecipientWallet,
-          civilCreditsCents: freshRecipientWallet.civilCreditsCents + body.data.amountCents,
-        })
-
-        await Promise.all([
-          tx.user.update({ where: { id: sender.id }, data: { communityMeta: senderMeta } }),
-          tx.user.update({ where: { id: recipient.id }, data: { communityMeta: recipientMeta } }),
-        ])
-
+      await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
         const transactionId = randomUUID()
-        await tx.$executeRaw`
-          INSERT INTO citizen_wallet_transaction (
-            id,
-            kind,
-            status,
-            user_id,
-            counterparty_user_id,
-            amount_cents,
-            currency,
-            stripe_connect_account_id,
-            metadata,
-            updated_at
-          )
-          VALUES (
-            ${transactionId},
-            ${'user_transfer'},
-            ${'completed'},
-            ${sender.id},
-            ${recipient.id},
-            ${body.data.amountCents},
-            ${'cad'},
-            ${freshRecipientWallet.stripeConnect.accountId},
-            ${JSON.stringify({ kind: 'user_transfer' })}::jsonb,
-            NOW()
-          )
-        `
-
-        await insertCivilCreditLedgerEntry(tx, {
-          id: `transfer:${transactionId}`,
-          eventId: transactionId,
-          entryType: 'transfer',
-          status: 'completed',
+        await applyWalletUserTransfer(tx, {
+          senderUserId: sender.id,
+          recipientUserId: recipient.id,
           amountCents: body.data.amountCents,
-          currency: 'cad',
-          from: {
-            entityType: 'user_wallet',
-            userId: sender.id,
-            handle: sender.handle ?? null,
-            name: sender.name ?? null,
-            entityLabel: 'Civil Wallet',
+          transactionId,
+          transactionKind: 'user_transfer',
+          transactionMetadata: { kind: 'user_transfer' },
+          requireRecipientConnectPayouts: true,
+          errors: {
+            recipientWalletUnavailable: 'wallet_not_available',
+            insufficientFunds: 'insufficient_wallet_balance',
           },
-          to: {
-            entityType: 'user_wallet',
-            userId: recipient.id,
-            handle: recipient.handle ?? null,
-            name: recipient.name ?? null,
-            entityLabel: 'Civil Wallet',
-          },
-          sourceType: 'wallet_transaction',
-          sourceReferenceId: transactionId,
-          stripeConnectAccountId: freshRecipientWallet.stripeConnect.accountId,
-          description: 'Civil Credit transfer between users',
-          metadata: {
-            kind: 'user_transfer',
+          transferLedger: {
+            id: `transfer:${transactionId}`,
+            eventId: transactionId,
+            sourceType: 'wallet_transaction',
+            sourceReferenceId: transactionId,
+            description: 'Civil Credit transfer between users',
+            metadata: { kind: 'user_transfer' },
           },
         })
       })
 
       const updated = await prisma.user.findUnique({ where: { id: payload.sub }, select: { communityMeta: true } })
-      return reply.send({ wallet: await buildWalletView(payload.sub, updated?.communityMeta ?? null) })
+      return reply.send({ wallet: await buildWalletPayload(payload.sub, updated?.communityMeta ?? null) })
     } catch (error) {
       if (error instanceof Error) {
         if (error.message === 'insufficient_wallet_balance') return reply.code(400).send({ error: 'insufficient_wallet_balance' })

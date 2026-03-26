@@ -52,6 +52,14 @@ export const DELIVERY_NOTIFICATION_TYPES = {
   UPDATE: 'delivery_contract_update',
 } as const
 
+export const CAUSE_NOTIFICATION_TYPES = {
+  CONTRIBUTION_RECEIVED_CREATOR: 'cause_contribution_received_creator',
+  SUBSCRIPTION_STARTED_SUBSCRIBER: 'cause_subscription_started_subscriber',
+  SUBSCRIPTION_STARTED_CREATOR: 'cause_subscription_started_creator',
+  SUBSCRIPTION_CHARGED_SUBSCRIBER: 'cause_subscription_charged_subscriber',
+  SUBSCRIPTION_CHARGED_CREATOR: 'cause_subscription_charged_creator',
+} as const
+
 export const PROFILE_FAMILY_RELATIONSHIP_LABELS = {
   husband: 'Husband',
   wife: 'Wife',
@@ -227,6 +235,9 @@ function getNativeNotificationSound(type: string, platform: NativePushPlatform):
   const normalized = type.trim().toLowerCase()
   if (normalized === 'drive_ride_contract_update' || normalized === 'delivery_contract_update') {
     return platform === 'android' ? 'honk_honk' : 'honk-honk.caf'
+  }
+  if (normalized === CAUSE_NOTIFICATION_TYPES.CONTRIBUTION_RECEIVED_CREATOR) {
+    return platform === 'android' ? 'money' : 'money.caf'
   }
   return 'civil-general.caf'
 }
@@ -412,6 +423,76 @@ export function createNotificationHelpers(deps: CreateNotificationHelpersDeps) {
       const payload = readPayloadRecord(record.payload)
       const questionPreview = typeof payload?.questionPreview === 'string' ? payload.questionPreview.trim() : ''
       return { title: 'Poll results available', message: questionPreview ? `${actorLabel}'s poll is ready: ${questionPreview}` : `${actorLabel}'s poll results are now available.` }
+    }
+    if (record.type === CAUSE_NOTIFICATION_TYPES.SUBSCRIPTION_STARTED_SUBSCRIBER) {
+      const payload = readPayloadRecord(record.payload)
+      const causeTitle = typeof payload?.postTitle === 'string' ? payload.postTitle.trim() : 'this Cause'
+      const amountCents = typeof payload?.amountCents === 'number' ? payload.amountCents : null
+      const amountLabel = typeof amountCents === 'number'
+        ? new Intl.NumberFormat('en-CA', { style: 'currency', currency: 'CAD' }).format(amountCents / 100)
+        : ''
+      return {
+        title: 'Monthly support started',
+        message: amountLabel
+          ? `You started ${amountLabel}/month for ${causeTitle}.`
+          : `You started monthly support for ${causeTitle}.`,
+      }
+    }
+    if (record.type === CAUSE_NOTIFICATION_TYPES.SUBSCRIPTION_STARTED_CREATOR) {
+      const payload = readPayloadRecord(record.payload)
+      const causeTitle = typeof payload?.postTitle === 'string' ? payload.postTitle.trim() : 'your Cause'
+      const amountCents = typeof payload?.amountCents === 'number' ? payload.amountCents : null
+      const amountLabel = typeof amountCents === 'number'
+        ? new Intl.NumberFormat('en-CA', { style: 'currency', currency: 'CAD' }).format(amountCents / 100)
+        : ''
+      return {
+        title: 'New monthly supporter',
+        message: amountLabel
+          ? `${actorLabel} started ${amountLabel}/month for ${causeTitle}.`
+          : `${actorLabel} started monthly support for ${causeTitle}.`,
+      }
+    }
+    if (record.type === CAUSE_NOTIFICATION_TYPES.SUBSCRIPTION_CHARGED_SUBSCRIBER) {
+      const payload = readPayloadRecord(record.payload)
+      const causeTitle = typeof payload?.postTitle === 'string' ? payload.postTitle.trim() : 'this Cause'
+      const amountCents = typeof payload?.amountCents === 'number' ? payload.amountCents : null
+      const amountLabel = typeof amountCents === 'number'
+        ? new Intl.NumberFormat('en-CA', { style: 'currency', currency: 'CAD' }).format(amountCents / 100)
+        : ''
+      return {
+        title: 'Monthly support charged',
+        message: amountLabel
+          ? `Your ${amountLabel} monthly support for ${causeTitle} was charged.`
+          : `Your monthly support for ${causeTitle} was charged.`,
+      }
+    }
+    if (record.type === CAUSE_NOTIFICATION_TYPES.SUBSCRIPTION_CHARGED_CREATOR) {
+      const payload = readPayloadRecord(record.payload)
+      const causeTitle = typeof payload?.postTitle === 'string' ? payload.postTitle.trim() : 'your Cause'
+      const amountCents = typeof payload?.amountCents === 'number' ? payload.amountCents : null
+      const amountLabel = typeof amountCents === 'number'
+        ? new Intl.NumberFormat('en-CA', { style: 'currency', currency: 'CAD' }).format(amountCents / 100)
+        : ''
+      return {
+        title: 'Monthly support received',
+        message: amountLabel
+          ? `${actorLabel}'s ${amountLabel} monthly support for ${causeTitle} was charged.`
+          : `${actorLabel}'s monthly support for ${causeTitle} was charged.`,
+      }
+    }
+    if (record.type === CAUSE_NOTIFICATION_TYPES.CONTRIBUTION_RECEIVED_CREATOR) {
+      const payload = readPayloadRecord(record.payload)
+      const causeTitle = typeof payload?.postTitle === 'string' ? payload.postTitle.trim() : 'your Cause'
+      const amountCents = typeof payload?.amountCents === 'number' ? payload.amountCents : null
+      const amountLabel = typeof amountCents === 'number'
+        ? new Intl.NumberFormat('en-CA', { style: 'currency', currency: 'CAD' }).format(amountCents / 100)
+        : ''
+      return {
+        title: 'Contribution received',
+        message: amountLabel
+          ? `${actorLabel} backed ${causeTitle} with ${amountLabel}.`
+          : `${actorLabel} backed ${causeTitle}.`,
+      }
     }
     if (record.type === 'drive_ride_offer') {
       const payload = readPayloadRecord(record.payload)

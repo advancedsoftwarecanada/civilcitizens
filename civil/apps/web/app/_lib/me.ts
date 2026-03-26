@@ -81,6 +81,28 @@ export type MeResponse = {
       title: string
       detail?: string | null
     }> | null
+    causeSubscriptions?: Array<{
+      id: string
+      postId: string
+      postTitle?: string | null
+      postSlug?: string | null
+      provinceCode?: string | null
+      communitySlug?: string | null
+      creatorUserId: string
+      creatorHandle?: string | null
+      creatorName?: string | null
+      amountCents: number
+      intervalUnit: 'monthly'
+      status: 'active' | 'paused' | 'canceled'
+      nextChargeAt?: string | null
+      lastChargeAt?: string | null
+      pausedAt?: string | null
+      canceledAt?: string | null
+      createdAt: string
+      updatedAt: string
+      communityPath?: string | null
+      userPath?: string | null
+    }> | null
     stripeConnect?: {
       accountId?: string | null
       chargesEnabled?: boolean
