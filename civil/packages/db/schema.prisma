@@ -677,6 +677,7 @@ model ElectoralDistrict {
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
   politicalAssociations PoliticalDistrictAssociation[]
+  byElections   PoliticalByElection[]
   politicalSeats PoliticalSeat[]
   politicians    Politician[]
   userLocations UserLocation[]
@@ -822,6 +823,30 @@ model PoliticianScrapeJob {
   @@index([status, queuedAt])
   @@index([nextRunAt])
   @@index([personId])
+}
+
+model PoliticalByElection {
+  id                    String               @id @default(cuid())
+  jurisdiction          PoliticalJurisdiction @default(FEDERAL)
+  provinceCode          String
+  communitySlug         String
+  electoralDistrictCode Int?
+  status                ByElectionStatus     @default(DRAFT)
+  title                 String
+  tagline               String?
+  electionsCanadaUrl    String?
+  electionDayAt         DateTime?
+  electionDayLabel      String?
+  advanceVotingLabel    String?
+  electionDayHoursLabel String?
+  createdAt             DateTime             @default(now())
+  updatedAt             DateTime             @updatedAt
+  electoralDistrict     ElectoralDistrict?   @relation(fields: [electoralDistrictCode], references: [code], onDelete: SetNull)
+
+  @@index([status, electionDayAt])
+  @@index([provinceCode, status])
+  @@index([provinceCode, communitySlug, status])
+  @@index([electoralDistrictCode])
 }
 
 model AddressCorrection {
@@ -1306,6 +1331,12 @@ enum PoliticalJurisdiction {
 
 enum PoliticalOfficeType {
   MP
+}
+
+enum ByElectionStatus {
+  DRAFT
+  PUBLISHED
+  COMPLETED
 }
 
 enum PoliticianScrapeJobStatus {

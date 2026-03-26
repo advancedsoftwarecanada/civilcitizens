@@ -1,4 +1,4 @@
-import { prisma, PoliticalJurisdiction, PoliticalOfficeType, Prisma } from '@civil/db'
+import { prisma, ByElectionStatus, PoliticalJurisdiction, PoliticalOfficeType, Prisma } from '@civil/db'
 import { ensureGeoCache } from './geodata.js'
 import { normalizePostalCodeInput } from './communityGeo.js'
 
@@ -81,6 +81,18 @@ type DistrictSelectedPartyPoliticianSummary = {
   roleLabel: string | null
 }
 
+type DistrictByElectionSummary = {
+  id: string
+  status: 'draft' | 'published' | 'completed'
+  title: string
+  tagline: string | null
+  electionsCanadaUrl: string | null
+  electionDayAt: string | null
+  electionDayLabel: string | null
+  advanceVotingLabel: string | null
+  electionDayHoursLabel: string | null
+}
+
 type PostalPointRow = {
   code: string
   lat: number | null
@@ -100,7 +112,7 @@ function isPoliticalStorageUnavailableError(error: unknown) {
       return true
     }
     const message = typeof maybeError.message === 'string' ? maybeError.message : ''
-    return /PoliticalParty|PoliticalDistrictAssociation|PoliticalSeat|Politician|PoliticianScrapeJob|does not exist|doesn't exist|relation .* does not exist/i.test(message)
+    return /PoliticalParty|PoliticalDistrictAssociation|PoliticalSeat|Politician|PoliticianScrapeJob|PoliticalByElection|does not exist|doesn't exist|relation .* does not exist/i.test(message)
   }
 
   return false
@@ -494,6 +506,66 @@ async function loadSelectedPartyPoliticianByKey(args: {
   return politicianByKey
 }
 
+async function loadPublishedByElectionByKey(districts: ResolvedDistrict[]) {
+  const byElectionByKey = new Map<string, DistrictByElectionSummary | null>()
+
+  districts.forEach((district) => {
+    byElectionByKey.set(`${district.provinceCode}:${district.slug}`, null)
+  })
+
+  if (districts.length === 0) {
+    return byElectionByKey
+  }
+
+  try {
+    const byElections = await prisma.politicalByElection.findMany({
+      where: {
+        jurisdiction: PoliticalJurisdiction.FEDERAL,
+        status: ByElectionStatus.PUBLISHED,
+        OR: districts.map((district) => ({
+          provinceCode: district.provinceCode,
+          communitySlug: district.slug,
+        })),
+      },
+      orderBy: [{ electionDayAt: 'asc' }, { updatedAt: 'desc' }],
+      select: {
+        id: true,
+        provinceCode: true,
+        communitySlug: true,
+        title: true,
+        tagline: true,
+        electionsCanadaUrl: true,
+        electionDayAt: true,
+        electionDayLabel: true,
+        advanceVotingLabel: true,
+        electionDayHoursLabel: true,
+      },
+    })
+
+    byElections.forEach((byElection: (typeof byElections)[number]) => {
+      const key = `${byElection.provinceCode}:${byElection.communitySlug}`
+      if (byElectionByKey.get(key)) return
+      byElectionByKey.set(key, {
+        id: byElection.id,
+        status: 'published',
+        title: byElection.title,
+        tagline: byElection.tagline ?? null,
+        electionsCanadaUrl: byElection.electionsCanadaUrl ?? null,
+        electionDayAt: byElection.electionDayAt?.toISOString() ?? null,
+        electionDayLabel: byElection.electionDayLabel ?? null,
+        advanceVotingLabel: byElection.advanceVotingLabel ?? null,
+        electionDayHoursLabel: byElection.electionDayHoursLabel ?? null,
+      })
+    })
+  } catch (error) {
+    if (!isPoliticalStorageUnavailableError(error)) {
+      throw error
+    }
+  }
+
+  return byElectionByKey
+}
+
 async function findElectoralDistrictBySlug(provinceCode: string, communitySlug: string): Promise<ResolvedDistrict | null> {
   const rows = (await prisma.$queryRaw(Prisma.sql`
     SELECT
@@ -847,7 +919,7 @@ export async function browseElectoralDistricts(args: {
   const startOfToday = new Date()
   startOfToday.setHours(0, 0, 0, 0)
 
-  const [followCounts, postCounts, activeSeatByKey] = await Promise.all([
+  const [followCounts, postCounts, activeSeatByKey, byElectionByKey] = await Promise.all([
     districtKeys.length
       ? prisma.communityFollow.groupBy({
           by: ['provinceCode', 'communitySlug'],
@@ -866,6 +938,7 @@ export async function browseElectoralDistricts(args: {
         })
       : Promise.resolve([] as DistrictStatsCount[]),
     loadDistrictActiveSeatByKey(districts),
+    loadPublishedByElectionByKey(districts),
   ])
 
   const followMap = new Map(followCounts.map((entry: DistrictStatsCount) => [`${entry.provinceCode}:${entry.communitySlug}`, entry._count._all]))
@@ -889,6 +962,7 @@ export async function browseElectoralDistricts(args: {
         partyStatus: districtParty ? 'seat' : null,
         activeSeat,
         selectedPartyPolitician: null,
+        byElection: byElectionByKey.get(key) ?? null,
         postsToday: postMap.get(key) ?? 0,
         followerCount: followMap.get(key) ?? 0,
       }
@@ -951,7 +1025,7 @@ export async function browseFederalPartyDistricts(args: {
   const startOfToday = new Date()
   startOfToday.setHours(0, 0, 0, 0)
 
-  const [followCounts, postCounts, activeSeatByKey, selectedPartyPoliticianByKey, selectedSeatKeys, selectedRegisteredAssociationKeys] = await Promise.all([
+  const [followCounts, postCounts, activeSeatByKey, selectedPartyPoliticianByKey, byElectionByKey, selectedSeatKeys, selectedRegisteredAssociationKeys] = await Promise.all([
     districtKeys.length
       ? prisma.communityFollow.groupBy({
           by: ['provinceCode', 'communitySlug'],
@@ -975,6 +1049,7 @@ export async function browseFederalPartyDistricts(args: {
       partyId: party.id,
       provinceCode: normalizedProvinceCode,
     }),
+    loadPublishedByElectionByKey(districts),
     prisma.politicalSeat.findMany({
       where: {
         jurisdiction: PoliticalJurisdiction.FEDERAL,
@@ -1053,6 +1128,7 @@ export async function browseFederalPartyDistricts(args: {
         partyStatus: districtPartyStatus,
         activeSeat: activeSeatByKey.get(key) ?? null,
         selectedPartyPolitician: selectedPartyPoliticianByKey.get(key) ?? null,
+        byElection: byElectionByKey.get(key) ?? null,
         postsToday: postMap.get(key) ?? 0,
         followerCount: followMap.get(key) ?? 0,
       }

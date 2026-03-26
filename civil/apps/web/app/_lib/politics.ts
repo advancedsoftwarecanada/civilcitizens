@@ -20,6 +20,17 @@ export function resolveJurisdictionLabel(jurisdiction: 'federal' | 'provincial' 
   return 'Federal'
 }
 
+export function resolvePartyHref(
+  party: PartySummary | null | undefined,
+  jurisdiction: 'federal' | 'provincial' | 'municipal' | undefined,
+) {
+  if (!party?.slug?.trim()) return null
+  if (jurisdiction === 'federal' || !jurisdiction) {
+    return `/politicians/federal/${encodeURIComponent(party.slug)}`
+  }
+  return null
+}
+
 function buildFallbackCode(value: string) {
   const compact = value
     .split(/[^A-Za-z0-9]+/)

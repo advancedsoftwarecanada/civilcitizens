@@ -26,6 +26,7 @@ import {
   type NominatimAddress,
 } from '../../_lib/addressSearch'
 import { CivilDistrictMap } from '../map/CivilDistrictMap'
+import CivilMapLoadingState from '../map/CivilMapLoadingState'
 import { pushToast } from '../useToasts'
 
 type CanadianAddressEditorProps = {
@@ -553,13 +554,13 @@ export function CanadianAddressEditor({
         <section>
           {preview ? (
             <CivilDistrictMap context={preview} />
+          ) : previewLoading ? (
+            <CivilMapLoadingState className="h-[220px]" />
           ) : (
             <div className="flex h-[220px] items-center justify-center rounded-[24px] border border-dashed border-slate-300 bg-white px-6 text-center text-sm text-slate-500">
-              {previewLoading
-                ? 'Loading map preview…'
-                : hasAnyAddress
-                  ? previewError ?? 'Map preview will appear here once we can resolve the location.'
-                  : 'Add an address to preview the map.'}
+              {hasAnyAddress
+                ? previewError ?? 'Map preview will appear here once we can resolve the location.'
+                : 'Add an address to preview the map.'}
             </div>
           )}
         </section>

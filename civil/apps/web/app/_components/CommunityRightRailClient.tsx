@@ -256,13 +256,7 @@ export default function CommunityRightRailClient({
               <p className="text-sm font-semibold text-slate-900">{electoralDistrictName}</p>
               <div className="mt-2 flex flex-wrap items-center gap-2">
                 {federalSeat?.party ? (
-                  federalPartyHref ? (
-                    <Link href={federalPartyHref} className="inline-flex rounded-full">
-                      <PartyChip party={federalSeat.party} jurisdiction="federal" className="transition hover:brightness-95" />
-                    </Link>
-                  ) : (
-                    <PartyChip party={federalSeat.party} jurisdiction="federal" />
-                  )
+                  <PartyChip party={federalSeat.party} jurisdiction="federal" className="transition hover:brightness-95" href={federalPartyHref ?? undefined} />
                 ) : null}
                 <p className="text-xs text-slate-500">Federal electoral district boundary for this community.</p>
               </div>
@@ -283,13 +277,7 @@ export default function CommunityRightRailClient({
                     <div className="min-w-0 flex-1">
                       {federalSeat.party ? (
                         <div className="mb-3">
-                          {federalPartyHref ? (
-                            <Link href={federalPartyHref} className="inline-flex rounded-full">
-                              <PartyChip party={federalSeat.party} jurisdiction="federal" className="transition hover:brightness-95" />
-                            </Link>
-                          ) : (
-                            <PartyChip party={federalSeat.party} jurisdiction="federal" />
-                          )}
+                          <PartyChip party={federalSeat.party} jurisdiction="federal" className="transition hover:brightness-95" href={federalPartyHref ?? undefined} />
                         </div>
                       ) : null}
                       <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-500">Federal Member of Parliament</p>
