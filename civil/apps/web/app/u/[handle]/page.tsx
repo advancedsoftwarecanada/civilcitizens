@@ -978,7 +978,7 @@ export default function UserPostsPage({ params }: PageProps) {
   }, [])
 
   const menuPanelClassName =
-    'mt-2 w-full rounded-2xl border border-slate-200 bg-white p-2 shadow-lg sm:absolute sm:left-0 sm:top-full sm:z-50 sm:min-w-[220px] sm:w-auto'
+    'absolute left-1/2 top-full z-50 mt-2 w-max min-w-[220px] max-w-[calc(100vw-2rem)] -translate-x-1/2 rounded-2xl border border-slate-200 bg-white p-2 shadow-lg sm:left-0 sm:translate-x-0'
   const menuItemClassName =
     'flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm font-semibold text-slate-700 transition hover:bg-slate-50 disabled:cursor-not-allowed disabled:opacity-55'
   const destructiveMenuItemClassName =
@@ -1190,7 +1190,7 @@ export default function UserPostsPage({ params }: PageProps) {
     }
 
     return (
-      <details className="group relative shrink-0 profile-action-menu">
+      <details className="group relative shrink-0 overflow-visible profile-action-menu">
         <summary className={summaryClassName}>
           {icon}
           {label}
@@ -2537,7 +2537,7 @@ export default function UserPostsPage({ params }: PageProps) {
                   renderFamilyProfileActions()
                 ) : (
                   <>
-                    <div className="flex w-full max-w-full items-center justify-center gap-2 overflow-x-auto overflow-y-visible pb-1 pt-1 sm:w-auto sm:max-w-none">
+                    <div className="flex w-full max-w-full flex-wrap items-center justify-center gap-2 overflow-visible pb-1 pt-1 sm:w-auto sm:max-w-none">
                       {renderFamilyRelationshipMenu()}
                       {!hasAnyProfileRelationship ? renderConnectMenu() : null}
                       {renderMessageMenu()}

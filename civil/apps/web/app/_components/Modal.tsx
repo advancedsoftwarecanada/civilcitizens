@@ -18,8 +18,8 @@ export default function Modal({
   children,
   title,
   maxWidthClassName,
-  closeOnBackdrop = true,
-  closeOnEscape = true,
+  closeOnBackdrop = false,
+  closeOnEscape = false,
 }: ModalProps) {
   const [portalEl, setPortalEl] = useState<HTMLElement | null>(null)
 
