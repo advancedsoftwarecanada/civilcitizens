@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from 'react'
 import Link from 'next/link'
+import { useRouter } from 'next/navigation'
 import clsx from 'clsx'
 import { LuCircleSlash, LuRepeat2, LuWallet } from 'react-icons/lu'
 import { calculateCausePlatformFeeCents } from '@civil/shared'
@@ -10,6 +11,7 @@ import CauseBackModal from './CauseBackModal'
 import Modal from './Modal'
 import { redirectToAuthModal } from '../_lib/authModal'
 import { useViewerStore } from '../_lib/viewerStore'
+import { pushToast } from './useToasts'
 
 function formatCurrency(amountCents: number) {
   return new Intl.NumberFormat('en-CA', {
@@ -50,11 +52,13 @@ export default function CauseSummaryCard({
   onPostUpdate?: (post: ApiPost) => void
   compact?: boolean
 }) {
+  const router = useRouter()
   const viewer = useViewerStore((state) => state.me)
   const [modalOpen, setModalOpen] = useState(false)
   const [selfSupportModalOpen, setSelfSupportModalOpen] = useState(false)
   const [preferredSupportMode, setPreferredSupportMode] = useState<'one-time' | 'monthly'>('one-time')
   const [amountInput, setAmountInput] = useState('25')
+  const [openingEditor, setOpeningEditor] = useState(false)
   const cause = post.cause
   const amountCents = useMemo(() => readAmountCents(amountInput), [amountInput])
   const feeCents = useMemo(() => calculateCausePlatformFeeCents(amountCents), [amountCents])
@@ -62,6 +66,7 @@ export default function CauseSummaryCard({
 
   const isActive = cause?.status === 'active'
   const isAuthor = Boolean(viewer?.id && post.author.id === viewer.id)
+  const causeRaisedAmountCents = cause?.raisedAmountCents ?? 0
   const progressLabel = useMemo(() => {
     if (!cause) return null
     return `${cause.progressPercent}% funded`
@@ -69,7 +74,29 @@ export default function CauseSummaryCard({
   const walletBalanceCents = viewer?.wallet?.civilCreditsCents ?? 0
   const currentSubscription = viewer?.wallet?.causeSubscriptions?.find((item) => item.postId === post.id && item.status !== 'canceled') ?? null
   const sortedStageGoals = useMemo(() => [...(cause?.stageGoals ?? [])].sort((left, right) => left.sortOrder - right.sortOrder), [cause?.stageGoals])
-  const supportPresets = ['10', '25', '50', '100']
+  const stageGoalsWithProgress = useMemo(() => {
+    let runningGoalCents = 0
+    return sortedStageGoals.map((goal) => {
+      const stageStart = runningGoalCents
+      const stageEnd = stageStart + goal.amountCents
+      runningGoalCents = stageEnd
+      const stageRaisedCents = Math.max(0, Math.min(goal.amountCents, causeRaisedAmountCents - stageStart))
+      const progressPercent = goal.amountCents > 0 ? Math.min(100, Math.ceil((stageRaisedCents / goal.amountCents) * 100)) : 0
+      const complete = causeRaisedAmountCents >= stageEnd
+      const current = !complete && causeRaisedAmountCents >= stageStart
+      const remainingForStage = Math.max(0, goal.amountCents - stageRaisedCents)
+      return {
+        goal,
+        stageRaisedCents,
+        progressPercent,
+        complete,
+        current,
+        remainingForStage,
+      }
+    })
+  }, [causeRaisedAmountCents, sortedStageGoals])
+  const supportPresets = ['10', '25', '100', '250', '500']
+  if (!cause) return null
 
   if (!cause) return null
 
@@ -87,6 +114,46 @@ export default function CauseSummaryCard({
     if (!isActive) return
     setPreferredSupportMode(mode)
     setModalOpen(true)
+  }
+
+  async function openCauseEditor() {
+    if (!isAuthor || openingEditor) return
+
+    const existingDraftId = post.causeDraftId ?? post.cause?.draftId ?? null
+    if (existingDraftId) {
+      router.push(`/causes/drafts/${encodeURIComponent(existingDraftId)}`)
+      return
+    }
+
+    const token = typeof window !== 'undefined' ? localStorage.getItem('token') : null
+    if (!token) {
+      redirectToAuthModal('login')
+      return
+    }
+
+    setOpeningEditor(true)
+    try {
+      const response = await fetch(buildApiUrl(`/causes/posts/${encodeURIComponent(post.id)}/draft`), {
+        headers: {
+          authorization: `Bearer ${token}`,
+        },
+      })
+      if (!response.ok) {
+        pushToast('Unable to open cause editor.', 'error')
+        return
+      }
+      const payload = (await response.json().catch(() => null)) as { draft?: { id?: string | null } } | null
+      const resolvedDraftId = payload?.draft?.id?.trim()
+      if (!resolvedDraftId) {
+        pushToast('Unable to open cause editor.', 'error')
+        return
+      }
+      router.push(`/causes/drafts/${encodeURIComponent(resolvedDraftId)}`)
+    } catch {
+      pushToast('Unable to open cause editor.', 'error')
+    } finally {
+      setOpeningEditor(false)
+    }
   }
 
   const modalContent = (
@@ -121,8 +188,6 @@ export default function CauseSummaryCard({
   )
 
   if (!compact) {
-    let runningGoalCents = 0
-
     return (
       <>
         <section className="space-y-4 rounded-[2rem] border border-emerald-200 bg-[radial-gradient(circle_at_top_left,rgba(16,185,129,0.18),transparent_40%),linear-gradient(180deg,#ffffff,#f4fbf7)] p-5 shadow-sm sm:p-6">
@@ -132,8 +197,22 @@ export default function CauseSummaryCard({
                 <p className="text-xs font-semibold uppercase tracking-[0.22em] text-emerald-700">Civil Cause</p>
                 <h3 className="mt-2 text-xl font-semibold text-slate-900">Funding roadmap</h3>
               </div>
-              <div className="rounded-full border border-emerald-200 bg-emerald-50 px-4 py-2 text-sm font-semibold text-emerald-800">
-                {progressLabel}
+              <div className="flex flex-wrap items-center justify-end gap-2">
+                {isAuthor ? (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      void openCauseEditor()
+                    }}
+                    disabled={openingEditor}
+                    className="inline-flex items-center justify-center rounded-full border border-emerald-300 bg-white px-4 py-2 text-sm font-semibold text-emerald-800 shadow-sm transition hover:bg-emerald-50 disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    {openingEditor ? 'Opening…' : 'Manage this Cause'}
+                  </button>
+                ) : null}
+                <div className="rounded-full border border-emerald-200 bg-emerald-50 px-4 py-2 text-sm font-semibold text-emerald-800">
+                  {progressLabel}
+                </div>
               </div>
             </div>
 
@@ -153,13 +232,70 @@ export default function CauseSummaryCard({
             </div>
           </div>
 
-          <div className="rounded-[1.75rem] border border-slate-200 bg-white p-5 shadow-sm">
+          <div className="rounded-[1.75rem] border border-slate-200 bg-white p-5">
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-400">Stage Goals</p>
+              <h4 className="mt-1 text-lg font-semibold text-slate-900">Goals</h4>
+            </div>
+
+            <div className="mt-4 space-y-3">
+              {stageGoalsWithProgress.length ? (
+                stageGoalsWithProgress.map(({ goal, stageRaisedCents, progressPercent, complete, current, remainingForStage }) => (
+                  <div
+                    key={goal.id}
+                    className={clsx(
+                      'rounded-[1.5rem] border px-4 py-4 transition',
+                      complete ? 'border-emerald-200 bg-emerald-50/80' : current ? 'border-sky-200 bg-sky-50/80' : 'border-slate-200 bg-slate-50',
+                    )}
+                  >
+                    <div className="space-y-3">
+                      <div className="flex flex-wrap items-start justify-between gap-3">
+                        <div>
+                          <p className="text-sm font-semibold text-slate-900">{goal.description}</p>
+                        </div>
+                        <p className="text-sm font-semibold text-slate-900">{formatCurrency(goal.amountCents)}</p>
+                      </div>
+                      <div className="space-y-2">
+                        <div className="flex items-center justify-between gap-3 text-xs font-semibold uppercase tracking-[0.16em] text-slate-500">
+                          <span>{formatCurrency(stageRaisedCents)} raised</span>
+                          <span>{progressPercent}%</span>
+                        </div>
+                        <div className="h-2.5 overflow-hidden rounded-full bg-white/80">
+                          <div
+                            className={clsx(
+                              'h-full rounded-full transition-[width] duration-300',
+                              complete ? 'bg-emerald-500' : current ? 'bg-sky-500' : 'bg-slate-300',
+                            )}
+                            style={{ width: `${Math.max(progressPercent > 0 ? 6 : 0, progressPercent)}%` }}
+                          />
+                        </div>
+                      </div>
+                      <div className="flex flex-wrap items-center justify-between gap-3 text-xs text-slate-500">
+                        <span>
+                          {complete ? 'Complete' : current ? `${formatCurrency(remainingForStage)} to finish this stage` : 'Upcoming'}
+                        </span>
+                      </div>
+                    </div>
+                  </div>
+                ))
+              ) : (
+                <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-4 py-6 text-sm text-slate-500">
+                  No stage goals were added to this Cause.
+                </div>
+              )}
+            </div>
+          </div>
+
+          <div className="rounded-[1.75rem] border border-emerald-200 bg-emerald-100/80 p-5 shadow-sm">
             <div className="flex items-center justify-between gap-3">
               <div>
-                <p className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-400">Support</p>
-                <h4 className="mt-1 text-xl font-semibold text-slate-900">Back this Cause</h4>
+                <h4 className="text-xl font-semibold text-slate-900">Back this Cause</h4>
               </div>
-              <Link href="/wallet" className="text-sm font-semibold text-emerald-700 underline underline-offset-4">
+              <Link
+                href="/wallet"
+                className="inline-flex items-center justify-center rounded-full border border-white bg-white px-4 py-2 text-sm font-semibold text-emerald-800 shadow-sm transition hover:bg-emerald-50"
+              >
+                <LuWallet className="mr-2 h-4 w-4" />
                 Open wallet
               </Link>
             </div>
@@ -204,16 +340,16 @@ export default function CauseSummaryCard({
           </div>
 
           <label className="mt-4 block">
-            <span className="text-sm font-semibold text-slate-700">Support amount</span>
-            <div className="mt-2 flex items-center overflow-hidden rounded-2xl border border-slate-200">
-              <span className="border-r border-slate-200 bg-slate-50 px-4 py-3 text-sm font-semibold text-slate-500">CAD</span>
+            <span className="text-sm font-semibold text-slate-700">Custom Amount</span>
+            <div className="mt-2 flex items-center overflow-hidden rounded-2xl border border-emerald-200 bg-white px-4 py-3 shadow-sm">
+              <span className="pr-3 text-sm font-semibold text-slate-500">CAD</span>
               <input
                 type="number"
                 min="5"
                 step="1"
                 value={amountInput}
                 onChange={(event) => setAmountInput(event.target.value)}
-                className="w-full px-4 py-3 text-base text-slate-900 outline-none"
+                className="w-full bg-white text-base text-slate-900 outline-none"
               />
             </div>
           </label>
@@ -262,54 +398,6 @@ export default function CauseSummaryCard({
               {isAuthor ? <LuCircleSlash className="mr-2 h-4 w-4" /> : <LuRepeat2 className="mr-2 h-4 w-4" />}
               Donate Monthly
             </button>
-          </div>
-        </div>
-
-        <div className="rounded-[1.75rem] border border-slate-200 bg-white p-5">
-          <div>
-            <p className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-400">Stage Goals</p>
-            <h4 className="mt-1 text-lg font-semibold text-slate-900">Goals</h4>
-          </div>
-
-          <div className="mt-4 space-y-3">
-            {sortedStageGoals.length ? (
-              sortedStageGoals.map((goal) => {
-                const stageStart = runningGoalCents
-                runningGoalCents += goal.amountCents
-                const complete = cause.raisedAmountCents >= runningGoalCents
-                const current = !complete && cause.raisedAmountCents >= stageStart
-                const remainingForStage = Math.max(0, runningGoalCents - cause.raisedAmountCents)
-
-                return (
-                  <div
-                    key={goal.id}
-                    className={clsx(
-                      'rounded-[1.5rem] border px-4 py-4 transition',
-                      complete ? 'border-emerald-200 bg-emerald-50/80' : current ? 'border-amber-200 bg-amber-50/80' : 'border-slate-200 bg-slate-50',
-                    )}
-                  >
-                    <div className="space-y-3">
-                      <div className="flex flex-wrap items-start justify-between gap-3">
-                        <div>
-                          <p className="text-sm font-semibold text-slate-900">{goal.description}</p>
-                          <p className="mt-1 text-xs font-semibold uppercase tracking-[0.18em] text-slate-500">Stage {goal.sortOrder + 1}</p>
-                        </div>
-                        <p className="text-sm font-semibold text-slate-900">{formatCurrency(goal.amountCents)}</p>
-                      </div>
-                      <div className="flex flex-wrap items-center justify-between gap-3 text-xs text-slate-500">
-                        <span>
-                          {complete ? 'Complete' : current ? `${formatCurrency(remainingForStage)} to finish this stage` : 'Upcoming'}
-                        </span>
-                      </div>
-                    </div>
-                  </div>
-                )
-              })
-            ) : (
-              <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-4 py-6 text-sm text-slate-500">
-                No stage goals were added to this Cause.
-              </div>
-            )}
           </div>
           </div>
         </section>

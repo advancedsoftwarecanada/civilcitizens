@@ -2,11 +2,11 @@
 
 import Link from 'next/link'
 import { useEffect, useMemo, useState } from 'react'
-import type { ApiPost } from '../../../../../../_components/PostComposer'
-import CivilCard from '../../../../../../_components/CivilCard'
-import DashboardShell from '../../../../../../_components/DashboardShell'
-import { buildApiUrl } from '../../../../../../_lib/api'
-import { formatUserDisplayName } from '../../../../../../_lib/text'
+import type { ApiPost } from '../../../../../_components/PostComposer'
+import CauseContributorCard, { type CauseContributorItem } from '../../../../../_components/CauseContributorCard'
+import DashboardShell from '../../../../../_components/DashboardShell'
+import { RightRail } from '../../../../../_components/RightRail'
+import { buildApiUrl } from '../../../../../_lib/api'
 
 type PageProps = {
   params: {
@@ -14,38 +14,6 @@ type PageProps = {
     chamber: string
     slug: string
   }
-}
-
-type CauseContributorItem = {
-  id: string
-  amountCents: number
-  createdAt: string
-  sourceType: string
-  user: {
-    id: string
-    handle: string
-    name: string | null
-    avatarUrl: string | null
-    coverUrl: string | null
-    isPremium: boolean
-    isVerified: boolean
-  }
-}
-
-function formatCurrency(amountCents: number) {
-  return new Intl.NumberFormat('en-CA', { style: 'currency', currency: 'CAD', maximumFractionDigits: 0 }).format(amountCents / 100)
-}
-
-function formatDateTime(iso: string) {
-  const date = new Date(iso)
-  if (Number.isNaN(date.getTime())) return ''
-  return date.toLocaleString(undefined, {
-    month: 'short',
-    day: 'numeric',
-    year: 'numeric',
-    hour: 'numeric',
-    minute: '2-digit',
-  })
 }
 
 export default function CauseContributorsPage({ params }: PageProps) {
@@ -109,7 +77,7 @@ export default function CauseContributorsPage({ params }: PageProps) {
   }, [slugParam])
 
   return (
-    <DashboardShell mainClassName="space-y-6 pb-12">
+    <DashboardShell rightRail={<RightRail />} mainClassName="space-y-6 pb-12">
       {status === 'loading' ? <div className="rounded border bg-white p-6 text-sm text-gray-500 shadow-sm">Loading contributors…</div> : null}
       {status === 'not-found' ? <div className="rounded border bg-white p-6 text-sm text-gray-500 shadow-sm">Cause not found.</div> : null}
       {status === 'error' ? <div className="rounded border bg-white p-6 text-sm text-red-600 shadow-sm">Unable to load contributors right now.</div> : null}
@@ -138,26 +106,11 @@ export default function CauseContributorsPage({ params }: PageProps) {
 
           {contributors.length ? (
             <ul className="space-y-3">
-              {contributors.map((entry) => {
-                const displayName = formatUserDisplayName(entry.user.name, entry.user.handle) || entry.user.handle
-                return (
-                  <li key={entry.id}>
-                    <CivilCard
-                      href={`/u/${entry.user.handle}`}
-                      size="md"
-                      name={displayName}
-                      avatarAlt={displayName}
-                      avatarInitials={displayName}
-                      avatarSrc={entry.user.avatarUrl}
-                      coverUrl={entry.user.coverUrl}
-                      subtitle={`@${entry.user.handle}`}
-                      details={`${formatCurrency(entry.amountCents)} • ${formatDateTime(entry.createdAt)}`}
-                      isVerified={entry.user.isVerified}
-                      isBusiness={entry.user.isPremium}
-                    />
-                  </li>
-                )
-              })}
+              {contributors.map((entry) => (
+                <li key={entry.id}>
+                  <CauseContributorCard entry={entry} />
+                </li>
+              ))}
             </ul>
           ) : (
             <div className="rounded border border-dashed border-slate-200 bg-slate-50 px-4 py-6 text-sm text-slate-500">

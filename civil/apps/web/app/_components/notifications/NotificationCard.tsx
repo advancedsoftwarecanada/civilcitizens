@@ -10,6 +10,7 @@ import {
   formatRelativeTime,
   getActorDisplayName,
   getNotificationActionLabels,
+  getNotificationDetailLine,
   getFriendshipId,
   getNotificationFamilyInviteOptions,
   getNotificationOpenLabel,
@@ -56,6 +57,7 @@ export function NotificationCard({
   const actorName = getActorDisplayName(notification)
   const initials = actorName || 'C'
   const message = getNotificationMessage(notification)
+  const detailLine = getNotificationDetailLine(notification)
   const targetUrl = getNotificationTargetUrl(notification)
   const openLabel = getNotificationOpenLabel(notification)
   const actionLabels = getNotificationActionLabels(notification)
@@ -209,6 +211,7 @@ export function NotificationCard({
             </div>
           ) : null}
           <p className="text-[15px] leading-5 text-slate-700">{message}</p>
+          {detailLine ? <p className="mt-1 text-sm font-medium text-slate-900">{detailLine}</p> : null}
           <p className="mt-1 text-xs text-slate-500">{formatRelativeTime(notification.createdAt)}</p>
         </div>
         {requesterChildName ? (

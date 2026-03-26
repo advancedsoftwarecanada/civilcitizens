@@ -14,6 +14,7 @@ import RichTextEditor from '../../../../../_components/RichTextEditor'
 import CommentComposer from '../../../../../_components/CommentComposer'
 import CommentThread, { type ApiComment } from '../../../../../_components/CommentThread'
 import CivilLinkPreviewList from '../../../../../_components/CivilLinkPreviewList'
+import CauseContributorCard, { type CauseContributorItem } from '../../../../../_components/CauseContributorCard'
 import CauseSummaryCard from '../../../../../_components/CauseSummaryCard'
 import LinkPreviewCard from '../../../../../_components/LinkPreviewCard'
 import LinkifiedText from '../../../../../_components/LinkifiedText'
@@ -72,22 +73,6 @@ type CommunityOrgItem = {
   coverUrl?: string | null
 }
 
-type CauseContributorItem = {
-  id: string
-  amountCents: number
-  createdAt: string
-  sourceType: string
-  user: {
-    id: string
-    handle: string
-    name: string | null
-    avatarUrl: string | null
-    coverUrl: string | null
-    isPremium: boolean
-    isVerified: boolean
-  }
-}
-
 const COMMENT_SORT_OPTIONS: Array<{ value: 'hot' | 'new'; label: string }> = [
   { value: 'hot', label: 'Hot' },
   { value: 'new', label: 'New' },
@@ -103,10 +88,6 @@ function formatDateTime(iso: string) {
     hour: 'numeric',
     minute: '2-digit',
   })
-}
-
-function formatCurrency(amountCents: number) {
-  return new Intl.NumberFormat('en-CA', { style: 'currency', currency: 'CAD', maximumFractionDigits: 0 }).format(amountCents / 100)
 }
 
 export default function ChamberPostPage({ params }: PageProps) {
@@ -593,7 +574,9 @@ export default function ChamberPostPage({ params }: PageProps) {
     .split('-')
     .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
     .join(' ')
-  const contributorsHref = post ? `${buildPostPath(post)}/contributors` : `/${provinceParam.toLowerCase()}/${chamberParam.toLowerCase()}/causes/${slugParam}/contributors`
+  const contributorsHref = post?.type === 'cause' && post.provinceCode && post.communitySlug
+    ? `/${post.provinceCode.toLowerCase()}/${post.communitySlug.toLowerCase()}/causes/${encodeURIComponent((post.seoSlug ?? post.id).trim())}/contributors`
+    : `/${provinceParam.toLowerCase()}/${chamberParam.toLowerCase()}/causes/${slugParam}/contributors`
 
   const rightRail = (
     <div className="space-y-4">
@@ -607,26 +590,11 @@ export default function ChamberPostPage({ params }: PageProps) {
           </div>
           {railContributors.length ? (
             <ul className="mt-3 space-y-3">
-              {railContributors.map((entry) => {
-                const displayName = formatUserDisplayName(entry.user.name, entry.user.handle) || entry.user.handle
-                return (
-                  <li key={entry.id}>
-                    <CivilCard
-                      href={`/u/${entry.user.handle}`}
-                      size="md"
-                      name={displayName}
-                      avatarAlt={displayName}
-                      avatarInitials={displayName}
-                      avatarSrc={entry.user.avatarUrl}
-                      coverUrl={entry.user.coverUrl}
-                      subtitle={`@${entry.user.handle}`}
-                      details={`${formatCurrency(entry.amountCents)} • ${formatDateTime(entry.createdAt)}`}
-                      isVerified={entry.user.isVerified}
-                      isBusiness={entry.user.isPremium}
-                    />
-                  </li>
-                )
-              })}
+              {railContributors.map((entry) => (
+                <li key={entry.id}>
+                  <CauseContributorCard entry={entry} />
+                </li>
+              ))}
             </ul>
           ) : (
             <p className="mt-2 text-sm text-gray-600">No contributors yet.</p>
@@ -822,7 +790,7 @@ export default function ChamberPostPage({ params }: PageProps) {
               {breadcrumbCommunityName}
             </Link>
             <span className="mx-1">/</span>
-            <span className="text-gray-700">Post</span>
+            <span className="text-gray-700">{post.type === 'cause' ? 'Contribution' : 'Post'}</span>
           </nav>
 
           <header className="relative space-y-4 border-b border-gray-100 pb-4">
