@@ -24,8 +24,8 @@ export type OrganizationsManagerStatus = 'loading' | 'ready' | 'unauthorized' | 
 
 export function useOrganizationsManagerData() {
   const [status, setStatus] = useState<OrganizationsManagerStatus>('loading')
-  const [followedOrganizations, setFollowedOrganizations] = useState<OrganizationManagerRow[]>([])
-  const [ownedOrganizations, setOwnedOrganizations] = useState<OrganizationManagerRow[]>([])
+  const [allFollowedOrganizations, setAllFollowedOrganizations] = useState<OrganizationManagerRow[]>([])
+  const [allOwnedOrganizations, setAllOwnedOrganizations] = useState<OrganizationManagerRow[]>([])
   const [communityOptions, setCommunityOptions] = useState<CommunityOption[]>([])
   const [selectedCommunityKey, setSelectedCommunityKey] = useState('')
   const selectedCommunityKeyRef = useRef('')
@@ -41,6 +41,24 @@ export function useOrganizationsManagerData() {
     if (!provinceCode || !communitySlug) return null
     return { provinceCode, communitySlug }
   }, [selectedCommunityKey])
+
+  const followedOrganizations = useMemo(() => {
+    if (!selectedCommunity) return allFollowedOrganizations
+    return allFollowedOrganizations.filter(
+      (organization) =>
+        organization.provinceCode.toLowerCase() === selectedCommunity.provinceCode.toLowerCase() &&
+        organization.communitySlug.toLowerCase() === selectedCommunity.communitySlug.toLowerCase(),
+    )
+  }, [allFollowedOrganizations, selectedCommunity])
+
+  const ownedOrganizations = useMemo(() => {
+    if (!selectedCommunity) return allOwnedOrganizations
+    return allOwnedOrganizations.filter(
+      (organization) =>
+        organization.provinceCode.toLowerCase() === selectedCommunity.provinceCode.toLowerCase() &&
+        organization.communitySlug.toLowerCase() === selectedCommunity.communitySlug.toLowerCase(),
+    )
+  }, [allOwnedOrganizations, selectedCommunity])
 
   useEffect(() => {
     selectedCommunityKeyRef.current = selectedCommunityKey
@@ -86,8 +104,8 @@ export function useOrganizationsManagerData() {
         const ownedPayload = (await ownedRes.json().catch(() => null)) as { items?: OrganizationManagerRow[] } | null
 
         if (!cancelled) {
-          setFollowedOrganizations(Array.isArray(followsPayload?.items) ? followsPayload.items : [])
-          setOwnedOrganizations(Array.isArray(ownedPayload?.items) ? ownedPayload.items : [])
+          setAllFollowedOrganizations(Array.isArray(followsPayload?.items) ? followsPayload.items : [])
+          setAllOwnedOrganizations(Array.isArray(ownedPayload?.items) ? ownedPayload.items : [])
           setCommunityOptions(communityResult.options)
           setSelectedCommunityKey((prev) => prev || communityResult.selectedKey)
           setStatus('ready')
