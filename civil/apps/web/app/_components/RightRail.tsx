@@ -580,7 +580,7 @@ export function RightRail({
       if (shouldLoadUpcomingByElections) {
         requests.push({
           key: 'upcomingByElections',
-          promise: fetch(buildApiUrl('/by-elections/upcoming'), {
+          promise: fetch(buildApiUrl('/by-elections/upcoming?scope=all'), {
             headers: { authorization: `Bearer ${token}` },
             cache: 'no-store',
           }),
@@ -1614,7 +1614,7 @@ export function RightRail({
               ))}
             </ul>
           ) : (
-            <p className="text-sm text-slate-500">No published by-elections in your communities right now.</p>
+            <p className="text-sm text-slate-500">No published upcoming by-elections right now.</p>
           )}
         </Block>
       ) : null}
