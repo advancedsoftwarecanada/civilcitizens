@@ -19,6 +19,7 @@ type PoliticianContactCardProps = {
   communityHref?: string | null
   email?: string | null
   website?: string | null
+  candidateWebsite?: string | null
   hillOffice?: PoliticianOffice | null
   constituencyOffices?: PoliticianOffice[]
   extraActions?: ReactNode
@@ -89,6 +90,7 @@ export default function PoliticianContactCard({
   communityHref,
   email,
   website,
+  candidateWebsite,
   hillOffice,
   constituencyOffices = [],
   extraActions,
@@ -109,8 +111,7 @@ export default function PoliticianContactCard({
 
         <div className="min-w-0 flex-1 space-y-4">
           <div>
-            <p className="text-xs font-semibold uppercase tracking-[0.3em] text-slate-400">House of Commons</p>
-            <h3 className="mt-2 text-2xl font-semibold text-slate-900">{displayName}</h3>
+            <h3 className="text-2xl font-semibold text-slate-900">{displayName}</h3>
             <p className="mt-1 text-sm text-slate-600">
               {[partyName, officeType, districtName].filter(Boolean).join(' · ') || 'Federal member profile'}
             </p>
@@ -135,6 +136,16 @@ export default function PoliticianContactCard({
                 className="inline-flex items-center rounded-full border border-slate-200 bg-white px-3 py-1.5 font-semibold text-slate-700 hover:border-slate-300"
               >
                 Website
+              </a>
+            ) : null}
+            {candidateWebsite ? (
+              <a
+                href={candidateWebsite}
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex items-center rounded-full border border-slate-200 bg-white px-3 py-1.5 font-semibold text-slate-700 hover:border-slate-300"
+              >
+                Candidate Website
               </a>
             ) : null}
             {email ? (
@@ -174,6 +185,14 @@ export default function PoliticianContactCard({
                     <span className="font-semibold text-slate-900">Website:</span>{' '}
                     <a href={website} target="_blank" rel="noreferrer" className="text-[var(--cc-primary)] hover:underline">
                       {website}
+                    </a>
+                  </p>
+                ) : null}
+                {candidateWebsite ? (
+                  <p>
+                    <span className="font-semibold text-slate-900">Candidate Website:</span>{' '}
+                    <a href={candidateWebsite} target="_blank" rel="noreferrer" className="text-[var(--cc-primary)] hover:underline">
+                      {candidateWebsite}
                     </a>
                   </p>
                 ) : null}

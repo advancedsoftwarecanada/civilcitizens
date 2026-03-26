@@ -124,6 +124,28 @@ type FederalMemberDetailFetchResponse = {
   stats: AdminEdaResponse['stats']
 }
 
+type PpcCandidateFetchSummary = {
+  importedAt: string
+  sourceUrl: string
+  cardsFound: number
+  matchedDistricts: number
+  politiciansCreated: number
+  politiciansUpdated: number
+  unmatchedCards: number
+  unmatchedSample: Array<{
+    displayName: string
+    ridingName: string
+    provinceName: string
+    reason: string
+  }>
+}
+
+type PpcCandidateFetchResponse = {
+  ok: boolean
+  summary: PpcCandidateFetchSummary
+  stats: AdminEdaResponse['stats']
+}
+
 type ProvinceOption = {
   code: string
   name: string
@@ -188,6 +210,7 @@ export default function AdminEdaPage() {
   const [running, setRunning] = useState(false)
   const [runningCommonsFetch, setRunningCommonsFetch] = useState(false)
   const [runningMemberDetailFetch, setRunningMemberDetailFetch] = useState(false)
+  const [runningPpcCandidateFetch, setRunningPpcCandidateFetch] = useState(false)
   const [manualProvinces, setManualProvinces] = useState<ProvinceOption[]>(provincesFallback)
   const [manualProvinceCode, setManualProvinceCode] = useState('')
   const [manualCommunities, setManualCommunities] = useState<CommunityOption[]>([])
@@ -209,6 +232,7 @@ export default function AdminEdaPage() {
   const [summary, setSummary] = useState<ImportSummary | null>(null)
   const [commonsSummary, setCommonsSummary] = useState<FederalMemberFetchSummary | null>(null)
   const [memberDetailSummary, setMemberDetailSummary] = useState<FederalMemberDetailFetchSummary | null>(null)
+  const [ppcCandidateSummary, setPpcCandidateSummary] = useState<PpcCandidateFetchSummary | null>(null)
 
   const numberFormatter = useMemo(() => new Intl.NumberFormat('en-CA'), [])
   const byElectionStatusLabel = useCallback((value: ByElectionStatusValue) => {
@@ -551,6 +575,39 @@ export default function AdminEdaPage() {
     }
   }, [load, token])
 
+  const runPpcCandidateFetch = useCallback(async () => {
+    if (!token) return
+    setRunningPpcCandidateFetch(true)
+    setError(null)
+    try {
+      const res = await fetch(buildApiUrl('/admin/eda/federal-candidates/ppc/fetch'), {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${token}`,
+        },
+      })
+      if (!res.ok) {
+        const payload = (await res.json().catch(() => null)) as { error?: string; detail?: string } | null
+        setError(
+          payload?.error === 'political_tables_not_ready'
+            ? 'Political tables are not ready in this environment yet. Run the new Prisma migration first.'
+            : payload?.detail ?? payload?.error ?? 'Unable to fetch PPC candidates.',
+        )
+        return
+      }
+
+      const payload = (await res.json()) as PpcCandidateFetchResponse
+      setPpcCandidateSummary(payload.summary)
+      setStats(payload.stats)
+      await load()
+    } catch (runError) {
+      console.error('[admin/eda] PPC candidate scrape failed', runError)
+      setError('Unable to fetch PPC candidates.')
+    } finally {
+      setRunningPpcCandidateFetch(false)
+    }
+  }, [load, token])
+
   const body = () => {
     if (accessLoading) {
       return <div className="surface-card p-6 text-sm text-slate-500">Loading EDA data tools…</div>
@@ -586,7 +643,7 @@ export default function AdminEdaPage() {
             </div>
           ) : null}
 
-          <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_auto_auto_auto] xl:items-end">
+          <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_auto_auto_auto_auto] xl:items-end">
             <label className="grid gap-2 text-sm font-medium text-slate-700">
               Data source
               <select
@@ -629,6 +686,15 @@ export default function AdminEdaPage() {
               className="rounded-full bg-emerald-700 px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-emerald-600 disabled:cursor-not-allowed disabled:opacity-60"
             >
               {runningMemberDetailFetch ? 'Fetching…' : 'Fetch member details'}
+            </button>
+
+            <button
+              type="button"
+              onClick={() => void runPpcCandidateFetch()}
+              disabled={runningPpcCandidateFetch || !databaseReady}
+              className="rounded-full bg-[var(--cc-primary)] px-5 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {runningPpcCandidateFetch ? 'Scraping…' : 'Scrape PPC candidates'}
             </button>
           </div>
 
@@ -1133,6 +1199,52 @@ export default function AdminEdaPage() {
                 <p className="mt-1">{numberFormatter.format(memberDetailSummary.skippedMissingProfileUrl)}</p>
               </div>
             </div>
+          </section>
+        ) : null}
+
+        {ppcCandidateSummary ? (
+          <section className="surface-card space-y-4 px-6 py-5 shadow-subtle">
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-[0.3em] text-slate-400">PPC Candidates</p>
+              <h2 className="mt-2 text-lg font-semibold text-slate-900">Playwright candidate import</h2>
+              <p className="mt-1 text-sm text-slate-600">Imported {new Date(ppcCandidateSummary.importedAt).toLocaleString()}</p>
+            </div>
+
+            <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-700">
+                <p className="font-semibold text-slate-900">Cards found</p>
+                <p className="mt-1">{numberFormatter.format(ppcCandidateSummary.cardsFound)}</p>
+              </div>
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-700">
+                <p className="font-semibold text-slate-900">Matched ridings</p>
+                <p className="mt-1">{numberFormatter.format(ppcCandidateSummary.matchedDistricts)}</p>
+              </div>
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-700">
+                <p className="font-semibold text-slate-900">Politicians</p>
+                <p className="mt-1">Created {ppcCandidateSummary.politiciansCreated}, updated {ppcCandidateSummary.politiciansUpdated}</p>
+              </div>
+              <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-700">
+                <p className="font-semibold text-slate-900">Unmatched cards</p>
+                <p className="mt-1">{numberFormatter.format(ppcCandidateSummary.unmatchedCards)}</p>
+              </div>
+            </div>
+
+            <p className="text-sm text-slate-600">
+              Source: <a href={ppcCandidateSummary.sourceUrl} target="_blank" rel="noreferrer" className="font-semibold text-[var(--cc-primary)] hover:underline">{ppcCandidateSummary.sourceUrl}</a>
+            </p>
+
+            {ppcCandidateSummary.unmatchedSample.length ? (
+              <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-800">
+                <p className="font-semibold">Sample unmatched candidate cards</p>
+                <ul className="mt-3 space-y-2">
+                  {ppcCandidateSummary.unmatchedSample.map((item, index) => (
+                    <li key={`${item.displayName}-${item.ridingName}-${index}`}>
+                      {item.displayName} · {item.ridingName}, {item.provinceName} ({item.reason})
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
           </section>
         ) : null}
       </>

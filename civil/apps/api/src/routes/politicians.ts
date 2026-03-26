@@ -15,6 +15,7 @@ import { XMLParser } from 'fast-xml-parser'
 import { COMMUNITIES, PROVINCES, findCommunity, normalizeProvinceCode, slugifyCommunityName } from '@civil/shared'
 import { z } from 'zod'
 import { browseFederalPartyDistricts, resolveCommunityElectoralDistrictContext } from '../geospatial.js'
+import { scrapeAndSyncPpcCandidates, type PpcCandidateImportSummary } from '../politicianScrapers/ppc.js'
 
 type CommunityLookupRecord = (typeof COMMUNITIES)[number]
 
@@ -241,6 +242,13 @@ type FederalMemberDetailFetchSummary = {
   jobsRequeued: number
   jobsAlreadyQueued: number
   skippedMissingProfileUrl: number
+}
+
+type PpcCandidateProfileSummary = {
+  candidateWebsite: string | null
+  photoUrl: string | null
+  backgroundImageUrl: string | null
+  lastPpcSyncAt: string | null
 }
 
 type OurCommonsOfficeSummary = {
@@ -1693,6 +1701,35 @@ function readOurCommonsLinks(metadata: Prisma.JsonValue | null) {
   return { profileUrl, xmlUrl }
 }
 
+function readPpcCandidateProfile(metadata: Prisma.JsonValue | null): PpcCandidateProfileSummary {
+  if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) {
+    return {
+      candidateWebsite: null,
+      photoUrl: null,
+      backgroundImageUrl: null,
+      lastPpcSyncAt: null,
+    }
+  }
+
+  const ppc = (metadata as Record<string, unknown>).ppc
+  if (!ppc || typeof ppc !== 'object' || Array.isArray(ppc)) {
+    return {
+      candidateWebsite: null,
+      photoUrl: null,
+      backgroundImageUrl: null,
+      lastPpcSyncAt: null,
+    }
+  }
+
+  const record = ppc as Record<string, unknown>
+  return {
+    candidateWebsite: typeof record.candidateUrl === 'string' && record.candidateUrl.trim() ? record.candidateUrl.trim() : null,
+    photoUrl: typeof record.photoUrl === 'string' && record.photoUrl.trim() ? record.photoUrl.trim() : null,
+    backgroundImageUrl: typeof record.backgroundImageUrl === 'string' && record.backgroundImageUrl.trim() ? record.backgroundImageUrl.trim() : null,
+    lastPpcSyncAt: typeof record.lastScrapeAt === 'string' && record.lastScrapeAt.trim() ? record.lastScrapeAt.trim() : null,
+  }
+}
+
 function readAssociationRepresentative(metadata: Prisma.JsonValue | null): { displayName: string; roleLabel: string } | null {
   if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) return null
   const source = (metadata as Record<string, unknown>).source
@@ -1934,6 +1971,26 @@ export function registerPoliticianRoutes(app: FastifyInstance, deps: Politicians
       console.error('commons_federal_member_detail_fetch_failed', error)
       const detail = error instanceof Error ? error.message : String(error)
       return reply.code(500).send({ error: 'commons_federal_member_detail_fetch_failed', detail })
+    }
+  })
+
+  app.post('/admin/eda/federal-candidates/ppc/fetch', async (req: FastifyRequest, reply: FastifyReply) => {
+    const user = await deps.loadAdminUserOrReply(req, reply)
+    if (!user) return
+
+    try {
+      const readiness = await loadFederalDatasetStatsSafe()
+      if (!readiness.databaseReady) {
+        return reply.code(503).send({ error: 'political_tables_not_ready' })
+      }
+
+      const summary: PpcCandidateImportSummary = await scrapeAndSyncPpcCandidates()
+      const stats = await loadFederalDatasetStats()
+      return reply.send({ ok: true, summary, stats })
+    } catch (error) {
+      console.error('ppc_candidate_fetch_failed', error)
+      const detail = error instanceof Error ? error.message : String(error)
+      return reply.code(500).send({ error: 'ppc_candidate_fetch_failed', detail })
     }
   })
 
@@ -2217,6 +2274,7 @@ export function registerPoliticianRoutes(app: FastifyInstance, deps: Politicians
       slug: string
       displayName: string
       photoUrl: string | null
+      candidateWebsite: string | null
       roleLabel: string
     }>()
 
@@ -2276,10 +2334,13 @@ export function registerPoliticianRoutes(app: FastifyInstance, deps: Politicians
 
         politicians.forEach((politician: (typeof politicians)[number]) => {
           if (!politician.partyId || politiciansByPartyId.has(politician.partyId)) return
+          const ourCommons = readOurCommonsProfile(politician.metadata)
+          const ppcCandidate = readPpcCandidateProfile(politician.metadata)
           politiciansByPartyId.set(politician.partyId, {
             slug: politician.slug,
             displayName: politician.displayName,
-            photoUrl: readOurCommonsProfile(politician.metadata).photoUrl,
+            photoUrl: ourCommons.photoUrl ?? ppcCandidate.photoUrl,
+            candidateWebsite: ppcCandidate.candidateWebsite,
             roleLabel: '',
           })
         })
@@ -2341,6 +2402,7 @@ export function registerPoliticianRoutes(app: FastifyInstance, deps: Politicians
                     slug: null,
                     displayName: fallbackRepresentative.displayName,
                     photoUrl: null,
+                    candidateWebsite: null,
                     roleLabel: fallbackRepresentative.roleLabel,
                   }
                 : null,
@@ -2524,23 +2586,30 @@ export function registerPoliticianRoutes(app: FastifyInstance, deps: Politicians
         shortName: party.shortName,
         updatedAt: party.updatedAt.toISOString(),
       },
-      politicians: party.politicians.map((politician: (typeof party.politicians)[number]) => ({
-        id: politician.id,
-        slug: politician.slug,
-        displayName: politician.displayName,
-        officeType: politician.officeType,
-        provinceCode: politician.provinceCode,
-        communitySlug: politician.communitySlug,
-        lastScrapeAt: readLastScrapeAt(politician.metadata),
-        ...readOurCommonsProfile(politician.metadata),
-        district: politician.electoralDistrict
-          ? {
-              name: politician.electoralDistrict.name,
-              slug: politician.electoralDistrict.slug,
-              provinceCode: politician.electoralDistrict.provinceCode,
-            }
-          : null,
-      })),
+      politicians: party.politicians.map((politician: (typeof party.politicians)[number]) => {
+        const ourCommons = readOurCommonsProfile(politician.metadata)
+        const ppcCandidate = readPpcCandidateProfile(politician.metadata)
+
+        return {
+          id: politician.id,
+          slug: politician.slug,
+          displayName: politician.displayName,
+          officeType: politician.officeType,
+          provinceCode: politician.provinceCode,
+          communitySlug: politician.communitySlug,
+          lastScrapeAt: readLastScrapeAt(politician.metadata),
+          ...ourCommons,
+          photoUrl: ourCommons.photoUrl ?? ppcCandidate.photoUrl,
+          candidateWebsite: ppcCandidate.candidateWebsite,
+          district: politician.electoralDistrict
+            ? {
+                name: politician.electoralDistrict.name,
+                slug: politician.electoralDistrict.slug,
+                provinceCode: politician.electoralDistrict.provinceCode,
+              }
+            : null,
+        }
+      }),
       associations: party.associations.map((association: (typeof party.associations)[number]) => ({
         id: association.id,
         associationName: association.associationName,
@@ -2611,6 +2680,9 @@ export function registerPoliticianRoutes(app: FastifyInstance, deps: Politicians
 
     if (!politician) return reply.code(404).send({ error: 'politician_not_found' })
 
+    const ourCommons = readOurCommonsProfile(politician.metadata)
+    const ppcCandidate = readPpcCandidateProfile(politician.metadata)
+
     return reply.send({
       politician: {
         id: politician.id,
@@ -2622,7 +2694,9 @@ export function registerPoliticianRoutes(app: FastifyInstance, deps: Politicians
         provinceCode: politician.provinceCode,
         communitySlug: politician.communitySlug,
         lastScrapeAt: readLastScrapeAt(politician.metadata),
-        ...readOurCommonsProfile(politician.metadata),
+        ...ourCommons,
+        photoUrl: ourCommons.photoUrl ?? ppcCandidate.photoUrl,
+        candidateWebsite: ppcCandidate.candidateWebsite,
         party: politician.party,
         district: politician.electoralDistrict
           ? {

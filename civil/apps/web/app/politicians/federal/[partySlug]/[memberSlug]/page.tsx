@@ -27,6 +27,7 @@ type FederalMemberResponse = {
     profileUrl: string | null
     xmlUrl: string | null
     photoUrl: string | null
+    candidateWebsite: string | null
     lastXmlSyncAt: string | null
     lastHtmlSyncAt: string | null
     contact: {
@@ -119,6 +120,7 @@ export default function FederalMemberPage({ params }: PageProps) {
               xmlUrl={politician.xmlUrl}
               email={politician.contact.email}
               website={politician.contact.website}
+              candidateWebsite={politician.candidateWebsite}
               hillOffice={politician.contact.hillOffice}
               constituencyOffices={politician.contact.constituencyOffices}
             />

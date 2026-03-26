@@ -37,6 +37,7 @@ type FederalPartyDetailResponse = {
     profileUrl: string | null
     xmlUrl: string | null
     photoUrl: string | null
+    candidateWebsite: string | null
     lastXmlSyncAt: string | null
     lastHtmlSyncAt: string | null
     contact: {
@@ -580,11 +581,12 @@ export default function FederalPartyPage({ params }: PageProps) {
                 <PoliticianContactCard
                   displayName={politician.displayName}
                   partyName={payload?.party?.shortName ?? payload?.party?.name ?? null}
-                  officeType={politician.officeType}
+                  officeType={politician.candidateWebsite && !politician.profileUrl ? 'Candidate' : politician.officeType}
                   districtName={politician.district?.name ?? (politician.provinceCode && politician.communitySlug ? `${politician.provinceCode.toUpperCase()} · ${politician.communitySlug}` : null)}
                   photoUrl={politician.photoUrl}
                   profileUrl={politician.profileUrl}
                   xmlUrl={politician.xmlUrl}
+                  candidateWebsite={politician.candidateWebsite}
                   communityHref={politician.district ? `/${encodeURIComponent(politician.district.provinceCode.toLowerCase())}/${encodeURIComponent(politician.district.slug)}` : null}
                   email={politician.contact.email}
                   website={politician.contact.website}
