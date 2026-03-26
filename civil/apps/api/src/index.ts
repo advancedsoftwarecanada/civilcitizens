@@ -11470,7 +11470,7 @@ const CreateJobBody = z.object({
   location: JobLocationInput,
   industryId: z.string().trim().min(3),
   subIndustryId: z.string().trim().min(3).optional().nullable(),
-  expiresAt: z.string().datetime(),
+  expiresAt: z.string().datetime().optional().nullable(),
   publish: z.boolean().default(true),
 })
 
@@ -11488,7 +11488,7 @@ const UpdateJobBody = z.object({
   location: JobLocationInput,
   industryId: z.string().trim().min(3),
   subIndustryId: z.string().trim().min(3).optional().nullable(),
-  expiresAt: z.string().datetime(),
+  expiresAt: z.string().datetime().optional().nullable(),
 })
 
 const ApplyJobBody = z.object({
@@ -11904,7 +11904,6 @@ async function loadFeedActivityJobs(args: {
 }) {
   if (!args.communityKeys.length && !args.organizationIds.length) return []
 
-  const now = new Date()
   const communityPairs = args.communityKeys
     .map((key) => {
       const [provinceCode, communitySlug] = key.split(':')
@@ -11984,7 +11983,6 @@ async function loadFeedActivityJobs(args: {
     where: {
       status: 'active',
       publishedAt: { not: null },
-      expiresAt: { gt: now },
       OR: whereOr,
     },
     orderBy: [{ publishedAt: 'desc' }, { createdAt: 'desc' }],

@@ -90,7 +90,6 @@ function formatCad(value: number) {
   return new Intl.NumberFormat('en-CA', { style: 'currency', currency: 'CAD', maximumFractionDigits: 0 }).format(value)
 }
 
-const EXPIRY_OPTIONS = [7, 14, 21, 30] as const
 const ACCEPTED_IMAGE_TYPES = 'image/jpeg,image/png,image/webp,image/avif,image/heic,image/heif'
 const ACCEPTED_IMAGE_TYPE_LIST = ACCEPTED_IMAGE_TYPES.split(',')
 const PHOTO_MAX_BYTES = 25 * 1024 * 1024
@@ -200,6 +199,7 @@ export default function OrganizationJobEditorClient({
   const [photoUploading, setPhotoUploading] = useState(false)
   const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false)
   const [confirmBoostOpen, setConfirmBoostOpen] = useState(false)
+  const [walletTopUpOpen, setWalletTopUpOpen] = useState(false)
 
   const [draftId, setDraftId] = useState<string | null>(jobId ?? null)
   const [status, setStatus] = useState<'draft' | 'active' | 'closed' | 'expired'>('draft')
@@ -218,7 +218,6 @@ export default function OrganizationJobEditorClient({
   const [industryId, setIndustryId] = useState('')
   const [subIndustryId, setSubIndustryId] = useState('')
   const [descriptionHtml, setDescriptionHtml] = useState('')
-  const [expiresDays, setExpiresDays] = useState('30')
   const [locationQuery, setLocationQuery] = useState('')
   const defaultCommunityLocation = useMemo(
     () => `community:${province.toUpperCase()}:${municipality.toLowerCase()}|${municipality.replace(/-/g, ' ')}`,
@@ -339,12 +338,6 @@ export default function OrganizationJobEditorClient({
           activePromotion: Boolean(job.marketing?.activePromotion),
           impressionCap: Number(job.marketing?.impressionCap ?? 1000) || 1000,
         })
-
-        const now = Date.now()
-        const expiresMs = new Date(job.expiresAt).getTime()
-        const days = Math.max(1, Math.min(30, Math.round((expiresMs - now) / (24 * 60 * 60 * 1000))))
-        const nearest = EXPIRY_OPTIONS.reduce((closest, option) => (Math.abs(option - days) < Math.abs(closest - days) ? option : closest), EXPIRY_OPTIONS[0])
-        setExpiresDays(String(nearest))
       } catch {
         pushToast('Unable to load job draft.', 'error')
       } finally {
@@ -647,9 +640,6 @@ export default function OrganizationJobEditorClient({
       return
     }
 
-    const days = Math.max(1, Math.min(30, Number(expiresDays) || 30))
-    const expiresAt = new Date(Date.now() + days * 24 * 60 * 60 * 1000).toISOString()
-
     setSaving(true)
     try {
       const res = await fetch(
@@ -675,7 +665,6 @@ export default function OrganizationJobEditorClient({
             location: locationValue,
             industryId,
             subIndustryId: subIndustryId || null,
-            expiresAt,
           }),
         },
       )
@@ -696,7 +685,6 @@ export default function OrganizationJobEditorClient({
     draftId,
     engagementType,
     hourlyRate,
-    expiresDays,
     industryId,
     loadJob,
     locationValue,
@@ -779,10 +767,15 @@ export default function OrganizationJobEditorClient({
       )
       const payload = (await res.json().catch(() => null)) as { error?: unknown; alreadyActive?: boolean } | null
       if (!res.ok) {
+        if (payload?.error === 'wallet_required' || payload?.error === 'insufficient_wallet_balance') {
+          setConfirmBoostOpen(false)
+          setWalletTopUpOpen(true)
+          return
+        }
         pushToast(resolveApiErrorMessage(payload?.error, 'Unable to start boost.'), 'error')
         return
       }
-      pushToast(payload?.alreadyActive ? 'Boost is already active.' : 'Boost started. Civil Promotions are free for a limited time ($0.00).', 'success')
+      pushToast(payload?.alreadyActive ? 'Boost is already active.' : 'Boost started. $10.00 was charged from your Civil Wallet.', 'success')
       setConfirmBoostOpen(false)
       await loadJob(draftId)
     } catch {
@@ -869,21 +862,6 @@ export default function OrganizationJobEditorClient({
       <section className="rounded-2xl border border-slate-200 bg-white p-4">
         <h3 className="text-sm font-semibold text-slate-900">Marketing</h3>
         <div className="mt-3 grid gap-3 md:grid-cols-2">
-          <label className="grid max-w-xs gap-1 text-xs font-semibold text-slate-700">
-            Expires in days
-            <select
-              value={expiresDays}
-              onChange={(event) => setExpiresDays(event.target.value)}
-              className="rounded-xl border border-slate-200 px-3 py-2 text-sm"
-            >
-              {EXPIRY_OPTIONS.map((option) => (
-                <option key={`expires-${option}`} value={String(option)}>
-                  {option} days
-                </option>
-              ))}
-            </select>
-          </label>
-
           <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-700">
             <p className="font-semibold text-slate-800">Stats</p>
             <p className="mt-1">- {marketingStats.impressions.toLocaleString()} impressions</p>
@@ -1221,8 +1199,7 @@ export default function OrganizationJobEditorClient({
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4">
           <div className="w-full max-w-md rounded-2xl border border-slate-200 bg-white p-5 shadow-xl">
             <h3 className="text-base font-semibold text-slate-900">Confirm boost purchase</h3>
-            <p className="mt-2 text-sm text-slate-600">Boost this job for 1,000 impressions.</p>
-            <p className="mt-2 rounded-xl border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-700">Civil Promotions are free for a limited time only, $0.00</p>
+            <p className="mt-2 text-sm text-slate-600">Boost this job for 1,000 impressions and charge $10.00 to your Civil Wallet.</p>
             <div className="mt-4 flex justify-end gap-2">
               <button
                 type="button"
@@ -1239,6 +1216,34 @@ export default function OrganizationJobEditorClient({
                 className="inline-flex items-center justify-center rounded-full bg-violet-600 px-4 py-2 text-sm font-semibold text-white hover:bg-violet-500 disabled:opacity-60"
               >
                 {boosting ? 'Processing…' : 'Confirm boost'}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {walletTopUpOpen ? (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 p-4">
+          <div className="w-full max-w-md rounded-2xl border border-slate-200 bg-white p-5 shadow-xl">
+            <h3 className="text-base font-semibold text-slate-900">Top up your Civil Wallet</h3>
+            <p className="mt-2 text-sm text-slate-600">You need at least $10.00 in your Civil Wallet to boost this job.</p>
+            <div className="mt-4 flex justify-end gap-2">
+              <button
+                type="button"
+                onClick={() => setWalletTopUpOpen(false)}
+                className="inline-flex items-center justify-center rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setWalletTopUpOpen(false)
+                  router.push('/wallet')
+                }}
+                className="inline-flex items-center justify-center rounded-full border border-[var(--cc-primary)] bg-[var(--cc-primary)] px-4 py-2 text-sm font-semibold text-white hover:opacity-90"
+              >
+                View Wallet
               </button>
             </div>
           </div>

@@ -18,7 +18,6 @@ type JobItem = {
   duties: string
   location: string
   applicantCount: number
-  expiresAt: string
   industry: {
     name: string
     subIndustry: { name: string; slug: string } | null
@@ -275,7 +274,6 @@ export default function OrganizationJobDetailClient({
         <div className="flex flex-wrap gap-2 text-xs text-slate-600">
           <span className="rounded-full border border-slate-200 px-2 py-0.5">{parseLocationLabel(job.location)}</span>
           <span className="rounded-full border border-slate-200 px-2 py-0.5">{job.applicantCount} applicants</span>
-          <span className="rounded-full border border-slate-200 px-2 py-0.5">Closes {new Date(job.expiresAt).toLocaleDateString()}</span>
         </div>
 
         <section>

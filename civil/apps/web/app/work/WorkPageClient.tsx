@@ -29,7 +29,6 @@ type JobItem = {
   location: string
   applicantCount: number
   publishedAt: string | null
-  expiresAt: string
   sponsored: boolean
   industry: {
     name: string
@@ -320,7 +319,6 @@ export default function WorkPageClient() {
           <section className="rounded-3xl border border-amber-200 bg-amber-50/70 p-4 sm:p-5">
             <div className="mb-3 flex items-center justify-between">
               <h2 className="text-lg font-semibold text-amber-900">Sponsored Job Posts</h2>
-              <span className="text-xs font-semibold uppercase tracking-wide text-amber-700">$0 Limited time bonus</span>
             </div>
             <div className="space-y-3">
               {sponsoredJobs.map((job) => (

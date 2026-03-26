@@ -13,7 +13,6 @@ type JobItem = {
   title: string
   status: 'draft' | 'active' | 'closed' | 'expired'
   applicantCount: number
-  expiresAt: string
   industry: {
     name: string
     subIndustry: { name: string; slug: string } | null
@@ -226,10 +225,14 @@ export default function OrganizationJobsManageClient({
         )
         const payload = (await res.json().catch(() => null)) as { error?: string; alreadyActive?: boolean } | null
         if (!res.ok) {
+          if (payload?.error === 'wallet_required' || payload?.error === 'insufficient_wallet_balance') {
+            pushToast('Top up your Civil Wallet to boost this job.', 'error')
+            return
+          }
           pushToast(payload?.error ?? 'Unable to promote job.', 'error')
           return
         }
-        pushToast(payload?.alreadyActive ? 'Promotion is already active.' : 'Promotion started for 7 days / 1000 impressions.', 'success')
+        pushToast(payload?.alreadyActive ? 'Promotion is already active.' : 'Promotion started. $10.00 was charged from your Civil Wallet.', 'success')
       } catch {
         pushToast('Unable to promote job.', 'error')
       }
@@ -312,7 +315,7 @@ export default function OrganizationJobsManageClient({
                 <div>
                   <h4 className="text-sm font-semibold text-slate-900">{job.title}</h4>
                   <p className="text-xs text-slate-600">{job.industry.name}{job.industry.subIndustry ? ` • ${job.industry.subIndustry.name}` : ''}</p>
-                  <p className="text-xs text-slate-600">Status: {statusLabel(job.status)} • {job.applicantCount} applicants • closes {new Date(job.expiresAt).toLocaleDateString()}</p>
+                  <p className="text-xs text-slate-600">Status: {statusLabel(job.status)} • {job.applicantCount} applicants</p>
                 </div>
                 <div className="flex flex-wrap gap-2">
                   <Link
@@ -335,7 +338,7 @@ export default function OrganizationJobsManageClient({
                       className="rounded-full border border-amber-300 bg-amber-50 px-3 py-1 text-xs font-semibold text-amber-800"
                       onClick={() => void promoteJob(job.id)}
                     >
-                      Promote ($0 bonus)
+                      Promote ($10)
                     </button>
                   ) : null}
                 </div>

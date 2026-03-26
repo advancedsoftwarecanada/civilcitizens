@@ -3,8 +3,14 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 import sanitizeHtml from 'sanitize-html'
 import { prisma } from '@civil/db'
 import { BusinessRole, MessageParticipantRole, MessageThreadType, Prisma } from '@prisma/client'
+import { buildWalletMetaValue, ensureCitizenWalletTables, insertCivilCreditLedgerEntry, readBaseJsonObject, readWalletSummary } from '../walletHelpers.js'
 
 type JobRouteDeps = Record<string, any>
+
+const OPEN_ENDED_JOB_EXPIRES_AT = new Date('2100-01-01T00:00:00.000Z')
+const JOB_BOOST_COST_CENTS = 1000
+const JOB_BOOST_IMPRESSION_CAP = 1000
+const JOB_BOOST_DURATION_DAYS = 7
 
 export function registerJobRoutes(app: FastifyInstance, deps: JobRouteDeps) {
   app.get('/feed/activity', async (req: FastifyRequest, reply: FastifyReply) =>
@@ -60,11 +66,6 @@ export function registerJobRoutes(app: FastifyInstance, deps: JobRouteDeps) {
       if (!query.success) return reply.code(400).send({ error: query.error.flatten() })
 
       const now = new Date()
-      await prisma.$executeRaw`
-        UPDATE "JobPosting"
-        SET "status" = 'expired'::"JobStatus", "updatedAt" = NOW()
-        WHERE "status" = 'active'::"JobStatus" AND "expiresAt" <= ${now}
-      `
 
       await prisma.$executeRaw`
         UPDATE "JobPromotion"
@@ -127,7 +128,6 @@ export function registerJobRoutes(app: FastifyInstance, deps: JobRouteDeps) {
         LEFT JOIN "JobSubIndustry" jsi ON jsi."id" = jp."subIndustryId"
         WHERE jp."status" = 'active'::"JobStatus"
           AND jp."publishedAt" IS NOT NULL
-          AND jp."expiresAt" > ${now}
           ${query.data.q ? Prisma.sql`AND (jp."title" ILIKE ${`%${query.data.q}%`} OR jp."description" ILIKE ${`%${query.data.q}%`})` : Prisma.empty}
           ${query.data.provinceCode ? Prisma.sql`AND jp."locationProvinceCode" = ${query.data.provinceCode.toUpperCase()}` : Prisma.empty}
           ${query.data.communitySlug ? Prisma.sql`AND jp."locationCommunitySlug" = ${query.data.communitySlug.toLowerCase()}` : Prisma.empty}
@@ -286,7 +286,7 @@ export function registerJobRoutes(app: FastifyInstance, deps: JobRouteDeps) {
           JOIN "JobIndustry" ji ON ji."id" = jp."industryId"
           LEFT JOIN "JobSubIndustry" jsi ON jsi."id" = jp."subIndustryId"
           WHERE jp."businessId" = ${org.id}
-          ${includeDraftsRequested && canManage ? Prisma.empty : Prisma.sql`AND jp."status" = 'active'::"JobStatus" AND jp."publishedAt" IS NOT NULL AND jp."expiresAt" > ${now}`}
+          ${includeDraftsRequested && canManage ? Prisma.empty : Prisma.sql`AND jp."status" = 'active'::"JobStatus" AND jp."publishedAt" IS NOT NULL`}
           ORDER BY jp."createdAt" DESC
           LIMIT ${query.data.limit}
         `)) as any[]
@@ -328,7 +328,7 @@ export function registerJobRoutes(app: FastifyInstance, deps: JobRouteDeps) {
         JOIN "JobIndustry" ji ON ji."id" = jp."industryId"
         LEFT JOIN "JobSubIndustry" jsi ON jsi."id" = jp."subIndustryId"
         WHERE jp."businessId" = ${org.id}
-        ${includeDraftsRequested && canManage ? Prisma.empty : Prisma.sql`AND jp."status" = 'active'::"JobStatus" AND jp."publishedAt" IS NOT NULL AND jp."expiresAt" > ${now}`}
+        ${includeDraftsRequested && canManage ? Prisma.empty : Prisma.sql`AND jp."status" = 'active'::"JobStatus" AND jp."publishedAt" IS NOT NULL`}
         ORDER BY jp."createdAt" DESC
         LIMIT ${query.data.limit}
       `)) as any[]
@@ -354,7 +354,6 @@ export function registerJobRoutes(app: FastifyInstance, deps: JobRouteDeps) {
       const industryId = industryRows[0]?.id
       if (!industryId) return reply.code(400).send({ error: 'industry_required' })
       const now = new Date()
-      const expiresAt = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000)
       const inserted = (await prisma.$queryRaw(Prisma.sql`
         INSERT INTO "JobPosting" (
           "id", "businessId", "createdByUserId", "title", "slug", "employmentType", "salaryCurrency", "duties", "roleRequirements", "description",
@@ -362,7 +361,7 @@ export function registerJobRoutes(app: FastifyInstance, deps: JobRouteDeps) {
         ) VALUES (
           ${randomUUID()}, ${orgResult.org.id}, ${userId}, 'Untitled job', ${`draft-${deps.randomSlugSuffix()}`}, 'full_time'::"JobEmploymentType",
           'CAD', '<p>Describe responsibilities.</p>', '<p>Describe requirements.</p>', null,
-          'community'::"JobWorkplaceType", null, null, ${params.data.municipality.replace(/-/g, ' ')}, ${industryId}, 'draft'::"JobStatus", null, ${expiresAt}, ${now}, ${now}
+          'community'::"JobWorkplaceType", null, null, ${params.data.municipality.replace(/-/g, ' ')}, ${industryId}, 'draft'::"JobStatus", null, ${OPEN_ENDED_JOB_EXPIRES_AT}, ${now}, ${now}
         ) RETURNING "id"
       `)) as Array<{ id: string }>
       const jobId = inserted[0]?.id
@@ -426,10 +425,6 @@ export function registerJobRoutes(app: FastifyInstance, deps: JobRouteDeps) {
         return reply.code(404).send({ error: orgResult.error })
       }
       const now = new Date()
-      const expiresAt = new Date(body.data.expiresAt)
-      const maxExpiresAt = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000)
-      if (Number.isNaN(expiresAt.getTime()) || expiresAt <= now) return reply.code(400).send({ error: 'invalid_expiry' })
-      if (expiresAt > maxExpiresAt) return reply.code(400).send({ error: 'expiry_exceeds_30_days' })
       const industry = await prisma.$queryRaw<Array<{ id: string }>>`SELECT "id" FROM "JobIndustry" WHERE "id" = ${body.data.industryId} AND "active" = true LIMIT 1`
       if (!industry.length) return reply.code(400).send({ error: 'invalid_industry' })
       if (body.data.subIndustryId) {
@@ -445,7 +440,7 @@ export function registerJobRoutes(app: FastifyInstance, deps: JobRouteDeps) {
           "salaryMax" = ${body.data.salaryMax ?? null}, "salaryCurrency" = ${body.data.salaryCurrency.toUpperCase()}, "salaryPeriod" = ${body.data.salaryPeriod ?? null},
           "duties" = ${normalizedDescription}, "roleRequirements" = ${normalizedRoleRequirements}, "description" = ${normalizedDescription}, "photoUrl" = ${body.data.photoUrl?.trim() ?? null},
           "locationType" = ${location.locationType}::"JobWorkplaceType", "locationProvinceCode" = ${location.locationProvinceCode}, "locationCommunitySlug" = ${location.locationCommunitySlug}, "locationLabel" = ${location.locationLabel},
-          "industryId" = ${body.data.industryId}, "subIndustryId" = ${body.data.subIndustryId ?? null}, "expiresAt" = ${expiresAt}, "updatedAt" = ${now}
+          "industryId" = ${body.data.industryId}, "subIndustryId" = ${body.data.subIndustryId ?? null}, "expiresAt" = ${OPEN_ENDED_JOB_EXPIRES_AT}, "updatedAt" = ${now}
         WHERE "id" = ${params.data.jobId} AND "businessId" = ${orgResult.org.id}
       `
       if (!updated) return reply.code(404).send({ error: 'job_not_found' })
@@ -467,7 +462,7 @@ export function registerJobRoutes(app: FastifyInstance, deps: JobRouteDeps) {
       const now = new Date()
       const updated = await prisma.$executeRaw`
         UPDATE "JobPosting"
-        SET "status" = 'active'::"JobStatus", "publishedAt" = COALESCE("publishedAt", ${now}), "updatedAt" = ${now}
+        SET "status" = 'active'::"JobStatus", "publishedAt" = COALESCE("publishedAt", ${now}), "expiresAt" = ${OPEN_ENDED_JOB_EXPIRES_AT}, "updatedAt" = ${now}
         WHERE "id" = ${params.data.jobId} AND "businessId" = ${orgResult.org.id}
       `
       if (!updated) return reply.code(404).send({ error: 'job_not_found' })
@@ -529,10 +524,6 @@ export function registerJobRoutes(app: FastifyInstance, deps: JobRouteDeps) {
         return reply.code(400).send({ error: orgResult.error })
       }
       const now = new Date()
-      const expiresAt = new Date(body.data.expiresAt)
-      const maxExpiresAt = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000)
-      if (Number.isNaN(expiresAt.getTime()) || expiresAt <= now) return reply.code(400).send({ error: 'invalid_expiry' })
-      if (expiresAt > maxExpiresAt) return reply.code(400).send({ error: 'expiry_exceeds_30_days' })
       const industry = await prisma.$queryRaw<Array<{ id: string }>>`SELECT "id" FROM "JobIndustry" WHERE "id" = ${body.data.industryId} AND "active" = true LIMIT 1`
       if (!industry.length) return reply.code(400).send({ error: 'invalid_industry' })
       if (body.data.subIndustryId) {
@@ -559,7 +550,7 @@ export function registerJobRoutes(app: FastifyInstance, deps: JobRouteDeps) {
           ${randomUUID()}, ${orgResult.org.id}, ${userId}, ${body.data.title.trim()}, ${slug}, ${body.data.employmentType}::"JobEmploymentType",
           ${body.data.salaryMin ?? null}, ${body.data.salaryMax ?? null}, ${body.data.salaryCurrency.toUpperCase()}, ${body.data.salaryPeriod ?? null}, ${normalizedDescription}, ${normalizedRoleRequirements}, ${normalizedDescription},
           ${location.locationType}::"JobWorkplaceType", ${location.locationProvinceCode}, ${location.locationCommunitySlug}, ${location.locationLabel}, ${body.data.industryId}, ${body.data.subIndustryId ?? null},
-          ${body.data.publish ? Prisma.sql`'active'::"JobStatus"` : Prisma.sql`'draft'::"JobStatus"`}, ${body.data.publish ? now : null}, ${expiresAt}, ${now}, ${now}
+          ${body.data.publish ? Prisma.sql`'active'::"JobStatus"` : Prisma.sql`'draft'::"JobStatus"`}, ${body.data.publish ? now : null}, ${OPEN_ENDED_JOB_EXPIRES_AT}, ${now}, ${now}
         ) RETURNING "id"
       `)) as Array<{ id: string }>
       const createdJobId = inserted[0]?.id
@@ -582,18 +573,17 @@ export function registerJobRoutes(app: FastifyInstance, deps: JobRouteDeps) {
       if (!params.success) return reply.code(400).send({ error: 'invalid_params' })
       const body = deps.ApplyJobBody.safeParse(req.body ?? {})
       if (!body.success) return reply.code(400).send({ error: body.error.flatten() })
-      const now = new Date()
       const motivationHtml = sanitizeHtml(body.data.motivationHtml, {
         allowedTags: sanitizeHtml.defaults.allowedTags.concat(['h1', 'h2', 'h3', 'img']),
         allowedAttributes: { ...sanitizeHtml.defaults.allowedAttributes, a: ['href', 'name', 'target', 'rel'], img: ['src', 'alt'] },
       }).trim()
       if (!motivationHtml) return reply.code(400).send({ error: 'motivation_required' })
-      const jobRows = await prisma.$queryRaw<Array<{ id: string; businessId: string; title: string; status: string; expiresAt: Date }>>`
-        SELECT "id", "businessId", "title", "status", "expiresAt" FROM "JobPosting" WHERE "id" = ${params.data.jobId} AND "status" = 'active'::"JobStatus" LIMIT 1
+      const jobRows = await prisma.$queryRaw<Array<{ id: string; businessId: string; title: string }>>`
+        SELECT "id", "businessId", "title" FROM "JobPosting" WHERE "id" = ${params.data.jobId} AND "status" = 'active'::"JobStatus" LIMIT 1
       `
       const job = jobRows[0]
       if (!job) return reply.code(404).send({ error: 'job_not_found' })
-      if (job.status !== 'active' || new Date(job.expiresAt).getTime() <= now.getTime()) return reply.code(400).send({ error: 'job_not_open' })
+      const now = new Date()
       const existing = await prisma.$queryRaw<Array<{ id: string }>>`SELECT "id" FROM "JobApplication" WHERE "jobPostingId" = ${job.id} AND "applicantUserId" = ${userId} LIMIT 1`
       if (existing.length) return reply.code(409).send({ error: 'already_applied' })
       const thread = await prisma.messageThread.create({
@@ -733,17 +723,186 @@ export function registerJobRoutes(app: FastifyInstance, deps: JobRouteDeps) {
         LIMIT 1
       `
       if (active.length) return reply.send({ ok: true, promotionId: active[0].id, alreadyActive: true })
-      const endsAt = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000)
-      const inserted = (await prisma.$queryRaw(Prisma.sql`
-        INSERT INTO "JobPromotion" ("id", "jobPostingId", "createdByUserId", "status", "label", "startsAt", "endsAt", "impressionCap", "impressionsServed", "createdAt", "updatedAt")
-        SELECT ${randomUUID()}, jp."id", ${userId}, 'active'::"JobPromotionStatus", '$0 Limited time bonus', ${now}, ${endsAt}, 1000, 0, ${now}, ${now}
-        FROM "JobPosting" jp
-        WHERE jp."id" = ${params.data.jobId} AND jp."businessId" = ${orgResult.org.id} AND jp."status" = 'active'::"JobStatus" AND jp."expiresAt" > ${now}
-        RETURNING "id"
-      `)) as Array<{ id: string }>
-      const promotionId = inserted[0]?.id
+      await ensureCitizenWalletTables()
+
+      let promotionId: string | null = null
+      let alreadyActive = false
+      const endsAt = new Date(now.getTime() + JOB_BOOST_DURATION_DAYS * 24 * 60 * 60 * 1000)
+
+      try {
+        await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+          const [freshUser, freshJob, freshActive] = await Promise.all([
+            tx.user.findUnique({
+              where: { id: userId },
+              select: { id: true, handle: true, name: true, communityMeta: true },
+            }),
+            tx.$queryRaw<Array<{ id: string; businessId: string; title: string }>>`
+              SELECT "id", "businessId", "title"
+              FROM "JobPosting"
+              WHERE "id" = ${params.data.jobId} AND "businessId" = ${orgResult.org.id} AND "status" = 'active'::"JobStatus"
+              LIMIT 1
+            `,
+            tx.$queryRaw<Array<{ id: string }>>`
+              SELECT "id"
+              FROM "JobPromotion"
+              WHERE "jobPostingId" = ${params.data.jobId}
+                AND "status" = 'active'::"JobPromotionStatus"
+                AND "startsAt" <= ${now}
+                AND "endsAt" > ${now}
+                AND "impressionsServed" < "impressionCap"
+              LIMIT 1
+            `,
+          ])
+
+          if (!freshUser) throw new Error('user_not_found')
+          const job = freshJob[0]
+          if (!job) throw new Error('job_not_promotable')
+          if (freshActive.length) {
+            alreadyActive = true
+            promotionId = freshActive[0]?.id ?? null
+            return
+          }
+
+          const wallet = readWalletSummary(freshUser.communityMeta ?? null)
+          if (!wallet.enabled) throw new Error('wallet_required')
+          if (wallet.civilCreditsCents < JOB_BOOST_COST_CENTS) throw new Error('insufficient_wallet_balance')
+
+          const userMeta = readBaseJsonObject(freshUser.communityMeta)
+          userMeta.wallet = buildWalletMetaValue({
+            ...wallet,
+            civilCreditsCents: wallet.civilCreditsCents - JOB_BOOST_COST_CENTS,
+          })
+
+          const walletTransactionId = `job-boost:${params.data.jobId}:${randomUUID()}`
+          const ledgerEventId = walletTransactionId
+
+          await tx.user.update({
+            where: { id: freshUser.id },
+            data: { communityMeta: userMeta as Prisma.InputJsonValue },
+          })
+
+          await tx.$executeRaw`
+            INSERT INTO citizen_wallet_transaction (
+              id,
+              kind,
+              status,
+              user_id,
+              counterparty_user_id,
+              amount_cents,
+              currency,
+              metadata,
+              created_at,
+              updated_at
+            )
+            VALUES (
+              ${walletTransactionId},
+              ${'job_boost'},
+              ${'completed'},
+              ${freshUser.id},
+              null,
+              ${JOB_BOOST_COST_CENTS},
+              ${'cad'},
+              ${JSON.stringify({
+                kind: 'job_boost',
+                jobPostingId: job.id,
+                businessId: job.businessId,
+                impressionCap: JOB_BOOST_IMPRESSION_CAP,
+                endsAt: endsAt.toISOString(),
+              })}::jsonb,
+              NOW(),
+              NOW()
+            )
+          `
+
+          await insertCivilCreditLedgerEntry(tx, {
+            id: `${walletTransactionId}:ledger`,
+            eventId: ledgerEventId,
+            entryType: 'transfer',
+            status: 'completed',
+            amountCents: JOB_BOOST_COST_CENTS,
+            currency: 'cad',
+            from: {
+              entityType: 'user_wallet',
+              userId: freshUser.id,
+              handle: freshUser.handle ?? null,
+              name: freshUser.name ?? null,
+              entityLabel: 'Civil Wallet',
+            },
+            to: {
+              entityType: 'platform_wallet',
+              entityLabel: 'Civil Job Boosts',
+            },
+            sourceType: 'job_boost',
+            sourceReferenceId: job.id,
+            description: `Boost for job: ${job.title}`,
+            metadata: {
+              kind: 'job_boost',
+              jobPostingId: job.id,
+              businessId: job.businessId,
+              impressionCap: JOB_BOOST_IMPRESSION_CAP,
+              endsAt: endsAt.toISOString(),
+            },
+          })
+
+          const inserted = (await tx.$queryRaw(Prisma.sql`
+            INSERT INTO "JobPromotion" (
+              "id",
+              "jobPostingId",
+              "createdByUserId",
+              "status",
+              "label",
+              "startsAt",
+              "endsAt",
+              "impressionCap",
+              "impressionsServed",
+              "createdAt",
+              "updatedAt"
+            )
+            VALUES (
+              ${randomUUID()},
+              ${job.id},
+              ${freshUser.id},
+              'active'::"JobPromotionStatus",
+              '$10 Civil Wallet boost',
+              ${now},
+              ${endsAt},
+              ${JOB_BOOST_IMPRESSION_CAP},
+              0,
+              ${now},
+              ${now}
+            )
+            RETURNING "id"
+          `)) as Array<{ id: string }>
+
+          promotionId = inserted[0]?.id ?? null
+          if (!promotionId) throw new Error('job_not_promotable')
+        })
+      } catch (error) {
+        if (error instanceof Error) {
+          if (error.message === 'wallet_required') {
+            return reply.code(400).send({ error: 'wallet_required', requiredAmountCents: JOB_BOOST_COST_CENTS })
+          }
+          if (error.message === 'insufficient_wallet_balance') {
+            const currentUser = await prisma.user.findUnique({
+              where: { id: userId },
+              select: { communityMeta: true },
+            })
+            const wallet = readWalletSummary(currentUser?.communityMeta ?? null)
+            return reply.code(400).send({
+              error: 'insufficient_wallet_balance',
+              availableCreditsCents: wallet.civilCreditsCents,
+              requiredAmountCents: JOB_BOOST_COST_CENTS,
+            })
+          }
+          if (error.message === 'job_not_promotable') return reply.code(400).send({ error: 'job_not_promotable' })
+          if (error.message === 'user_not_found') return reply.code(404).send({ error: 'user_not_found' })
+        }
+        throw error
+      }
+
+      if (alreadyActive && promotionId) return reply.send({ ok: true, promotionId, alreadyActive: true })
       if (!promotionId) return reply.code(400).send({ error: 'job_not_promotable' })
-      return reply.code(201).send({ ok: true, promotionId, endsAt: endsAt.toISOString(), impressionCap: 1000 })
+      return reply.code(201).send({ ok: true, promotionId, endsAt: endsAt.toISOString(), impressionCap: JOB_BOOST_IMPRESSION_CAP })
     }),
   )
 
