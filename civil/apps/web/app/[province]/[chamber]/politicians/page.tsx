@@ -76,6 +76,7 @@ type CommunityPoliticiansResponse = {
         slug: string | null
         displayName: string
         photoUrl: string | null
+        candidateWebsite: string | null
         roleLabel: string | null
       } | null
     }>
@@ -243,6 +244,17 @@ export default function CommunityPoliticiansPage({ params }: PageProps) {
                           >
                             View Profile
                           </Link>
+                        ) : null}
+
+                        {association.registeredMember.candidateWebsite ? (
+                          <a
+                            href={association.registeredMember.candidateWebsite}
+                            target="_blank"
+                            rel="noreferrer"
+                            className="inline-flex items-center rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:border-slate-300"
+                          >
+                            Candidate Website
+                          </a>
                         ) : null}
                       </div>
                     ) : null}

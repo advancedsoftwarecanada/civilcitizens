@@ -124,10 +124,25 @@ function trimTrailingSlash(value: string) {
 
 function readPoliticianPhotoUrl(metadata: unknown) {
   if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) return null
-  const ourCommons = (metadata as Record<string, unknown>).ourCommons
-  if (!ourCommons || typeof ourCommons !== 'object' || Array.isArray(ourCommons)) return null
-  const photoUrl = (ourCommons as Record<string, unknown>).photoUrl
-  return typeof photoUrl === 'string' && photoUrl.trim() ? photoUrl.trim() : null
+  const record = metadata as Record<string, unknown>
+
+  const ourCommons = record.ourCommons
+  if (ourCommons && typeof ourCommons === 'object' && !Array.isArray(ourCommons)) {
+    const photoUrl = (ourCommons as Record<string, unknown>).photoUrl
+    if (typeof photoUrl === 'string' && photoUrl.trim()) {
+      return photoUrl.trim()
+    }
+  }
+
+  const ppc = record.ppc
+  if (ppc && typeof ppc === 'object' && !Array.isArray(ppc)) {
+    const photoUrl = (ppc as Record<string, unknown>).photoUrl
+    if (typeof photoUrl === 'string' && photoUrl.trim()) {
+      return photoUrl.trim()
+    }
+  }
+
+  return null
 }
 
 function readAssociationRepresentative(metadata: unknown): { displayName: string; roleLabel: string } | null {
@@ -1092,6 +1107,11 @@ export async function browseFederalPartyDistricts(args: {
   const postMap = new Map(postCounts.map((entry: DistrictStatsCount) => [`${entry.provinceCode}:${entry.communitySlug}`, entry._count._all]))
   const selectedSeatKeySet = new Set(selectedSeatKeys.map((entry: { provinceCode: string; communitySlug: string }) => `${entry.provinceCode}:${entry.communitySlug}`))
   const selectedRegisteredAssociationKeySet = new Set(selectedRegisteredAssociationKeys.map((entry: { provinceCode: string; communitySlug: string }) => `${entry.provinceCode}:${entry.communitySlug}`))
+
+  selectedPartyPoliticianByKey.forEach((politician, key) => {
+    if (!politician || selectedSeatKeySet.has(key)) return
+    selectedRegisteredAssociationKeySet.add(key)
+  })
 
   return {
     provinceCode: normalizedProvinceCode ?? 'ca',
