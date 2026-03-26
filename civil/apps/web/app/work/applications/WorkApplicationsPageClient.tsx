@@ -17,7 +17,6 @@ type WorkApplicationItem = {
     title: string
     photoUrl: string | null
     status: string
-    expiresAt: string
     organization: {
       name: string
       slug: string
@@ -150,7 +149,6 @@ export default function WorkApplicationsPageClient() {
                       <div className="flex flex-wrap gap-2 text-xs text-slate-600">
                         <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 font-semibold text-emerald-700">{toStatusLabel(item.status)}</span>
                         <span className="rounded-full border border-slate-200 px-2 py-0.5">Submitted {new Date(item.createdAt).toLocaleDateString()}</span>
-                        <span className="rounded-full border border-slate-200 px-2 py-0.5">Closes {new Date(item.job.expiresAt).toLocaleDateString()}</span>
                       </div>
                     </div>
                   </div>

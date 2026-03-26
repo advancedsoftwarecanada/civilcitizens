@@ -24,7 +24,6 @@ type JobItem = {
   roleRequirements: string
   location: string
   applicantCount: number
-  expiresAt: string
   sponsored: boolean
   industry: {
     slug: string
@@ -303,7 +302,6 @@ export default function OrganizationJobsPageClient({
                 <span className="rounded-full border border-slate-200 px-2 py-0.5">{job.industry.name}{job.industry.subIndustry ? ` • ${job.industry.subIndustry.name}` : ''}</span>
                 <span className="rounded-full border border-slate-200 px-2 py-0.5">{job.applicantCount} applicants</span>
                 {salaryLabel(job) ? <span className="rounded-full border border-slate-200 px-2 py-0.5">{salaryLabel(job)}</span> : null}
-                <span className="rounded-full border border-slate-200 px-2 py-0.5">Closes {new Date(job.expiresAt).toLocaleDateString()}</span>
               </div>
 
               <div className="pt-1">
