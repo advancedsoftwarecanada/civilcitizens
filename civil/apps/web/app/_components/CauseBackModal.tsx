@@ -31,6 +31,11 @@ function readAmountCents(value: string) {
   return Math.round(numeric * 100)
 }
 
+function buildCauseLabel(post: ApiPost) {
+  const title = post.title?.trim()
+  return title ? title : 'this Cause'
+}
+
 export default function CauseBackModal({
   post,
   initialAmountInput = '25',
@@ -98,7 +103,11 @@ export default function CauseBackModal({
       }
 
       await ensureViewerMe({ token, refresh: true })
-      pushToast(mode === 'monthly' ? 'Monthly support started.' : 'Support sent from your Civil Wallet.', 'success')
+      const causeLabel = buildCauseLabel(post)
+      pushToast(
+        mode === 'monthly' ? `Started monthly support for ${causeLabel}` : `Donated to ${causeLabel}`,
+        'success',
+      )
       onComplete(payload.post)
       onClose()
     } catch {
@@ -181,30 +190,31 @@ export default function CauseBackModal({
           >
             Cancel
           </button>
-          <button
-            type="button"
-            onClick={() => void submit('monthly')}
-            disabled={Boolean(submitting)}
-            className={clsx(
-              'inline-flex items-center justify-center rounded-full px-4 py-2 text-sm font-semibold text-white transition disabled:cursor-not-allowed disabled:opacity-60',
-              preferredMode === 'monthly' ? 'bg-emerald-700 hover:bg-emerald-800' : 'bg-emerald-600 hover:bg-emerald-700',
-            )}
-          >
-            <LuRepeat2 className="mr-2 h-4 w-4" />
-            {submitting === 'monthly' ? 'Starting…' : 'Donate Monthly'}
-          </button>
-          <button
-            type="button"
-            onClick={() => void submit('one-time')}
-            disabled={Boolean(submitting)}
-            className={clsx(
-              'inline-flex items-center justify-center rounded-full px-4 py-2 text-sm font-semibold text-white transition disabled:cursor-not-allowed disabled:opacity-60',
-              preferredMode === 'one-time' ? 'bg-emerald-700 hover:bg-emerald-800' : 'bg-emerald-600 hover:bg-emerald-700',
-            )}
-          >
-            <LuWallet className="mr-2 h-4 w-4" />
-            {submitting === 'one-time' ? 'Sending…' : 'Donate Once'}
-          </button>
+          {preferredMode === 'monthly' ? (
+            <button
+              type="button"
+              onClick={() => void submit('monthly')}
+              disabled={Boolean(submitting)}
+              className={clsx(
+                'inline-flex items-center justify-center rounded-full bg-emerald-700 px-4 py-2 text-sm font-semibold text-white transition hover:bg-emerald-800 disabled:cursor-not-allowed disabled:opacity-60',
+              )}
+            >
+              <LuRepeat2 className="mr-2 h-4 w-4" />
+              {submitting === 'monthly' ? 'Starting…' : 'Donate Monthly'}
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={() => void submit('one-time')}
+              disabled={Boolean(submitting)}
+              className={clsx(
+                'inline-flex items-center justify-center rounded-full bg-emerald-700 px-4 py-2 text-sm font-semibold text-white transition hover:bg-emerald-800 disabled:cursor-not-allowed disabled:opacity-60',
+              )}
+            >
+              <LuWallet className="mr-2 h-4 w-4" />
+              {submitting === 'one-time' ? 'Sending…' : 'Donate Once'}
+            </button>
+          )}
         </div>
       </div>
     </Modal>

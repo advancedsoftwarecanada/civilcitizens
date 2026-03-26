@@ -9,7 +9,7 @@ test.describe('Causes', () => {
 
     await page.goto(`/post/${cause.postId}`)
     await expect(page.getByText('Funding roadmap')).toBeVisible()
-    await expect(page.getByText('Stage Goals', { exact: true })).toBeVisible()
+    await expect(page.getByText('Goals', { exact: true })).toBeVisible()
     await expect(page.getByText(cause.firstStageDescription)).toBeVisible()
     await expect(page.getByText('Wallet balance', { exact: true })).toBeVisible()
 
@@ -30,9 +30,9 @@ test.describe('Causes', () => {
     await oneTimeModal.getByRole('button', { name: 'Donate Once' }).click()
     await oneTimeResponse
 
-    await expect(page.getByRole('status').filter({ hasText: 'Support sent from your Civil Wallet.' })).toBeVisible()
+    await expect(page.getByRole('status').filter({ hasText: `Donated to ${cause.title}` })).toBeVisible()
     await expect(page.locator('[data-cc-modal-root]')).toHaveCount(0)
-    await expect(page.getByText('$25 raised')).toBeVisible()
+    await expect(page.getByText('$25 raised').first()).toBeVisible()
     await expect(page.getByText('1 backing')).toBeVisible()
 
     await supportCard.getByRole('button', { name: 'Donate Monthly' }).click()
@@ -50,10 +50,10 @@ test.describe('Causes', () => {
     await monthlyModal.getByRole('button', { name: 'Donate Monthly' }).click()
     await monthlyResponse
 
-    await expect(page.getByRole('status').filter({ hasText: 'Monthly support started.' })).toBeVisible()
+    await expect(page.getByRole('status').filter({ hasText: `Started monthly support for ${cause.title}` })).toBeVisible()
     await expect(page.locator('[data-cc-modal-root]')).toHaveCount(0)
     await expect(page.getByText('Current monthly support')).toBeVisible()
-    await expect(page.getByText('$50 raised')).toBeVisible()
+    await expect(page.getByText('$50 raised').first()).toBeVisible()
     await expect(page.getByText('2 backings')).toBeVisible()
   })
 })

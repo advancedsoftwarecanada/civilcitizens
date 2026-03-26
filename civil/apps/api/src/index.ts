@@ -5513,6 +5513,8 @@ registerCauseRoutes(app, {
   generateUniquePostSlug,
   getStripeClient,
   isAccountSuspended,
+  isPremium,
+  isSelfVerifiedCanadianCitizen,
   isStripeConfigured,
   loadCauseSummariesByPostIds,
   loadViewerBlockState,

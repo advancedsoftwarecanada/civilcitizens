@@ -225,7 +225,7 @@ function mapCauseRow(row: CauseRow): CauseSummary {
   const raisedAmountCents = clampCurrency(row.raised_amount_cents)
   const contributionCount = Math.max(0, Math.round(row.contribution_count || 0))
   const remainingAmountCents = Math.max(0, goalAmountCents - raisedAmountCents)
-  const progressPercent = goalAmountCents > 0 ? Math.max(0, Math.min(100, Math.round((raisedAmountCents / goalAmountCents) * 100))) : 0
+  const progressPercent = goalAmountCents > 0 ? Math.max(0, Math.min(100, Math.ceil((raisedAmountCents / goalAmountCents) * 100))) : 0
 
   return {
     postId: row.post_id,

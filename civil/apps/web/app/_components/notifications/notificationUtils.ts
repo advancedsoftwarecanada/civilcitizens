@@ -354,6 +354,9 @@ export function getNotificationMessage(notification: NotificationItem) {
       ? new Intl.NumberFormat('en-CA', { style: 'currency', currency: 'CAD' }).format(deliveryAmountCents / 100)
       : null
   switch (notification.type) {
+    case 'cause_contribution_received_creator': {
+      return 'Backed your Cause'
+    }
     case 'friend_request':
       return 'sent you a friend request'
     case 'friend_accept':
@@ -502,6 +505,26 @@ export function getNotificationMessage(notification: NotificationItem) {
     default:
       return 'shared an update'
   }
+}
+
+export function getNotificationDetailLine(notification: NotificationItem): string | null {
+  if (notification.type === 'cause_contribution_received_creator') {
+    const amountCents = typeof notification.payload?.amountCents === 'number'
+      ? Math.max(0, Math.round(notification.payload.amountCents))
+      : null
+    const postTitle = typeof notification.payload?.postTitle === 'string'
+      ? notification.payload.postTitle.trim()
+      : ''
+    const amountLabel = typeof amountCents === 'number'
+      ? new Intl.NumberFormat('en-CA', { style: 'currency', currency: 'CAD' }).format(amountCents / 100)
+      : ''
+
+    if (amountLabel && postTitle) return `${amountLabel} ${postTitle}`
+    if (postTitle) return postTitle
+    if (amountLabel) return amountLabel
+  }
+
+  return null
 }
 
 export function getProfileFamilyRelationshipLabel(value: unknown) {

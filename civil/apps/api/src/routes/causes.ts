@@ -75,7 +75,7 @@ type CauseContributorRow = {
   contributor_user_id: string
   amount_cents: number
   created_at: Date
-  source_type: string
+  source_type: string | null
 }
 
 type CauseContributorCountRow = {
@@ -202,7 +202,12 @@ export function registerCauseRoutes(app: FastifyInstance, deps: CauseRouteDeps) 
       const limit = query.data.limit ?? 10
       const [rows, countRows] = await Promise.all([
         prisma.$queryRaw<CauseContributorRow[]>`
-          SELECT id, contributor_user_id, amount_cents, created_at, source_type
+          SELECT
+            id,
+            contributor_user_id,
+            amount_cents,
+            created_at,
+            COALESCE(metadata->>'kind', 'cause_contribution') AS source_type
           FROM civil_cause_contribution
           WHERE post_id = ${post.id}
           ORDER BY created_at DESC, id DESC
@@ -240,7 +245,7 @@ export function registerCauseRoutes(app: FastifyInstance, deps: CauseRouteDeps) 
           id: row.id,
           amountCents: Math.max(0, Math.round(Number(row.amount_cents ?? 0))),
           createdAt: row.created_at,
-          sourceType: row.source_type,
+          sourceType: row.source_type ?? 'cause_contribution',
           user: {
             id: user.id,
             handle: user.handle,
