@@ -6,6 +6,7 @@ import { Prisma } from '@prisma/client'
 import { z } from 'zod'
 import { computeCivilPayFeeCents } from '../civilPayFees.js'
 import { buildWalletMetaValue, ensureCitizenWalletTables, insertCivilCreditLedgerEntry, readWalletSummary } from '../walletHelpers.js'
+import { applyWalletUserTransfer } from '../walletTransactions.js'
 import { readDriverAccountState, readFeaturedDriverVehicle } from './delivery.js'
 
 type DriveRideDeps = Record<string, any>
@@ -2734,94 +2735,17 @@ export function registerDriveRideRoutes(app: FastifyInstance, deps: DriveRideDep
           const tipAmountCents = Math.max(0, Math.round(body.data.amountCents || 0))
           const feeCents = computeCivilPayFeeCents(tipAmountCents)
           const totalChargeCents = tipAmountCents + feeCents
-          const requesterWallet = readWalletSummary(requester.communityMeta ?? null)
-          if (!requesterWallet.enabled) throw new Error('wallet_required')
-          if (requesterWallet.civilCreditsCents < totalChargeCents) throw new Error('insufficient_wallet_balance')
-
-          const requesterMeta = readBaseCommunityMetaRecord(requester.communityMeta ?? null)
-          requesterMeta.wallet = buildWalletMetaValue({
-            ...requesterWallet,
-            civilCreditsCents: requesterWallet.civilCreditsCents - totalChargeCents,
-          })
-
-          const driverWallet = readWalletSummary(driver.communityMeta ?? null)
-          const driverMeta = readBaseCommunityMetaRecord(driver.communityMeta ?? null)
-          driverMeta.wallet = buildWalletMetaValue({
-            ...driverWallet,
-            civilCreditsCents: driverWallet.civilCreditsCents + tipAmountCents,
-          })
-
-          await Promise.all([
-            tx.user.update({
-              where: { id: requester.id },
-              data: { communityMeta: requesterMeta as Prisma.InputJsonValue },
-            }),
-            tx.user.update({
-              where: { id: driver.id },
-              data: { communityMeta: driverMeta as Prisma.InputJsonValue },
-            }),
-          ])
-
           const transactionId = `drive-ride-tip:${ride.id}:${requester.id}`
-          await tx.$executeRaw`
-            INSERT INTO citizen_wallet_transaction (
-              id,
-              kind,
-              status,
-              user_id,
-              counterparty_user_id,
-              amount_cents,
-              currency,
-              metadata,
-              updated_at
-            )
-            VALUES (
-              ${transactionId},
-              ${'drive_ride_tip'},
-              ${'completed'},
-              ${requester.id},
-              ${driver.id},
-              ${totalChargeCents},
-              ${'cad'},
-              ${JSON.stringify({
-                kind: 'drive_ride_tip',
-                rideRequestId: ride.id,
-                requesterUserId: requester.id,
-                driverUserId: driver.id,
-                tipAmountCents,
-                feeCents,
-                totalChargeCents,
-              })}::jsonb,
-              NOW()
-            )
-            ON CONFLICT (id) DO NOTHING
-          `
-
-          await insertCivilCreditLedgerEntry(tx, {
-            id: `${transactionId}:driver`,
-            eventId: `${transactionId}:driver`,
-            entryType: 'transfer',
-            status: 'completed',
+          await applyWalletUserTransfer(tx, {
+            senderUserId: requester.id,
+            recipientUserId: driver.id,
             amountCents: tipAmountCents,
-            currency: 'cad',
-            from: {
-              entityType: 'user_wallet',
-              userId: requester.id,
-              handle: requester.handle ?? null,
-              name: requester.name ?? null,
-              entityLabel: 'Civil Wallet',
-            },
-            to: {
-              entityType: 'user_wallet',
-              userId: driver.id,
-              handle: driver.handle ?? null,
-              name: driver.name ?? null,
-              entityLabel: 'Civil Wallet',
-            },
-            sourceType: 'drive_ride_tip',
-            sourceReferenceId: tipSourceReferenceId,
-            description: `Ride tip for ${formatDriveActorLabel(driver)}`,
-            metadata: {
+            feeCents,
+            totalChargeCents,
+            transactionId,
+            transactionKind: 'drive_ride_tip',
+            transactionAmountCents: totalChargeCents,
+            transactionMetadata: {
               kind: 'drive_ride_tip',
               rideRequestId: ride.id,
               requesterUserId: requester.id,
@@ -2830,37 +2754,41 @@ export function registerDriveRideRoutes(app: FastifyInstance, deps: DriveRideDep
               feeCents,
               totalChargeCents,
             },
-          })
-
-          await insertCivilCreditLedgerEntry(tx, {
-            id: `${transactionId}:fee`,
-            eventId: `${transactionId}:fee`,
-            entryType: 'adjustment',
-            status: 'completed',
-            amountCents: feeCents,
-            currency: 'cad',
-            from: {
-              entityType: 'user_wallet',
-              userId: requester.id,
-              handle: requester.handle ?? null,
-              name: requester.name ?? null,
-              entityLabel: 'Civil Wallet',
+            errors: {
+              insufficientFunds: 'insufficient_wallet_balance',
             },
-            to: {
-              entityType: 'platform',
-              entityLabel: 'Civil fee',
+            transferLedger: {
+              id: `${transactionId}:driver`,
+              eventId: `${transactionId}:driver`,
+              sourceType: 'drive_ride_tip',
+              sourceReferenceId: tipSourceReferenceId,
+              description: `Ride tip for ${formatDriveActorLabel(driver)}`,
+              metadata: {
+                kind: 'drive_ride_tip',
+                rideRequestId: ride.id,
+                requesterUserId: requester.id,
+                driverUserId: driver.id,
+                tipAmountCents,
+                feeCents,
+                totalChargeCents,
+              },
             },
-            sourceType: 'drive_ride_tip_civil_fee',
-            sourceReferenceId: tipSourceReferenceId,
-            description: `Civil fee for ride tip ${ride.id}`,
-            metadata: {
-              kind: 'drive_ride_tip_civil_fee',
-              rideRequestId: ride.id,
-              requesterUserId: requester.id,
-              driverUserId: driver.id,
-              tipAmountCents,
-              feeCents,
-              totalChargeCents,
+            feeLedger: {
+              id: `${transactionId}:fee`,
+              eventId: `${transactionId}:fee`,
+              entryType: 'adjustment',
+              sourceType: 'drive_ride_tip_civil_fee',
+              sourceReferenceId: tipSourceReferenceId,
+              description: `Civil fee for ride tip ${ride.id}`,
+              metadata: {
+                kind: 'drive_ride_tip_civil_fee',
+                rideRequestId: ride.id,
+                requesterUserId: requester.id,
+                driverUserId: driver.id,
+                tipAmountCents,
+                feeCents,
+                totalChargeCents,
+              },
             },
           })
 

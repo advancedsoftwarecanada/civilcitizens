@@ -66,6 +66,13 @@ const ACTIONS: AdminAction[] = [
     icon: HiOutlineBanknotes,
   },
   {
+    key: 'wallet-subscriptions',
+    label: 'Wallet subscriptions',
+    description: 'Review active, paused, and canceled Civil Wallet subscriptions for Causes.',
+    href: '/admin/wallet/subscriptions',
+    icon: HiOutlineBanknotes,
+  },
+  {
     key: 'ai',
     label: 'AI debug console',
     description: 'Inspect Civil AI conversations, retrieval decisions, prompts, and responses.',

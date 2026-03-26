@@ -19,7 +19,8 @@
     "seed:admin": "tsx scripts/seed-admin-areas.ts",
     "seed:districts": "tsx scripts/seed-electoral-districts.ts",
     "link:cities-subdivisions": "tsx scripts/link-cities-subdivisions.ts",
-    "watch:seed-log": "tsx scripts/watch-seed-log.ts"
+    "watch:seed-log": "tsx scripts/watch-seed-log.ts",
+    "repair:causes": "tsx scripts/repair-causes.ts"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.587.0",

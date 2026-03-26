@@ -3,6 +3,7 @@
 import Link from 'next/link'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { useEffect, useMemo, useState } from 'react'
+import { calculateCivilFeeCents } from '@civil/shared'
 import DashboardShell from '../../../../_components/DashboardShell'
 import { pushToast } from '../../../../_components/useToasts'
 import { redirectToAuthModal } from '../../../../_lib/authModal'
@@ -46,15 +47,6 @@ function formatMoney(cents: number, currency: string) {
   } catch {
     return `${(cents || 0) / 100}`
   }
-}
-
-function computeCivilPayFeeCents(amountCents: number) {
-  if (amountCents <= 0) return 0
-  if (amountCents <= 10000) return 50
-  if (amountCents <= 20000) return 65
-  if (amountCents <= 50000) return 85
-  if (amountCents <= 100000) return 125
-  return 200
 }
 
 export default function MarketListingCivilPayPageClient({ listingId }: { listingId: string }) {
@@ -125,7 +117,7 @@ export default function MarketListingCivilPayPageClient({ listingId }: { listing
     }
   }, [listingId, threadId])
 
-  const feeCents = useMemo(() => computeCivilPayFeeCents(listing?.priceCents ?? 0), [listing?.priceCents])
+  const feeCents = useMemo(() => calculateCivilFeeCents(listing?.priceCents ?? 0), [listing?.priceCents])
   const totalChargeCents = (listing?.priceCents ?? 0) + feeCents
   const balanceCents = me?.wallet?.civilCreditsCents ?? 0
   const enoughBalance = balanceCents >= totalChargeCents

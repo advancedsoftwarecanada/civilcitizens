@@ -4,7 +4,7 @@ import Link from 'next/link'
 import { useMemo, type CSSProperties } from 'react'
 import clsx from 'clsx'
 import { usePathname } from 'next/navigation'
-import { FaCarSide, FaHouseUser, FaUserTie, FaWallet } from 'react-icons/fa'
+import { FaCarSide, FaHouseUser, FaPrayingHands, FaUserTie, FaWallet } from 'react-icons/fa'
 import {
   HiOutlineChatBubbleOvalLeft,
   HiOutlineCurrencyDollar,
@@ -63,6 +63,7 @@ export const PRIMARY_NAV: SidebarNavItem[] = [
   { key: 'market', label: 'Market', href: '/market', icon: HiOutlineShoppingCart },
   { key: 'work', label: 'Work', href: '/work', icon: HiOutlineCurrencyDollar },
   { key: 'drive', label: 'Drive', href: '/drive', icon: FaCarSide },
+  { key: 'causes', label: 'Causes', href: '/causes', icon: FaPrayingHands },
   { key: 'wallet', label: 'Wallet', href: '/wallet', icon: FaWallet },
   // TODO(app-store): restore News, Podcasts, Music, and Video nav items once those product areas are ready.
   { key: 'account', label: 'Account Settings', href: '/settings', icon: HiOutlineUserCircle },

@@ -5,16 +5,18 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import clsx from 'clsx'
 import { LuMessageCircle, LuRepeat2, LuShare } from 'react-icons/lu'
-import { HiTrash } from 'react-icons/hi2'
+import { HiPencil, HiTrash } from 'react-icons/hi2'
 import type { ReactionType } from '@civil/shared'
 import Sidebar from '../../../../_components/Sidebar'
 import { RightRail } from '../../../../_components/RightRail'
 import { JURISDICTION_LABELS, type ApiPost } from '../../../../_components/PostComposer'
+import RichTextEditor from '../../../../_components/RichTextEditor'
 import CommentComposer from '../../../../_components/CommentComposer'
 import CommentThread, { type ApiComment } from '../../../../_components/CommentThread'
 import CivilCard from '../../../../_components/CivilCard'
 import PostAuthorMiniCard from '../../../../_components/PostAuthorMiniCard'
 import CivilLinkPreviewList from '../../../../_components/CivilLinkPreviewList'
+import CauseSummaryCard from '../../../../_components/CauseSummaryCard'
 import LinkPreviewCard from '../../../../_components/LinkPreviewCard'
 import LinkifiedText from '../../../../_components/LinkifiedText'
 import ContentModerationMenu from '../../../../_components/ContentModerationMenu'
@@ -23,6 +25,7 @@ import PollCard from '../../../../_components/PollCard'
 import ThreadBottomCommentComposer from '../../../../_components/ThreadBottomCommentComposer'
 import SharePostModal from '../../../../_components/SharePostModal'
 import ShareSendModal from '../../../../_components/ShareSendModal'
+import Modal from '../../../../_components/Modal'
 import { pushToast } from '../../../../_components/useToasts'
 import { redirectToAuthModal } from '../../../../_lib/authModal'
 import { buildApiUrl } from '../../../../_lib/api'
@@ -210,6 +213,10 @@ export default function UserPostPage({ params }: PageProps) {
   const [pendingVote, setPendingVote] = useState(false)
   const [repostModalOpen, setRepostModalOpen] = useState(false)
   const [shareModalOpen, setShareModalOpen] = useState(false)
+  const [isEditing, setIsEditing] = useState(false)
+  const [editTitle, setEditTitle] = useState('')
+  const [editBody, setEditBody] = useState('')
+  const [savingPost, setSavingPost] = useState(false)
 
   const loadViewer = useCallback(async () => {
     const token = localStorage.getItem('token')
@@ -362,6 +369,11 @@ export default function UserPostPage({ params }: PageProps) {
   }, [loadViewer])
 
   useEffect(() => {
+    setEditTitle(post?.title ?? '')
+    setEditBody(post?.body ?? '')
+  }, [post?.id, post?.title, post?.body])
+
+  useEffect(() => {
     loadPost('hot').catch(() => {
       /* noop */
     })
@@ -455,6 +467,89 @@ export default function UserPostPage({ params }: PageProps) {
     setComments((prev) => removeCommentsByAuthorFromTree(prev, authorId))
   }, [])
 
+  const handleUpdate = useCallback(async () => {
+    if (!post || savingPost) return
+
+    setSavingPost(true)
+    try {
+      const token = getStoredToken()
+      if (!token) {
+        redirectToAuthModal('login')
+        return
+      }
+
+      const response = await fetch(buildApiUrl(`/posts/${post.id}`), {
+        method: 'PATCH',
+        headers: {
+          'content-type': 'application/json',
+          authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          title: post.type === 'article' || post.type === 'cause' ? editTitle : undefined,
+          body: editBody,
+        }),
+      })
+
+      if (!response.ok) {
+        pushToast('Failed to update post.', 'error')
+        return
+      }
+
+      const updated = (await response.json().catch(() => null)) as ApiPost | null
+      if (updated) {
+        setPost(updated)
+      }
+      setIsEditing(false)
+      pushToast('Post updated.', 'success')
+    } catch {
+      pushToast('Failed to update post.', 'error')
+    } finally {
+      setSavingPost(false)
+    }
+  }, [editBody, editTitle, post, savingPost])
+
+  const handleEdit = useCallback(async () => {
+    if (!post) return
+
+    if (post.type === 'cause') {
+      const existingDraftId = post.causeDraftId ?? post.cause?.draftId ?? null
+      if (existingDraftId) {
+        router.push(`/causes/drafts/${encodeURIComponent(existingDraftId)}`)
+        return
+      }
+
+      try {
+        const token = getStoredToken()
+        if (!token) {
+          redirectToAuthModal('login')
+          return
+        }
+        const response = await fetch(buildApiUrl(`/causes/posts/${encodeURIComponent(post.id)}/draft`), {
+          headers: {
+            authorization: `Bearer ${token}`,
+          },
+        })
+        if (!response.ok) {
+          pushToast('Unable to open cause editor.', 'error')
+          return
+        }
+        const payload = (await response.json().catch(() => null)) as { draft?: { id?: string | null } } | null
+        const resolvedDraftId = payload?.draft?.id?.trim()
+        if (!resolvedDraftId) {
+          pushToast('Unable to open cause editor.', 'error')
+          return
+        }
+        router.push(`/causes/drafts/${encodeURIComponent(resolvedDraftId)}`)
+        return
+      } catch {
+        pushToast('Unable to open cause editor.', 'error')
+        return
+      }
+    }
+
+    setIsEditing(true)
+  }, [post, router])
+
   const postAuthorDisplayName = post ? formatUserDisplayName(post.author.name, post.author.handle) || post.author.handle : ''
   const showOrganizationAuthorBox = Boolean(post?.organization && post.showBusinessAuthor)
   const postOrganization = post?.organization ?? null
@@ -482,6 +577,14 @@ export default function UserPostPage({ params }: PageProps) {
   const postDeletedRedirectHref = post ? `/u/${post.author.handle}` : '/home'
   const postSettingsActions = isAuthor
     ? [
+        {
+          key: 'edit',
+          label: 'Edit',
+          icon: HiPencil,
+          onSelect: () => {
+            void handleEdit()
+          },
+        },
         {
           key: 'delete',
           label: 'Delete',
@@ -616,7 +719,7 @@ export default function UserPostPage({ params }: PageProps) {
                   </div>
                   <div className="text-[16px] leading-7 text-slate-900">
                     <PostDetailImages images={post.images} mediaUrl={post.mediaUrl} />
-                    {post.type === 'article' && post.title ? (
+                    {(post.type === 'article' || post.type === 'cause') && post.title ? (
                       <h1 className="text-3xl font-semibold text-slate-900">{post.title}</h1>
                     ) : null}
                     <div className="mt-4 space-y-4">
@@ -630,6 +733,7 @@ export default function UserPostPage({ params }: PageProps) {
                         </div>
                       ) : null}
                       {post.linkPreview ? <LinkPreviewCard preview={post.linkPreview} /> : <CivilLinkPreviewList body={post.body} />}
+                      {post.type === 'cause' ? <CauseSummaryCard post={post} onPostUpdate={setPost} /> : null}
                       {post.type === 'poll' && post.poll ? (
                         <PollCard
                           post={post}
@@ -743,6 +847,67 @@ export default function UserPostPage({ params }: PageProps) {
                     target={shareTarget}
                     onClose={() => setShareModalOpen(false)}
                   />
+                ) : null}
+
+                {isEditing ? (
+                  <Modal open onClose={() => setIsEditing(false)} title="Edit post" maxWidthClassName="max-w-2xl" closeOnBackdrop={false} closeOnEscape={false}>
+                    <div className="space-y-4 p-6">
+                      <div className="grid gap-4">
+                        {post.type === 'article' || post.type === 'cause' ? (
+                          <div className="grid gap-2">
+                            <label htmlFor="title" className="text-sm font-medium text-slate-700">
+                              Title
+                            </label>
+                            <input
+                              id="title"
+                              type="text"
+                              value={editTitle}
+                              onChange={(event) => setEditTitle(event.target.value)}
+                              className="block w-full rounded-md border border-slate-300 px-3 py-2 text-sm shadow-sm focus:border-sky-500 focus:ring-1 focus:ring-sky-500"
+                              placeholder="Enter post title"
+                            />
+                          </div>
+                        ) : null}
+                        <div className="grid gap-2">
+                          <label htmlFor="body" className="text-sm font-medium text-slate-700">
+                            {post.type === 'article' || post.type === 'cause' ? 'Story' : 'Body'}
+                          </label>
+                          {post.type === 'article' || post.type === 'cause' ? (
+                            <>
+                              <RichTextEditor value={editBody} onChange={setEditBody} placeholder="Share something" minHeight={260} disabled={savingPost} />
+                              <div className="flex justify-end text-xs text-slate-500">
+                                <span>{editBody.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim().length}/10000</span>
+                              </div>
+                            </>
+                          ) : (
+                            <textarea
+                              id="body"
+                              value={editBody}
+                              onChange={(event) => setEditBody(event.target.value)}
+                              className="block w-full rounded-md border border-slate-300 px-3 py-2 text-sm shadow-sm focus:border-sky-500 focus:ring-1 focus:ring-sky-500"
+                              rows={6}
+                              placeholder="Enter post content"
+                            />
+                          )}
+                        </div>
+                      </div>
+                      <div className="flex justify-end gap-3">
+                        <button
+                          onClick={() => setIsEditing(false)}
+                          className="rounded-md border border-slate-300 bg-white px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-sky-500 focus:ring-offset-2"
+                        >
+                          Cancel
+                        </button>
+                        <button
+                          onClick={() => void handleUpdate()}
+                          disabled={savingPost}
+                          className="rounded-md bg-sky-600 px-4 py-2 text-sm font-semibold text-white shadow-sm hover:bg-sky-700 focus:outline-none focus:ring-2 focus:ring-sky-500 focus:ring-offset-2 disabled:opacity-50"
+                        >
+                          {savingPost ? 'Saving...' : 'Save changes'}
+                        </button>
+                      </div>
+                    </div>
+                  </Modal>
                 ) : null}
               </article>
             ) : null}

@@ -379,7 +379,7 @@ export function registerPublicEventOrgPostRoutes(app: FastifyInstance, deps: Pub
         posts = queryResult
       }
 
-      const { reactionsByPost, pollSelectionsByPost, recentCommentsByPost } = await deps.loadViewerPostFormattingContext(viewerId, posts.map((post: any) => post.id), 5)
+      const { reactionsByPost, pollSelectionsByPost, recentCommentsByPost, causeByPost } = await deps.loadViewerPostFormattingContext(viewerId, posts.map((post: any) => post.id), 5)
 
       return reply.send({
         items: posts.map((post: any) =>
@@ -388,6 +388,7 @@ export function registerPublicEventOrgPostRoutes(app: FastifyInstance, deps: Pub
             viewerReaction: reactionsByPost[post.id] ?? null,
             viewerPollOptionId: pollSelectionsByPost[post.id] ?? null,
             recentComments: recentCommentsByPost[post.id] ?? [],
+            cause: causeByPost[post.id] ?? null,
           }),
         ),
         nextCursor,

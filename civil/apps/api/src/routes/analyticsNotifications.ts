@@ -2,6 +2,7 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 import { prisma } from '@civil/db'
 import { MessageParticipantRole, MessageThreadType, MessageType, Prisma, SupportRequestStatus } from '@prisma/client'
 import { buildWalletMetaValue, ensureCitizenWalletTables, insertCivilCreditLedgerEntry, readWalletSummary } from '../walletHelpers.js'
+import { applyWalletUserTransfer } from '../walletTransactions.js'
 import { releaseDriveRideEscrow, settleExpiredDriveRideEscrows } from './driveRides.js'
 
 type AnalyticsNotificationDeps = Record<string, any>
@@ -501,18 +502,12 @@ export function registerAnalyticsNotificationRoutes(app: FastifyInstance, deps: 
         ])
         if (!buyer || !driver) return reply.code(404).send({ error: 'user_not_found' })
 
-        const buyerMeta = deps.readBaseCommunityMeta(buyer.communityMeta ?? null)
-        const driverMeta = deps.readBaseCommunityMeta(driver.communityMeta ?? null)
         const buyerWallet = readWalletSummary(deps.parseCommunityMeta(buyer.communityMeta ?? null))
-        const driverWallet = readWalletSummary(deps.parseCommunityMeta(driver.communityMeta ?? null))
 
         if (!buyerWallet.enabled) return reply.code(400).send({ error: 'buyer_wallet_required' })
         if (buyerWallet.civilCreditsCents < contract.bid_amount_cents) {
           return reply.code(400).send({ error: 'insufficient_wallet_balance' })
         }
-
-        buyerMeta.wallet = buildWalletMetaValue({ ...buyerWallet, civilCreditsCents: buyerWallet.civilCreditsCents - contract.bid_amount_cents })
-        driverMeta.wallet = buildWalletMetaValue({ ...driverWallet, civilCreditsCents: driverWallet.civilCreditsCents + contract.bid_amount_cents })
 
         const walletTransactionId = `${contract.id}-delivery-${Date.now()}`
         const eventId = walletTransactionId
@@ -521,61 +516,31 @@ export function registerAnalyticsNotificationRoutes(app: FastifyInstance, deps: 
         let threadParticipants: Array<{ userId: string; mutedUntil: Date | null }> = []
 
         await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
-          await tx.user.update({ where: { id: buyer.id }, data: { communityMeta: buyerMeta as Prisma.InputJsonValue } })
-          await tx.user.update({ where: { id: driver.id }, data: { communityMeta: driverMeta as Prisma.InputJsonValue } })
-
-          await tx.$executeRaw`
-            INSERT INTO citizen_wallet_transaction (
-              id,
-              kind,
-              status,
-              user_id,
-              counterparty_user_id,
-              amount_cents,
-              currency,
-              metadata,
-              created_at,
-              updated_at
-            )
-            VALUES (
-              ${walletTransactionId},
-              ${'delivery_contract'},
-              ${'completed'},
-              ${buyer.id},
-              ${driver.id},
-              ${contract.bid_amount_cents},
-              ${'cad'},
-              ${JSON.stringify({ kind: 'delivery_contract', contractId: contract.id, listingId: contract.listing_id, buyerUserId: buyer.id, driverUserId: driver.id })}::jsonb,
-              NOW(),
-              NOW()
-            )
-          `
-
-          await insertCivilCreditLedgerEntry(tx, {
-            id: `${walletTransactionId}-ledger`,
-            eventId,
-            entryType: 'transfer',
-            status: 'completed',
+          await applyWalletUserTransfer(tx, {
+            senderUserId: buyer.id,
+            recipientUserId: driver.id,
             amountCents: contract.bid_amount_cents,
-            currency: 'cad',
-            from: {
-              userId: buyer.id,
-              handle: buyer.handle,
-              name: buyer.name,
-              entityType: 'user',
-              entityLabel: buyer.name ?? buyer.handle,
+            transactionId: walletTransactionId,
+            transactionKind: 'delivery_contract',
+            transactionMetadata: {
+              kind: 'delivery_contract',
+              contractId: contract.id,
+              listingId: contract.listing_id,
+              buyerUserId: buyer.id,
+              driverUserId: driver.id,
             },
-            to: {
-              userId: driver.id,
-              handle: driver.handle,
-              name: driver.name,
-              entityType: 'user',
-              entityLabel: driver.name ?? driver.handle,
+            errors: {
+              senderWalletDisabled: 'buyer_wallet_required',
+              insufficientFunds: 'insufficient_wallet_balance',
             },
-            sourceType: 'delivery_contract',
-            sourceReferenceId: contract.id,
-            description: `Delivery contract for ${contract.listing_title}`,
-            metadata: { kind: 'delivery_contract', contractId: contract.id, listingId: contract.listing_id },
+            transferLedger: {
+              id: `${walletTransactionId}-ledger`,
+              eventId,
+              sourceType: 'delivery_contract',
+              sourceReferenceId: contract.id,
+              description: `Delivery contract for ${contract.listing_title}`,
+              metadata: { kind: 'delivery_contract', contractId: contract.id, listingId: contract.listing_id },
+            },
           })
 
           const threadResult = await ensureDeliveryGroupThread({

@@ -36,6 +36,7 @@ import {
 import type { City as CityModel } from '@prisma/client'
 import {
   CreatePostInput,
+  calculateCausePlatformFeeCents,
   RegisterInput,
   LoginInput,
   ForgotPasswordInput,
@@ -113,6 +114,14 @@ import {
   type CivilAiOrganizationDataItem,
   type CivilAiPostDataItem,
 } from './civilAiSources.js'
+import {
+  applyCauseContributionFromPaymentIntent,
+  createCauseRecord,
+  ensureCivilCauseTables,
+  loadCauseSummariesByPostIds,
+  processAllDueCauseSubscriptions,
+  type CauseSummary,
+} from './causes.js'
 import { createAuthViewerHelpers } from './authViewer.js'
 import { applyWalletTopUpFromPaymentIntent, buildWalletMetaValue, readWalletSummary } from './walletHelpers.js'
 const TrackViewInput = z.object({
@@ -464,6 +473,7 @@ import { registerMessagesDetailRoutes } from './routes/messagesDetail.js'
 import { registerNotificationsSearchRoutes } from './routes/notificationsSearch.js'
 import { registerPostInteractionRoutes } from './routes/postInteractions.js'
 import { registerPostReadRoutes } from './routes/postRead.js'
+import { registerCauseRoutes } from './routes/causes.js'
 import { registerTopicRoutes } from './routes/topics.js'
 import { registerBillingRoutes } from './routes/billing.js'
 import { registerBillingWebhookRoutes } from './routes/billingWebhook.js'
@@ -4090,6 +4100,17 @@ type FormattedPost = {
     communitySlug: string | null
   } | null
   showBusinessAuthor: boolean
+  cause: {
+    goalAmountCents: number
+    raisedAmountCents: number
+    remainingAmountCents: number
+    contributionCount: number
+    progressPercent: number
+    status: 'active' | 'funded' | 'closed'
+    createdAt: Date | null
+    updatedAt: Date | null
+    lastContributionAt: Date | null
+  } | null
   poll: {
     id: string
     resultsVisibility: PollResultsVisibilityValue
@@ -4312,6 +4333,7 @@ async function loadViewerPostFormattingContext(
   reactionsByPost: Record<string, PrismaReactionType>
   pollSelectionsByPost: Record<string, string>
   recentCommentsByPost: Record<string, FormattedPost['recentComments']>
+  causeByPost: Record<string, CauseSummary>
 }> {
   const uniquePostIds = Array.from(new Set(postIds)).filter(Boolean)
   if (!uniquePostIds.length) {
@@ -4319,6 +4341,7 @@ async function loadViewerPostFormattingContext(
       reactionsByPost: {},
       pollSelectionsByPost: {},
       recentCommentsByPost: {},
+      causeByPost: {},
     }
   }
 
@@ -4328,10 +4351,18 @@ async function loadViewerPostFormattingContext(
     getRecentCommentsByPostIds(uniquePostIds, recentCommentLimit),
   ])
 
+  let causeByPost: Record<string, CauseSummary> = {}
+  try {
+    causeByPost = await loadCauseSummariesByPostIds(uniquePostIds)
+  } catch (error) {
+    console.error('cause_summary_load_failed', error)
+  }
+
   return {
     reactionsByPost,
     pollSelectionsByPost,
     recentCommentsByPost,
+    causeByPost,
   }
 }
 
@@ -4443,6 +4474,7 @@ function formatPost(
     recentComments?: FormattedPost['recentComments']
     viewerId?: string | null
     viewerPollOptionId?: string | null
+    cause?: CauseSummary | null
     now?: Date
   } = {},
 ): FormattedPost {
@@ -4465,6 +4497,8 @@ function formatPost(
   ) {
     sharedPost = formatPost(post.sharedPost as any)
   }
+
+  const causeSummary = options.cause ?? ((post as any).__cause as CauseSummary | undefined) ?? null
 
   return {
     id: post.id,
@@ -4504,6 +4538,22 @@ function formatPost(
         }
       : null,
     showBusinessAuthor: Boolean(post.businessId && post.showBusinessAuthor),
+    cause: causeSummary
+      ? {
+          draftId: causeSummary.publishedDraftId,
+          goalAmountCents: causeSummary.goalAmountCents,
+          stageGoals: causeSummary.stageGoals,
+          raisedAmountCents: causeSummary.raisedAmountCents,
+          remainingAmountCents: causeSummary.remainingAmountCents,
+          contributionCount: causeSummary.contributionCount,
+          progressPercent: causeSummary.progressPercent,
+          status: causeSummary.status,
+          createdAt: causeSummary.createdAt,
+          updatedAt: causeSummary.updatedAt,
+          lastContributionAt: causeSummary.lastContributionAt,
+        }
+      : null,
+    causeDraftId: causeSummary?.publishedDraftId ?? null,
     poll: formatPollForViewer(post, options.viewerId, options.viewerPollOptionId, now),
     sharedPost,
     author: {
@@ -4551,9 +4601,10 @@ function formatPost(
 
 function getCanonicalPaths(post: PostWithAuthor) {
   const slug = post.seoSlug ?? post.id
+  const communitySegment = post.type === 'cause' ? 'causes' : 'posts'
   return {
     user: `/u/${post.author.handle}/posts/${slug}`,
-    community: post.provinceCode && post.communitySlug ? `/${post.provinceCode}/${post.communitySlug}/posts/${slug}` : null,
+    community: post.provinceCode && post.communitySlug ? `/${post.provinceCode}/${post.communitySlug}/${communitySegment}/${slug}` : null,
     legacy: `/post/${post.id}`,
   }
 }
@@ -4780,10 +4831,11 @@ function countFollowedTopicMatches(post: Pick<FeedRankingPostRecord, 'topicSlugs
   return matches
 }
 
-function resolveFeedCategory(post: FeedRankingPostRecord, scope: 'all' | 'friends' | 'network' | 'communities' | 'organizations', context: ViewerFeedContext | null): FeedCategory {
+function resolveFeedCategory(post: FeedRankingPostRecord, scope: 'all' | 'friends' | 'network' | 'communities' | 'organizations' | 'causes', context: ViewerFeedContext | null): FeedCategory {
   if (scope === 'friends') return 'friends'
   if (scope === 'network') return 'network'
   if (scope === 'communities') return 'community'
+  if (scope === 'causes') return 'community'
   if (scope === 'organizations') return 'organizations'
 
   const normalizedType = (post.type || '').trim().toLowerCase()
@@ -4810,7 +4862,7 @@ function resolveFeedCategory(post: FeedRankingPostRecord, scope: 'all' | 'friend
 
 function scoreFeedCandidate(args: {
   post: FeedRankingPostRecord
-  scope: 'all' | 'friends' | 'network' | 'communities' | 'organizations'
+  scope: 'all' | 'friends' | 'network' | 'communities' | 'organizations' | 'causes'
   context: ViewerFeedContext | null
   impression?: { lastSeenAt: Date; impressionCount: number }
   hasReaction: boolean
@@ -4847,7 +4899,7 @@ function scoreFeedCandidate(args: {
     : Math.max(0, ageHours - 120) * 0.14
 
   const geoLevel = resolveGeoLevel(args.post, args.context)
-  const geoBoostByScope = args.scope === 'communities' || args.scope === 'all'
+  const geoBoostByScope = args.scope === 'communities' || args.scope === 'causes' || args.scope === 'all'
     ? ({ 1: 220, 2: 130, 3: 70, 4: 18 } as const)
     : ({ 1: 60, 2: 36, 3: 18, 4: 0 } as const)
   const geoBoost = geoBoostByScope[geoLevel]
@@ -4860,7 +4912,7 @@ function scoreFeedCandidate(args: {
 
   const freshCommunityBoost =
     category === 'community'
-      ? args.scope === 'communities'
+      ? args.scope === 'communities' || args.scope === 'causes'
         ? Math.max(0, 36 - ageHours) * (geoLevel === 1 ? 18 : geoLevel <= 3 ? 12 : 6)
         : args.scope === 'all'
           ? Math.max(0, 24 - ageHours) * (geoLevel === 1 ? 15 : geoLevel <= 3 ? 10 : 4)
@@ -5006,7 +5058,7 @@ function mixHomeFeedCandidates(candidates: RankedFeedCandidate[], seed: number):
   return mixed
 }
 
-type FeedScopeMode = 'all' | 'friends' | 'network' | 'communities' | 'organizations'
+type FeedScopeMode = 'all' | 'friends' | 'network' | 'communities' | 'organizations' | 'causes'
 
 async function loadViewerInteractionSignalsByPostIds(viewerId: string, postIds: string[]) {
   const uniquePostIds = Array.from(new Set(postIds)).filter(Boolean)
@@ -5395,6 +5447,7 @@ registerPostInteractionRoutes(app, {
   canViewerAccessFamilyAudiencePost,
   canViewerAccessPostForPreview,
   createNotificationRecord,
+  createCauseRecord,
   enqueueContentAiScanForComment,
   enqueueContentAiScanForPost,
   filterCommentRowsForViewer,
@@ -5413,6 +5466,7 @@ registerPostInteractionRoutes(app, {
   refreshCommentAggregates,
   refreshPostAggregates,
   resolveLinkPreview,
+  readWalletSummary,
   sanitizePlainText,
   sanitizeRichTextHtml,
   stripHtmlToPlainText,
@@ -5432,6 +5486,7 @@ registerPostReadRoutes(app, {
   getCanonicalPaths,
   isPostHiddenFromViewer,
   loadViewerBlockState,
+  loadCauseSummariesByPostIds,
   loadViewerFeedContext,
   loadViewerPollSelectionsByPostIds,
   loadViewerPostFormattingContext,
@@ -5441,6 +5496,34 @@ registerPostReadRoutes(app, {
   resolveLinkPreview,
   stripHtmlToPlainText,
   syncLegacyParentFamilyFeedPosts,
+  withSchemaGuard,
+})
+
+registerCauseRoutes(app, {
+  POST_INCLUDE,
+  STRIPE_PUBLISHABLE_KEY,
+  applyVisibleModerationFiltersToPostWhere,
+  buildPostSlugBase,
+  buildWalletMetaValue,
+  createNotificationRecord,
+  ensureCivilCauseTables,
+  ensureStripeCustomer,
+  enqueueContentAiScanForPost,
+  formatPost,
+  generateUniquePostSlug,
+  getStripeClient,
+  isAccountSuspended,
+  isStripeConfigured,
+  loadCauseSummariesByPostIds,
+  loadViewerBlockState,
+  loadViewerFeedContext,
+  loadViewerPostFormattingContext,
+  parseCommunityMeta,
+  readBaseCommunityMeta,
+  readWalletSummary,
+  resolveLinkPreview,
+  sanitizeRichTextHtml,
+  stripHtmlToPlainText,
   withSchemaGuard,
 })
 
@@ -11344,6 +11427,8 @@ async function processStripeEvent(stripe: Stripe, event: Stripe.Event): Promise<
       const paymentIntent = event.data.object as Stripe.PaymentIntent
       if (paymentIntent.metadata?.kind === 'shop_order') {
         await handleShopPaymentIntentSucceeded(paymentIntent)
+      } else if (paymentIntent.metadata?.kind === 'cause_contribution') {
+        await applyCauseContributionFromPaymentIntent(paymentIntent, createNotificationRecord)
       } else if (paymentIntent.metadata?.kind === 'wallet_topup') {
         await applyWalletTopUpFromPaymentIntent(paymentIntent)
       }
@@ -12357,6 +12442,15 @@ const start = async () => {
     }, 60_000)
     pollResultsInterval.unref?.()
     void dispatchDuePollResultNotifications()
+    const causeSubscriptionInterval = setInterval(() => {
+      void processAllDueCauseSubscriptions({ batchSize: 200, maxBatches: 10, createNotificationRecord }).catch((error) => {
+        app.log.error({ err: error }, 'cause_subscription_daily_check_failed')
+      })
+    }, 24 * 60 * 60 * 1000)
+    causeSubscriptionInterval.unref?.()
+    void processAllDueCauseSubscriptions({ batchSize: 200, maxBatches: 10, createNotificationRecord }).catch((error) => {
+      app.log.error({ err: error }, 'cause_subscription_boot_check_failed')
+    })
     console.log(`Server listening on port ${PORT}`)
   } catch (err) {
     app.log.error(err)

@@ -124,8 +124,15 @@ async function loadPostDetailResponse(
 
   const visibleCommentRows = deps.filterCommentRowsForViewer(commentRows, viewerBlockState)
 
+  let causeByPost: Record<string, any> = {}
+  try {
+    causeByPost = await deps.loadCauseSummariesByPostIds([post.id])
+  } catch (error) {
+    req.log.error({ err: error, postId: post.id }, 'post_cause_summary_load_failed')
+  }
+
   return {
-    post: deps.formatPost(post, { viewerId, viewerReaction, viewerPollOptionId }),
+    post: deps.formatPost(post, { viewerId, viewerReaction, viewerPollOptionId, cause: causeByPost[post.id] ?? null }),
     paths: deps.getCanonicalPaths(post),
     comments: deps.buildCommentTree(visibleCommentRows, viewerCommentVotes),
   }
@@ -155,7 +162,7 @@ export function registerPostReadRoutes(app: FastifyInstance, deps: PostReadDeps)
       const parse = CursorQuery.extend({
         jurisdiction: JurisdictionEnum.optional(),
         sort: PostSortEnum.optional(),
-        scope: z.enum(['all', 'friends', 'network', 'communities', 'organizations']).optional(),
+        scope: z.enum(['all', 'friends', 'network', 'communities', 'organizations', 'causes']).optional(),
         province: z.string().optional(),
         community: z.string().optional(),
       }).safeParse(req.query)
@@ -208,7 +215,7 @@ export function registerPostReadRoutes(app: FastifyInstance, deps: PostReadDeps)
         viewerFeedContext = await deps.loadViewerFeedContext(viewerId)
         memberBusinessIds = [...viewerFeedContext.memberBusinessIds]
 
-        if (scope === 'communities') {
+        if (scope === 'communities' || scope === 'causes') {
           const follows = await prisma.communityFollow.findMany({
             where: { userId: viewerId },
             orderBy: [{ home: 'desc' }, { createdAt: 'asc' }],
@@ -222,6 +229,10 @@ export function registerPostReadRoutes(app: FastifyInstance, deps: PostReadDeps)
             seenCommunityKeys.add(key)
             return true
           })
+        }
+
+        if (scope === 'causes') {
+          where.type = 'cause'
         }
 
         const existingAnd = Array.isArray(where.AND) ? where.AND : where.AND ? [where.AND] : []
@@ -240,7 +251,7 @@ export function registerPostReadRoutes(app: FastifyInstance, deps: PostReadDeps)
 
         const includeFriends = scope === 'all' || scope === 'friends'
         const includeNetwork = scope === 'all' || scope === 'network'
-        const includeCommunities = scope === 'all' || scope === 'communities'
+        const includeCommunities = scope === 'all' || scope === 'communities' || scope === 'causes'
         const includeOrganizations = scope === 'all' || scope === 'organizations'
         const includeTopics = scope === 'all'
 
@@ -316,7 +327,7 @@ export function registerPostReadRoutes(app: FastifyInstance, deps: PostReadDeps)
         }
 
         if (includeCommunities) {
-          if (scope === 'communities') {
+          if (scope === 'communities' || scope === 'causes') {
             for (const target of topLevelCommunityTargets) {
               accessibleFilters.push({ provinceCode: target.provinceCode, communitySlug: target.communitySlug })
             }
@@ -450,6 +461,8 @@ export function registerPostReadRoutes(app: FastifyInstance, deps: PostReadDeps)
           if (!cursor) {
             prisma.user.update({ where: { id: viewerId }, data: { lastViewedCommunitiesAt: new Date() } }).catch(console.error)
           }
+        } else if (scope === 'causes') {
+          lastViewedAt = null
         } else if (scope === 'organizations') {
           lastViewedAt = null
         } else {
@@ -540,7 +553,7 @@ export function registerPostReadRoutes(app: FastifyInstance, deps: PostReadDeps)
         nextCursor = undefined
       }
 
-      const { reactionsByPost, pollSelectionsByPost, recentCommentsByPost } = await deps.loadViewerPostFormattingContext(
+      const { reactionsByPost, pollSelectionsByPost, recentCommentsByPost, causeByPost } = await deps.loadViewerPostFormattingContext(
         viewerId,
         items.map((item) => item.id),
         5,
@@ -553,6 +566,7 @@ export function registerPostReadRoutes(app: FastifyInstance, deps: PostReadDeps)
             viewerReaction: reactionsByPost[item.id] ?? null,
             viewerPollOptionId: pollSelectionsByPost[item.id] ?? null,
             recentComments: recentCommentsByPost[item.id] ?? [],
+            cause: causeByPost[item.id] ?? null,
           }),
         ),
         nextCursor,

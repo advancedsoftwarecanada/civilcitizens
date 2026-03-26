@@ -19,6 +19,7 @@ import NativeKeyboardUi from './_components/NativeKeyboardUi'
 import PushRegistrationSync from './_components/PushRegistrationSync'
 import IosOpenInAppBanner from './_components/IosOpenInAppBanner'
 import LaunchOverlayCleanup from './_components/LaunchOverlayCleanup'
+import CauseContributionNotificationAudio from './_components/CauseContributionNotificationAudio'
 import DriveRequesterNotificationAudio from './_components/DriveRequesterNotificationAudio'
 import IncomingFamilyCallOverlay from './_components/IncomingFamilyCallOverlay'
 import IncomingMessageCallOverlay from './_components/IncomingMessageCallOverlay'
@@ -124,6 +125,7 @@ export default function RootLayout({ children, modal }: { children: ReactNode; m
           <ViewerBootstrap />
           <FamilyViewBootstrap />
           <LaunchOverlayCleanup />
+          <CauseContributionNotificationAudio />
           <DriveRequesterNotificationAudio />
           <NativeViewportInsets />
           <NativeKeyboardUi />

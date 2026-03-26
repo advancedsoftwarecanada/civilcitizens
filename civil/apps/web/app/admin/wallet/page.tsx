@@ -1,5 +1,6 @@
 "use client"
 
+import Link from 'next/link'
 import { useEffect, useState } from 'react'
 import AdminWideShell from '../_components/AdminWideShell'
 import { buildApiUrl } from '../../_lib/api'
@@ -101,6 +102,14 @@ export default function AdminWalletPage() {
             <h1 className="text-xl font-semibold text-slate-900">Civil platform wallet</h1>
             <p className="text-sm text-slate-600">Review platform fee balance and active ride escrow holdings.</p>
           </header>
+          <div className="flex flex-wrap gap-2">
+            <Link
+              href="/admin/wallet/subscriptions"
+              className="inline-flex items-center rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
+            >
+              View subscriptions
+            </Link>
+          </div>
           <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
             <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
               <p className="text-xs font-semibold uppercase tracking-[0.28em] text-slate-400">Balance</p>

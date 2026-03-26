@@ -55,7 +55,8 @@ function stripHtmlToText(value: string | null | undefined): string {
 export function buildPostPath(post: ApiPost): string {
   const slug = post.seoSlug ?? post.id
   if (post.provinceCode && post.communitySlug) {
-    return `/${post.provinceCode.toLowerCase()}/${post.communitySlug.toLowerCase()}/posts/${slug}`
+    const segment = post.type === 'cause' ? 'causes' : 'posts'
+    return `/${post.provinceCode.toLowerCase()}/${post.communitySlug.toLowerCase()}/${segment}/${slug}`
   }
   return `/u/${post.author.handle}/posts/${slug}`
 }

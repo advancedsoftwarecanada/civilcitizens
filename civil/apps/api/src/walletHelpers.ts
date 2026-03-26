@@ -189,10 +189,22 @@ function buildWalletTransactionTitle(row: WalletLedgerRow, userId: string) {
   if (row.entry_type === 'deposit') return 'Added funds'
   if (row.entry_type === 'withdrawal') return 'Deposit to bank account'
   if (row.entry_type === 'transfer') {
+    if (row.source_type === 'cause_contribution_wallet') {
+      return row.to_user_id === userId ? 'Cause contribution received' : 'Cause contribution sent'
+    }
+    if (row.source_type === 'cause_subscription_charge') {
+      return row.to_user_id === userId ? 'Cause subscription received' : 'Cause subscription charged'
+    }
     if (row.source_type === 'drive_ride_tip') {
       return row.to_user_id === userId ? 'Ride tip received' : 'Ride tip sent'
     }
     return row.to_user_id === userId ? 'Received Civil Credits' : 'Sent Civil Credits'
+  }
+  if (row.entry_type === 'adjustment' && row.source_type === 'cause_subscription_fee') {
+    return 'Cause subscription fee'
+  }
+  if (row.entry_type === 'adjustment' && row.source_type === 'cause_contribution_fee') {
+    return 'Cause contribution fee'
   }
   if (row.entry_type === 'adjustment' && row.source_type === 'drive_ride_tip_civil_fee') {
     return 'Ride tip fee'
@@ -204,6 +216,12 @@ function buildWalletTransactionDetail(row: WalletLedgerRow, userId: string) {
   if (row.entry_type === 'deposit') return row.from_entity_label ?? 'Stripe'
   if (row.entry_type === 'withdrawal') return row.to_entity_label ?? 'Linked bank account'
   if (row.entry_type === 'transfer') {
+    if (row.source_type === 'cause_contribution_wallet' || row.source_type === 'cause_subscription_charge') {
+      if (row.to_user_id === userId) {
+        return row.from_user_name ?? row.from_user_handle ?? 'Supporter'
+      }
+      return row.to_user_name ?? row.to_user_handle ?? 'Cause creator'
+    }
     if (row.source_type === 'drive_ride_tip') {
       if (row.to_user_id === userId) {
         return row.from_user_name ?? row.from_user_handle ?? 'Ride requester'
@@ -214,6 +232,9 @@ function buildWalletTransactionDetail(row: WalletLedgerRow, userId: string) {
       return row.from_user_name ?? row.from_user_handle ?? row.from_entity_label ?? 'Civil Wallet'
     }
     return row.to_user_name ?? row.to_user_handle ?? row.to_entity_label ?? 'Civil Wallet'
+  }
+  if (row.entry_type === 'adjustment' && (row.source_type === 'cause_subscription_fee' || row.source_type === 'cause_contribution_fee')) {
+    return 'Civil fee applied to Cause support'
   }
   if (row.entry_type === 'adjustment' && row.source_type === 'drive_ride_tip_civil_fee') {
     return 'Civil fee applied to a ride tip'

@@ -5,16 +5,15 @@ import Link from 'next/link'
 import { FaCarSide } from 'react-icons/fa'
 import { HiOutlineBell } from 'react-icons/hi2'
 import { buildApiUrl } from '../_lib/api'
+import { buildPostPath } from '../_lib/shareTarget'
 import { hasFamilyProfilesAvailable } from '../_lib/me'
 import { formatUserDisplayName } from '../_lib/text'
-import { formatTopicLabel } from '../_lib/topics'
 import { useViewerStore } from '../_lib/viewerStore'
+import type { ApiPost } from './PostComposer'
 import { pushToast } from './useToasts'
 import VerifiedAvatar from './VerifiedAvatar'
 import Block from './Block'
 import CivilCard from './CivilCard'
-import FamilyRailBlock, { type SharedFamilyRailEntry } from './FamilyRailBlock'
-import TopicFollowButton from './TopicFollowButton'
 
 type RightRailData = {
   userHandle?: string
@@ -122,14 +121,8 @@ type CommunityOrganizationsRailGroup = {
   items: CommunityOrganizationRailItem[]
 }
 
-type TopicRailItem = {
-  slug: string
-  href: string
-  recentPostCount?: number
-}
-
-type TopicRailResponse = {
-  items?: TopicRailItem[]
+type CauseRailResponse = {
+  authored?: ApiPost[]
 }
 
 type ConnectionEntry = {
@@ -301,27 +294,6 @@ type ProfileFamilyRelationshipRailItem = {
   latestPostAt?: string | null
 }
 
-type FamilyRailResponse = {
-  members?: FamilyMemberRailItem[]
-  profileRelationships?: ProfileFamilyRelationshipRailItem[]
-}
-
-type PublicFamilyRailEntry = {
-  id: string
-  handle: string
-  name?: string | null
-  avatarUrl?: string | null
-  coverUrl?: string | null
-  relationshipLabel: string
-}
-
-type PublicFamilyRailResponse = {
-  immediateFamily?: PublicFamilyRailEntry[]
-  extendedFamily?: PublicFamilyRailEntry[]
-}
-
-type FamilyRailEntry = SharedFamilyRailEntry
-
 type Status = 'loading' | 'ready' | 'error' | 'unauthorized'
 
 function formatCommunityRailLabel(value: string | null | undefined) {
@@ -344,13 +316,11 @@ function shuffleItems<T>(items: T[]) {
   return next
 }
 
-function buildTopicHref(slug: string) {
-  return `/t/${encodeURIComponent(slug)}`
+function buildCauseHref(post: ApiPost) {
+  return buildPostPath(post)
 }
-
-function formatTopicPostCount(value: number | undefined) {
-  if (typeof value !== 'number' || value <= 0) return null
-  return value === 1 ? '1 recent post' : `${value.toLocaleString()} recent posts`
+function formatCurrency(amountCents: number | undefined) {
+  return new Intl.NumberFormat('en-CA', { style: 'currency', currency: 'CAD', maximumFractionDigits: 0 }).format((amountCents ?? 0) / 100)
 }
 
 export function RightRail({
@@ -367,7 +337,7 @@ export function RightRail({
   showPendingFriendRequests = false,
   showPendingConnectionRequests = false,
 }: {
-  mode?: 'default' | 'organizations' | 'organizationsDirectory' | 'network' | 'events' | 'community' | 'communitiesFeed' | 'work' | 'drive'
+  mode?: 'default' | 'organizations' | 'organizationsDirectory' | 'network' | 'events' | 'community' | 'communitiesFeed' | 'causesFeed' | 'work' | 'drive'
   showOrganizations?: boolean
   showRsvps?: boolean
   organizationLinkTarget?: 'org' | 'chat'
@@ -398,11 +368,8 @@ export function RightRail({
   const [workApplications, setWorkApplications] = useState<WorkApplicationRailItem[]>([])
   const [deliverySummaryActive, setDeliverySummaryActive] = useState(false)
   const [deliverySummaryItems, setDeliverySummaryItems] = useState<DeliverySummaryRailItem[]>([])
-  const [familyMembers, setFamilyMembers] = useState<FamilyMemberRailItem[]>([])
-  const [familyRelationships, setFamilyRelationships] = useState<ProfileFamilyRelationshipRailItem[]>([])
-  const [followedTopics, setFollowedTopics] = useState<TopicRailItem[]>([])
-  const [suggestedTopics, setSuggestedTopics] = useState<TopicRailItem[]>([])
   const [upcomingByElections, setUpcomingByElections] = useState<UpcomingByElectionRailItem[]>([])
+  const [authoredCauses, setAuthoredCauses] = useState<ApiPost[]>([])
 
   const getOrganizationHref = useCallback(
     (org: { provinceCode: string | null; communitySlug: string | null; slug: string }) => {
@@ -416,17 +383,16 @@ export function RightRail({
   const shouldLoadOrganizations = !isFamilyLockedSession && (mode === 'organizations' || mode === 'organizationsDirectory' || mode === 'community' || showOrganizations)
   const shouldLoadOwnedOrganizations = shouldLoadOrganizations
   const shouldLoadMemberOrganizations = shouldLoadOrganizations
-  const shouldLoadCommunityOrganizations = !isFamilyLockedSession && mode === 'communitiesFeed'
+  const shouldLoadCommunityOrganizations = !isFamilyLockedSession && (mode === 'communitiesFeed' || mode === 'causesFeed')
   const shouldLoadConnections = mode === 'network'
   const shouldLoadPendingFriendRequests = showPendingFriendRequests
   const shouldLoadPendingConnectionRequests = mode === 'network' || showPendingConnectionRequests
-  const shouldLoadEventsSidebar = !isFamilyLockedSession && (mode === 'events' || mode === 'community' || mode === 'communitiesFeed' || showRsvps)
+  const shouldLoadEventsSidebar = !isFamilyLockedSession && (mode === 'events' || mode === 'community' || mode === 'communitiesFeed' || mode === 'causesFeed' || showRsvps)
   const shouldLoadWorkApplications = mode === 'work'
   const shouldLoadDeliverySummary = mode === 'drive' && showDriveCallout
   const shouldLoadHomeRail = !hideSocialBlocks
-  const shouldLoadFamilyRail = !isFamilyLockedSession && mode === 'default' && viewer?.accountType === 'user'
-  const shouldLoadTopicsRail = !isFamilyLockedSession
   const shouldLoadUpcomingByElections = !isFamilyLockedSession && mode === 'communitiesFeed'
+  const shouldLoadCausesRail = !isFamilyLockedSession && (mode === 'default' || mode === 'community' || mode === 'communitiesFeed' || mode === 'causesFeed' || mode === 'network')
 
   const subscribedOrganizations = useMemo(
     () => organizations.filter((org) => Boolean(org.provinceCode) && Boolean(org.communitySlug)),
@@ -500,39 +466,6 @@ export function RightRail({
     return '/organizations/manager'
   }, [eventOrganizations])
 
-  const familyEntries = useMemo<FamilyRailEntry[]>(() => {
-    const memberEntries = familyMembers.map((member) => ({
-      kind: 'member' as const,
-      id: member.id,
-      displayName: member.displayName,
-      relationshipLabel: member.relationshipLabel,
-      avatarUrl: member.avatarUrl ?? null,
-      modeBand: member.modeBand,
-      latestPostAt: member.latestPostAt ?? null,
-      suspended: member.suspended,
-    }))
-
-    const relationshipEntries = familyRelationships.map((relationship) => ({
-      kind: 'profile' as const,
-      id: relationship.id,
-      handle: relationship.handle,
-      displayName: relationship.displayName,
-      relationshipLabel: relationship.relationshipLabel,
-      avatarUrl: relationship.avatarUrl ?? null,
-      coverUrl: relationship.coverUrl ?? null,
-      latestPostAt: relationship.latestPostAt ?? null,
-    }))
-
-    return [...memberEntries, ...relationshipEntries]
-      .sort((left, right) => {
-        const leftTime = left.latestPostAt ? new Date(left.latestPostAt).getTime() : 0
-        const rightTime = right.latestPostAt ? new Date(right.latestPostAt).getTime() : 0
-        if (rightTime !== leftTime) return rightTime - leftTime
-        return left.displayName.localeCompare(right.displayName)
-      })
-      .slice(0, 5)
-  }, [familyMembers, familyRelationships])
-
   const loadData = useCallback(async () => {
     const token = typeof window !== 'undefined' ? localStorage.getItem('token') : null
     if (!token) {
@@ -541,7 +474,7 @@ export function RightRail({
     }
     try {
       const requests: Array<{
-        key: 'home' | 'follows' | 'owned' | 'memberships' | 'communityFollows' | 'connections' | 'friendRequests' | 'connectionRequests' | 'eventsSidebar' | 'workApplications' | 'deliverySummary' | 'family' | 'topicFollows' | 'topicSuggestions' | 'upcomingByElections'
+        key: 'home' | 'follows' | 'owned' | 'memberships' | 'communityFollows' | 'connections' | 'friendRequests' | 'connectionRequests' | 'eventsSidebar' | 'workApplications' | 'deliverySummary' | 'upcomingByElections' | 'causes'
         promise: Promise<Response>
       }> = []
 
@@ -644,37 +577,20 @@ export function RightRail({
         })
       }
 
-      if (shouldLoadFamilyRail) {
-        requests.push({
-          key: 'family',
-          promise: fetch(buildApiUrl('/family'), {
-            headers: { authorization: `Bearer ${token}` },
-            cache: 'no-store',
-          }),
-        })
-      }
-
-      if (shouldLoadTopicsRail) {
-        requests.push({
-          key: 'topicFollows',
-          promise: fetch(buildApiUrl('/topics/follows'), {
-            headers: { authorization: `Bearer ${token}` },
-            cache: 'no-store',
-          }),
-        })
-        requests.push({
-          key: 'topicSuggestions',
-          promise: fetch(buildApiUrl('/topics/suggestions?limit=6'), {
-            headers: { authorization: `Bearer ${token}` },
-            cache: 'no-store',
-          }),
-        })
-      }
-
       if (shouldLoadUpcomingByElections) {
         requests.push({
           key: 'upcomingByElections',
           promise: fetch(buildApiUrl('/by-elections/upcoming'), {
+            headers: { authorization: `Bearer ${token}` },
+            cache: 'no-store',
+          }),
+        })
+      }
+
+      if (shouldLoadCausesRail) {
+        requests.push({
+          key: 'causes',
+          promise: fetch(buildApiUrl('/causes/discover'), {
             headers: { authorization: `Bearer ${token}` },
             cache: 'no-store',
           }),
@@ -695,10 +611,8 @@ export function RightRail({
       const eventsSidebarRes = byKey.get('eventsSidebar')
       const workApplicationsRes = byKey.get('workApplications')
       const deliverySummaryRes = byKey.get('deliverySummary')
-      const familyRes = byKey.get('family')
-      const topicFollowsRes = byKey.get('topicFollows')
-      const topicSuggestionsRes = byKey.get('topicSuggestions')
       const upcomingByElectionsRes = byKey.get('upcomingByElections')
+        const causesRes = byKey.get('causes')
 
       if (
         homeRes?.status === 401 ||
@@ -711,9 +625,7 @@ export function RightRail({
         connectionRequestsRes?.status === 401 ||
         eventsSidebarRes?.status === 401 ||
         workApplicationsRes?.status === 401 ||
-        familyRes?.status === 401 ||
-        topicFollowsRes?.status === 401
-        || upcomingByElectionsRes?.status === 401
+        upcomingByElectionsRes?.status === 401
       ) {
         setStatus('unauthorized')
         return
@@ -749,12 +661,11 @@ export function RightRail({
           setDeliverySummaryActive(false)
           setDeliverySummaryItems([])
         }
-        if (!shouldLoadTopicsRail) {
-          setFollowedTopics([])
-          setSuggestedTopics([])
-        }
         if (!shouldLoadUpcomingByElections) {
           setUpcomingByElections([])
+        }
+        if (!shouldLoadCausesRail) {
+          setAuthoredCauses([])
         }
         return
       }
@@ -905,65 +816,6 @@ export function RightRail({
         setDeliverySummaryItems([])
       }
 
-      if (familyRes?.ok) {
-        const payload = (await familyRes.json().catch(() => null)) as FamilyRailResponse | null
-        setFamilyMembers(Array.isArray(payload?.members) ? payload.members : [])
-        let nextRelationships = Array.isArray(payload?.profileRelationships) ? payload.profileRelationships : []
-
-        if (nextRelationships.length === 0 && viewer?.handle) {
-          try {
-            const publicFamilyResponse = await fetch(buildApiUrl(`/users/${encodeURIComponent(viewer.handle)}/family`), {
-              cache: 'no-store',
-            })
-            if (publicFamilyResponse.ok) {
-              const publicPayload = (await publicFamilyResponse.json().catch(() => null)) as PublicFamilyRailResponse | null
-              const combinedEntries = [
-                ...(Array.isArray(publicPayload?.immediateFamily) ? publicPayload.immediateFamily : []),
-                ...(Array.isArray(publicPayload?.extendedFamily) ? publicPayload.extendedFamily : []),
-              ]
-              nextRelationships = Array.from(
-                new Map(
-                  combinedEntries.map((entry) => [
-                    entry.id,
-                    {
-                      id: entry.id,
-                      handle: entry.handle,
-                      displayName: entry.name?.trim() || entry.handle,
-                      relationshipLabel: entry.relationshipLabel,
-                      avatarUrl: entry.avatarUrl ?? null,
-                      coverUrl: entry.coverUrl ?? null,
-                      latestPostAt: null,
-                    } satisfies ProfileFamilyRelationshipRailItem,
-                  ]),
-                ).values(),
-              )
-            }
-          } catch (fallbackError) {
-            console.error('Failed to load public family fallback for right rail', fallbackError)
-          }
-        }
-
-        setFamilyRelationships(nextRelationships)
-      } else {
-        setFamilyMembers([])
-        setFamilyRelationships([])
-      }
-
-      if (topicFollowsRes?.ok) {
-        const payload = (await topicFollowsRes.json().catch(() => null)) as TopicRailResponse | null
-        setFollowedTopics(Array.isArray(payload?.items) ? payload.items : [])
-      } else {
-        setFollowedTopics([])
-      }
-
-      if (topicSuggestionsRes?.ok) {
-        const payload = (await topicSuggestionsRes.json().catch(() => null)) as TopicRailResponse | null
-        const suggestionItems = Array.isArray(payload?.items) ? payload.items : []
-        setSuggestedTopics(suggestionItems)
-      } else {
-        setSuggestedTopics([])
-      }
-
       if (upcomingByElectionsRes?.ok) {
         const payload = (await upcomingByElectionsRes.json().catch(() => null)) as UpcomingByElectionRailResponse | null
         setUpcomingByElections(Array.isArray(payload?.items) ? payload.items : [])
@@ -971,12 +823,19 @@ export function RightRail({
         setUpcomingByElections([])
       }
 
+      if (shouldLoadCausesRail && causesRes?.ok) {
+        const payload = (await causesRes.json().catch(() => null)) as CauseRailResponse | null
+        setAuthoredCauses(Array.isArray(payload?.authored) ? payload.authored : [])
+      } else {
+        setAuthoredCauses([])
+      }
+
       setStatus('ready')
     } catch (err) {
       console.error(err)
       setStatus('error')
     }
-  }, [shouldLoadHomeRail, shouldLoadOrganizations, shouldLoadOwnedOrganizations, shouldLoadMemberOrganizations, shouldLoadCommunityOrganizations, shouldLoadConnections, shouldLoadPendingFriendRequests, shouldLoadPendingConnectionRequests, shouldLoadEventsSidebar, shouldLoadWorkApplications, shouldLoadDeliverySummary, shouldLoadFamilyRail, shouldLoadTopicsRail, shouldLoadUpcomingByElections, viewer?.handle, viewer?.homeCommunity?.communitySlug, viewer?.homeCommunity?.provinceCode])
+  }, [shouldLoadCausesRail, shouldLoadHomeRail, shouldLoadOrganizations, shouldLoadOwnedOrganizations, shouldLoadMemberOrganizations, shouldLoadCommunityOrganizations, shouldLoadConnections, shouldLoadPendingFriendRequests, shouldLoadPendingConnectionRequests, shouldLoadEventsSidebar, shouldLoadWorkApplications, shouldLoadDeliverySummary, shouldLoadUpcomingByElections, viewer?.homeCommunity?.communitySlug, viewer?.homeCommunity?.provinceCode])
 
   useEffect(() => {
     void loadData()
@@ -1016,19 +875,6 @@ export function RightRail({
     } finally {
       setPendingConnectionAction(null)
     }
-  }, [])
-
-  const handleTopicFollowChange = useCallback((topic: TopicRailItem, following: boolean) => {
-    if (following) {
-      setFollowedTopics((current) => {
-        if (current.some((item) => item.slug === topic.slug)) return current
-        return [{ ...topic, href: buildTopicHref(topic.slug) }, ...current]
-      })
-      setSuggestedTopics((current) => current.filter((item) => item.slug !== topic.slug))
-      return
-    }
-
-    setFollowedTopics((current) => current.filter((item) => item.slug !== topic.slug))
   }, [])
 
   if (status === 'loading') {
@@ -1192,6 +1038,95 @@ export function RightRail({
     )
   }
 
+  if (mode === 'causesFeed') {
+    return (
+      <div className="space-y-6">
+        <Block title="Your Causes">
+          <div className="space-y-4">
+            <Link
+              href="/causes/start"
+              className="inline-flex w-full items-center justify-center rounded-full bg-red-600 px-4 py-3 text-sm font-semibold text-white transition hover:bg-red-700"
+            >
+              Start a Cause
+            </Link>
+
+            {authoredCauses.length ? (
+              <ul className="space-y-3">
+                {authoredCauses.map((post) => {
+                  const title = post.title?.trim() || 'Untitled cause'
+                  const goalLabel = post.cause ? formatCurrency(post.cause.goalAmountCents) : null
+
+                  return (
+                    <li key={post.id}>
+                      <Link
+                        href={buildCauseHref(post)}
+                        className="block rounded-2xl border border-slate-200 bg-white px-4 py-3 transition hover:border-red-200 hover:bg-red-50/40"
+                      >
+                        <p className="line-clamp-2 text-sm font-semibold text-slate-900">{title}</p>
+                        {goalLabel ? <p className="mt-1 text-xs font-medium text-slate-500">Goal {goalLabel}</p> : null}
+                      </Link>
+                    </li>
+                  )
+                })}
+              </ul>
+            ) : (
+              <p className="text-sm text-slate-500">You have not started any causes yet.</p>
+            )}
+          </div>
+        </Block>
+
+        {communityOrganizationGroups.length ? (
+          communityOrganizationGroups.map((group) => (
+            <Block
+              key={group.key}
+              title={
+                <div className="space-y-1">
+                  {group.isHome ? (
+                    <span className="inline-flex items-center rounded-full bg-emerald-600 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.18em] text-white">
+                      Home
+                    </span>
+                  ) : null}
+                  <div className="space-y-0.5">
+                    <p className="text-xs font-semibold uppercase tracking-wider text-slate-500">Organizations in</p>
+                    <Link href={group.communityHref} className="inline-flex text-base font-semibold leading-5 text-slate-900 hover:text-[var(--cc-primary)] hover:underline">
+                      {group.title}
+                    </Link>
+                  </div>
+                </div>
+              }
+              action={{ label: 'Directory', href: group.href }}
+            >
+              {group.items.length ? (
+                <ul className="space-y-3">
+                  {group.items.map((org) => (
+                    <li key={org.id}>
+                      <CivilCard
+                        href={org.provinceCode && org.communitySlug ? `/com/${org.provinceCode.toLowerCase()}/${org.communitySlug.toLowerCase()}/orgs/${org.slug}` : group.href}
+                        size="md"
+                        name={org.name}
+                        avatarAlt={org.name}
+                        avatarInitials={org.name}
+                        avatarSrc={org.logoUrl ?? null}
+                        coverUrl={org.coverUrl ?? null}
+                        isVerified={Boolean(org.isVerified)}
+                      />
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="text-sm text-slate-500">No organizations in this community yet.</p>
+              )}
+            </Block>
+          ))
+        ) : (
+          <Block title="Community Organizations" action={{ label: 'View all', href: '/communities/settings' }}>
+            <p className="text-sm text-slate-500">Follow a community to see its organizations here.</p>
+          </Block>
+        )}
+      </div>
+    )
+  }
+
   return (
     <div className="space-y-6">
       {showPendingFriendRequests && pendingFriendRequests.length ? (
@@ -1219,8 +1154,15 @@ export function RightRail({
         </Block>
       ) : null}
 
-      {!hideFamilyBlock && !hideSocialBlocks && !isFamilyLockedSession && viewer?.accountType === 'user' && (hasFamilyProfilesAvailable(viewer) || familyEntries.length > 0) ? (
-        <FamilyRailBlock entries={familyEntries} viewAllHref={viewer?.handle ? `/u/${viewer.handle}/family` : '/family'} />
+      {shouldLoadCausesRail ? (
+        <Block>
+          <Link
+            href="/causes/start"
+            className="inline-flex w-full items-center justify-center rounded-full bg-red-600 px-4 py-3 text-sm font-semibold text-white transition hover:bg-red-700"
+          >
+            Start a Cause
+          </Link>
+        </Block>
       ) : null}
 
       {mode === 'organizationsDirectory' ? (
@@ -1574,49 +1516,6 @@ export function RightRail({
         </>
       ) : null}
 
-      {/* Friends Section */}
-      {!hideSocialBlocks && !hideContacts ? (
-      <Block
-        title="Your Friends"
-        action={
-          data?.userHandle && (data.totalFriends ?? 0) > 0
-            ? { label: `View all (${data.totalFriends})`, href: `/u/${data.userHandle}/friends` }
-            : undefined
-        }
-      >
-        {data?.friends.length ? (
-          <ul className="space-y-3">
-            {data.friends.map((friend) => {
-              const displayName = formatUserDisplayName(friend.name, friend.handle) || friend.handle
-              return (
-              <li key={friend.id}>
-                <CivilCard
-                  href={`/u/${friend.handle}`}
-                  size="md"
-                  name={displayName}
-                  avatarAlt={displayName}
-                  avatarInitials={displayName}
-                  avatarSrc={friend.avatarUrl}
-                  coverUrl={friend.coverUrl ?? null}
-                  trailing={
-                    friend.newPosts > 0 ? (
-                      <span className="flex items-center gap-1 text-xs font-semibold text-white/90">
-                        <HiOutlineBell className="h-4 w-4" />
-                        ({friend.newPosts})
-                      </span>
-                    ) : null
-                  }
-                />
-              </li>
-              )
-            })}
-          </ul>
-        ) : (
-          <p className="text-sm text-slate-500">No friends yet.</p>
-        )}
-      </Block>
-      ) : null}
-
       {mode === 'default' && showOrganizations && !isFamilyLockedSession ? (
         <Block title={railOrganizationsTitle} action={{ label: 'View all', href: '/organizations/directory' }}>
           {railOrganizations.length ? (
@@ -1638,52 +1537,6 @@ export function RightRail({
             </ul>
           ) : (
             <p className="text-sm text-slate-500">{railOrganizationsEmptyLabel}</p>
-          )}
-        </Block>
-      ) : null}
-
-      {!isFamilyLockedSession ? (
-        <Block title="Suggested Topics" action={{ label: 'Browse', href: '/topics' }}>
-          {suggestedTopics.length ? (
-            <ul className="space-y-3">
-              {suggestedTopics.map((topic) => (
-                <li key={topic.slug} className="flex items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3">
-                  <div className="min-w-0">
-                    <Link href={topic.href || buildTopicHref(topic.slug)} className="block text-sm font-semibold text-slate-900 hover:text-[var(--cc-primary)]">
-                      #{topic.slug}
-                    </Link>
-                    <p className="truncate text-xs text-slate-500">
-                      {formatTopicPostCount(topic.recentPostCount) ?? (formatTopicLabel(topic.slug) || topic.slug)}
-                    </p>
-                  </div>
-                  <TopicFollowButton slug={topic.slug} size="sm" onChange={(following) => handleTopicFollowChange(topic, following)} />
-                </li>
-              ))}
-            </ul>
-          ) : (
-            <p className="text-sm text-slate-500">No suggested topics right now.</p>
-          )}
-        </Block>
-      ) : null}
-
-      {!isFamilyLockedSession ? (
-        <Block title="Your Topics" action={{ label: 'View all', href: '/topics' }}>
-          {followedTopics.length ? (
-            <ul className="space-y-3">
-              {followedTopics.map((topic) => (
-                <li key={topic.slug} className="flex items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-white px-4 py-3">
-                  <div className="min-w-0">
-                    <Link href={topic.href || buildTopicHref(topic.slug)} className="block text-sm font-semibold text-slate-900 hover:text-[var(--cc-primary)]">
-                      #{topic.slug}
-                    </Link>
-                    <p className="truncate text-xs text-slate-500">{formatTopicLabel(topic.slug) || topic.slug}</p>
-                  </div>
-                  <TopicFollowButton slug={topic.slug} initialFollowing size="sm" onChange={(following) => handleTopicFollowChange(topic, following)} />
-                </li>
-              ))}
-            </ul>
-          ) : (
-            <p className="text-sm text-slate-500">No topics followed yet.</p>
           )}
         </Block>
       ) : null}

@@ -3,7 +3,8 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 import sanitizeHtml from 'sanitize-html'
 import { prisma } from '@civil/db'
 import { BusinessRole, MessageParticipantRole, MessageThreadType, Prisma } from '@prisma/client'
-import { buildWalletMetaValue, ensureCitizenWalletTables, insertCivilCreditLedgerEntry, readBaseJsonObject, readWalletSummary } from '../walletHelpers.js'
+import { ensureCitizenWalletTables, readWalletSummary } from '../walletHelpers.js'
+import { applyWalletDebit } from '../walletTransactions.js'
 
 type JobRouteDeps = Record<string, any>
 
@@ -767,80 +768,34 @@ export function registerJobRoutes(app: FastifyInstance, deps: JobRouteDeps) {
           if (!wallet.enabled) throw new Error('wallet_required')
           if (wallet.civilCreditsCents < JOB_BOOST_COST_CENTS) throw new Error('insufficient_wallet_balance')
 
-          const userMeta = readBaseJsonObject(freshUser.communityMeta)
-          userMeta.wallet = buildWalletMetaValue({
-            ...wallet,
-            civilCreditsCents: wallet.civilCreditsCents - JOB_BOOST_COST_CENTS,
-          })
-
           const walletTransactionId = `job-boost:${params.data.jobId}:${randomUUID()}`
-          const ledgerEventId = walletTransactionId
+          const transactionMetadata = {
+            kind: 'job_boost',
+            jobPostingId: job.id,
+            businessId: job.businessId,
+            impressionCap: JOB_BOOST_IMPRESSION_CAP,
+            endsAt: endsAt.toISOString(),
+          }
 
-          await tx.user.update({
-            where: { id: freshUser.id },
-            data: { communityMeta: userMeta as Prisma.InputJsonValue },
-          })
-
-          await tx.$executeRaw`
-            INSERT INTO citizen_wallet_transaction (
-              id,
-              kind,
-              status,
-              user_id,
-              counterparty_user_id,
-              amount_cents,
-              currency,
-              metadata,
-              created_at,
-              updated_at
-            )
-            VALUES (
-              ${walletTransactionId},
-              ${'job_boost'},
-              ${'completed'},
-              ${freshUser.id},
-              null,
-              ${JOB_BOOST_COST_CENTS},
-              ${'cad'},
-              ${JSON.stringify({
-                kind: 'job_boost',
-                jobPostingId: job.id,
-                businessId: job.businessId,
-                impressionCap: JOB_BOOST_IMPRESSION_CAP,
-                endsAt: endsAt.toISOString(),
-              })}::jsonb,
-              NOW(),
-              NOW()
-            )
-          `
-
-          await insertCivilCreditLedgerEntry(tx, {
-            id: `${walletTransactionId}:ledger`,
-            eventId: ledgerEventId,
-            entryType: 'transfer',
-            status: 'completed',
+          await applyWalletDebit(tx, {
+            senderUserId: freshUser.id,
             amountCents: JOB_BOOST_COST_CENTS,
-            currency: 'cad',
-            from: {
-              entityType: 'user_wallet',
-              userId: freshUser.id,
-              handle: freshUser.handle ?? null,
-              name: freshUser.name ?? null,
-              entityLabel: 'Civil Wallet',
+            transactionId: walletTransactionId,
+            transactionKind: 'job_boost',
+            transactionMetadata,
+            errors: {
+              senderWalletDisabled: 'wallet_required',
+              insufficientFunds: 'insufficient_wallet_balance',
             },
-            to: {
-              entityType: 'platform_wallet',
-              entityLabel: 'Civil Job Boosts',
-            },
-            sourceType: 'job_boost',
-            sourceReferenceId: job.id,
-            description: `Boost for job: ${job.title}`,
-            metadata: {
-              kind: 'job_boost',
-              jobPostingId: job.id,
-              businessId: job.businessId,
-              impressionCap: JOB_BOOST_IMPRESSION_CAP,
-              endsAt: endsAt.toISOString(),
+            ledger: {
+              id: `${walletTransactionId}:ledger`,
+              eventId: walletTransactionId,
+              sourceType: 'job_boost',
+              sourceReferenceId: job.id,
+              description: `Boost for job: ${job.title}`,
+              toEntityType: 'platform_wallet',
+              toEntityLabel: 'Civil Job Boosts',
+              metadata: transactionMetadata,
             },
           })
 

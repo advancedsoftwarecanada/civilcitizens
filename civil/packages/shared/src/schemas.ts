@@ -1,7 +1,24 @@
 import { z } from 'zod'
 import { normalizeProvinceCode } from './chambers.js'
 
-export const PostTypeEnum = z.enum(['post', 'article', 'photo', 'poll'])
+export const PostTypeEnum = z.enum(['post', 'article', 'photo', 'poll', 'cause'])
+export const CAUSE_MINIMUM_GOAL_CENTS = 5_000
+export const CAUSE_MAXIMUM_GOAL_CENTS = 50_000_000
+export const CAUSE_MINIMUM_CONTRIBUTION_CENTS = 500
+export const CAUSE_MAXIMUM_CONTRIBUTION_CENTS = 1_000_000
+
+export function calculateCivilFeeCents(amountCents: number) {
+  if (!Number.isFinite(amountCents) || amountCents <= 0) return 0
+  if (amountCents <= 10_000) return 50
+  if (amountCents <= 20_000) return 75
+  if (amountCents <= 30_000) return 100
+  if (amountCents <= 40_000) return 150
+  return 200
+}
+
+export function calculateCausePlatformFeeCents(amountCents: number) {
+  return calculateCivilFeeCents(amountCents)
+}
 export const PollResultsVisibilityEnum = z.enum([
   'after_vote',
   'after_6_hours',
@@ -66,6 +83,11 @@ export const CreatePostInput = z
     jurisdiction: JurisdictionEnum.optional(),
     sharedPostId: z.string().cuid().optional(),
     poll: CreatePollInput.optional(),
+    cause: z
+      .object({
+        goalAmountCents: z.coerce.number().int().min(CAUSE_MINIMUM_GOAL_CENTS).max(CAUSE_MAXIMUM_GOAL_CENTS),
+      })
+      .optional(),
   })
   .superRefine((data, ctx) => {
     const hasBusinessId = typeof data.businessId === 'string' && data.businessId.trim().length > 0
@@ -166,6 +188,50 @@ export const CreatePostInput = z
         ctx.addIssue({
           code: z.ZodIssueCode.custom,
           message: 'Poll questions must be 5000 characters or less',
+          path: ['body'],
+        })
+      }
+    } else if (data.type === 'cause') {
+      if (!data.title) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: 'Cause title is required',
+          path: ['title'],
+        })
+      }
+      if (!data.cause) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: 'Cause goal is required',
+          path: ['cause'],
+        })
+      }
+      if (data.poll) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: 'Causes cannot include poll settings',
+          path: ['poll'],
+        })
+      }
+      if (data.sharedPostId) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: 'Causes cannot share another post',
+          path: ['sharedPostId'],
+        })
+      }
+      const bodyLength = (data.body ?? '').trim().length
+      if (bodyLength < 30) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: 'Causes need at least 30 characters of description',
+          path: ['body'],
+        })
+      }
+      if (bodyLength > 5000) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: 'Cause descriptions must be 5000 characters or less',
           path: ['body'],
         })
       }

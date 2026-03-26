@@ -44,6 +44,16 @@ export function registerPostInteractionRoutes(app: FastifyInstance, deps: PostIn
       const author = await prisma.user.findUnique({ where: { id: userId }, select: { id: true, handle: true, communityMeta: true } })
       if (!author) return reply.code(401).send({ error: 'unauthorized' })
 
+      if (parse.data.type === 'cause') {
+        if (parse.data.audience === 'family') {
+          return reply.code(400).send({ error: 'cause_family_audience_not_supported' })
+        }
+        const wallet = deps.readWalletSummary(author.communityMeta)
+        if (!wallet?.stripeConnect?.accountId || !wallet.stripeConnect.payoutsEnabled) {
+          return reply.code(409).send({ error: 'wallet_connect_required' })
+        }
+      }
+
       let business: {
         id: string
         ownerId: string
@@ -121,12 +131,13 @@ export function registerPostInteractionRoutes(app: FastifyInstance, deps: PostIn
       const showBusinessAuthor = Boolean(business && parse.data.showBusinessAuthor)
 
       const isArticle = type === 'article'
+      const isRichTextBody = type === 'article' || type === 'cause'
       const normalizedBody = sharedPostId
         ? deps.sanitizePlainText(rawBody)
-        : isArticle
+        : isRichTextBody
           ? deps.sanitizeRichTextHtml(rawBody)
           : deps.sanitizePlainText(rawBody)
-      const previewSourceBody = isArticle ? deps.stripHtmlToPlainText(normalizedBody) : normalizedBody
+      const previewSourceBody = isRichTextBody ? deps.stripHtmlToPlainText(normalizedBody) : normalizedBody
       const firstUrl = extractFirstPostUrl(previewSourceBody)
       const linkPreview = firstUrl ? await deps.resolveLinkPreview(firstUrl, userId).catch(() => null) : null
 
@@ -179,6 +190,14 @@ export function registerPostInteractionRoutes(app: FastifyInstance, deps: PostIn
                 })),
               },
             },
+          })
+        }
+
+        if (type === 'cause' && parse.data.cause) {
+          await deps.createCauseRecord(tx, {
+            postId: post.id,
+            creatorUserId: userId,
+            goalAmountCents: parse.data.cause.goalAmountCents,
           })
         }
 
@@ -247,7 +266,8 @@ export function registerPostInteractionRoutes(app: FastifyInstance, deps: PostIn
         })
       }
 
-      return reply.code(201).send(deps.formatPost(created, { viewerId: userId }))
+      const causeByPost = await deps.loadCauseSummariesByPostIds([created.id])
+      return reply.code(201).send(deps.formatPost(created, { viewerId: userId, cause: causeByPost[created.id] ?? null }))
     }),
   )
 
@@ -306,7 +326,7 @@ export function registerPostInteractionRoutes(app: FastifyInstance, deps: PostIn
       const updatedPost = await prisma.post.findUnique({ where: { id: params.data.id }, include: deps.POST_INCLUDE })
       if (!updatedPost) return reply.code(404).send({ error: 'poll_not_found' })
 
-      const { reactionsByPost, pollSelectionsByPost, recentCommentsByPost } = await deps.loadViewerPostFormattingContext(userId, [updatedPost.id], 5)
+      const { reactionsByPost, pollSelectionsByPost, recentCommentsByPost, causeByPost } = await deps.loadViewerPostFormattingContext(userId, [updatedPost.id], 5)
 
       return reply.send({
         post: deps.formatPost(updatedPost, {
@@ -314,6 +334,7 @@ export function registerPostInteractionRoutes(app: FastifyInstance, deps: PostIn
           viewerReaction: reactionsByPost[updatedPost.id] ?? null,
           viewerPollOptionId: pollSelectionsByPost[updatedPost.id] ?? null,
           recentComments: recentCommentsByPost[updatedPost.id] ?? [],
+          cause: causeByPost[updatedPost.id] ?? null,
         }),
       })
     }),
@@ -346,7 +367,7 @@ export function registerPostInteractionRoutes(app: FastifyInstance, deps: PostIn
       const updatedPost = await prisma.post.findUnique({ where: { id: params.data.id }, include: deps.POST_INCLUDE })
       if (!updatedPost) return reply.code(404).send({ error: 'poll_not_found' })
 
-      const { reactionsByPost, pollSelectionsByPost, recentCommentsByPost } = await deps.loadViewerPostFormattingContext(userId, [updatedPost.id], 5)
+      const { reactionsByPost, pollSelectionsByPost, recentCommentsByPost, causeByPost } = await deps.loadViewerPostFormattingContext(userId, [updatedPost.id], 5)
 
       return reply.send({
         post: deps.formatPost(updatedPost, {
@@ -354,6 +375,7 @@ export function registerPostInteractionRoutes(app: FastifyInstance, deps: PostIn
           viewerReaction: reactionsByPost[updatedPost.id] ?? null,
           viewerPollOptionId: pollSelectionsByPost[updatedPost.id] ?? null,
           recentComments: recentCommentsByPost[updatedPost.id] ?? [],
+          cause: causeByPost[updatedPost.id] ?? null,
         }),
       })
     }),
@@ -379,7 +401,7 @@ export function registerPostInteractionRoutes(app: FastifyInstance, deps: PostIn
       const updatedPost = await prisma.post.findUnique({ where: { id: params.data.id }, include: deps.POST_INCLUDE })
       if (!updatedPost) return reply.code(404).send({ error: 'poll_not_found' })
 
-      const { reactionsByPost, pollSelectionsByPost, recentCommentsByPost } = await deps.loadViewerPostFormattingContext(userId, [updatedPost.id], 5)
+      const { reactionsByPost, pollSelectionsByPost, recentCommentsByPost, causeByPost } = await deps.loadViewerPostFormattingContext(userId, [updatedPost.id], 5)
 
       return reply.send({
         post: deps.formatPost(updatedPost, {
@@ -387,6 +409,7 @@ export function registerPostInteractionRoutes(app: FastifyInstance, deps: PostIn
           viewerReaction: reactionsByPost[updatedPost.id] ?? null,
           viewerPollOptionId: pollSelectionsByPost[updatedPost.id] ?? null,
           recentComments: recentCommentsByPost[updatedPost.id] ?? [],
+          cause: causeByPost[updatedPost.id] ?? null,
         }),
       })
     }),
@@ -444,7 +467,7 @@ export function registerPostInteractionRoutes(app: FastifyInstance, deps: PostIn
 
       const updatedPost = await prisma.post.findUnique({ where: { id: postId }, include: deps.POST_INCLUDE })
       if (!updatedPost) return reply.code(404).send({ error: 'post_not_found' })
-      const { pollSelectionsByPost, recentCommentsByPost } = await deps.loadViewerPostFormattingContext(userId, [postId], 5)
+      const { pollSelectionsByPost, recentCommentsByPost, causeByPost } = await deps.loadViewerPostFormattingContext(userId, [postId], 5)
 
       return reply.send({
         post: deps.formatPost(updatedPost, {
@@ -452,6 +475,7 @@ export function registerPostInteractionRoutes(app: FastifyInstance, deps: PostIn
           viewerReaction: mappedReaction,
           viewerPollOptionId: pollSelectionsByPost[postId] ?? null,
           recentComments: recentCommentsByPost[postId] ?? [],
+          cause: causeByPost[postId] ?? null,
         }),
       })
     }),
@@ -526,7 +550,7 @@ export function registerPostInteractionRoutes(app: FastifyInstance, deps: PostIn
 
       const updatedPost = await prisma.post.findUnique({ where: { id: postId }, include: deps.POST_INCLUDE })
       if (!updatedPost) return reply.code(404).send({ error: 'post_not_found' })
-      const { pollSelectionsByPost, recentCommentsByPost } = await deps.loadViewerPostFormattingContext(userId, [postId], 5)
+      const { pollSelectionsByPost, recentCommentsByPost, causeByPost } = await deps.loadViewerPostFormattingContext(userId, [postId], 5)
 
       return reply.send({
         post: deps.formatPost(updatedPost, {
@@ -534,6 +558,7 @@ export function registerPostInteractionRoutes(app: FastifyInstance, deps: PostIn
           viewerReaction: normalizedReaction,
           viewerPollOptionId: pollSelectionsByPost[postId] ?? null,
           recentComments: recentCommentsByPost[postId] ?? [],
+          cause: causeByPost[postId] ?? null,
         }),
       })
     }),
@@ -727,6 +752,7 @@ export function registerPostInteractionRoutes(app: FastifyInstance, deps: PostIn
               viewerReaction: formattingContext?.reactionsByPost[updatedPost.id] ?? null,
               viewerPollOptionId: formattingContext?.pollSelectionsByPost[updatedPost.id] ?? null,
               recentComments: formattingContext?.recentCommentsByPost[updatedPost.id] ?? [],
+              cause: formattingContext?.causeByPost[updatedPost.id] ?? null,
             })
           : null,
       })
@@ -853,9 +879,9 @@ export function registerPostInteractionRoutes(app: FastifyInstance, deps: PostIn
         if (title !== undefined || mediaUrl !== undefined) return reply.code(400).send({ error: 'poll_update_not_supported' })
       }
 
-      const normalizedUpdatedBody = rawBody !== undefined ? (post.type === 'article' ? deps.sanitizeRichTextHtml(rawBody) : deps.sanitizePlainText(rawBody)) : undefined
+      const normalizedUpdatedBody = rawBody !== undefined ? (post.type === 'article' || post.type === 'cause' ? deps.sanitizeRichTextHtml(rawBody) : deps.sanitizePlainText(rawBody)) : undefined
       const updatedPreviewSource = normalizedUpdatedBody !== undefined
-        ? post.type === 'article'
+        ? post.type === 'article' || post.type === 'cause'
           ? deps.stripHtmlToPlainText(normalizedUpdatedBody)
           : normalizedUpdatedBody
         : undefined
@@ -886,7 +912,7 @@ export function registerPostInteractionRoutes(app: FastifyInstance, deps: PostIn
 
         if (shouldResyncTagging) {
           const updatedBusinessCommunitySlug = (updatedPost.business as { communitySlug?: string | null } | null | undefined)?.communitySlug ?? null
-          const taggingSource = updatedPost.type === 'article'
+          const taggingSource = updatedPost.type === 'article' || updatedPost.type === 'cause'
             ? deps.stripHtmlToPlainText(updatedPost.body)
             : updatedPost.body
           const tagging = await resolvePostTaggingForWrite({
@@ -908,7 +934,7 @@ export function registerPostInteractionRoutes(app: FastifyInstance, deps: PostIn
         return updatedPost
       })
 
-      const { reactionsByPost, pollSelectionsByPost, recentCommentsByPost } = await deps.loadViewerPostFormattingContext(userId, [params.data.id], 5)
+      const { reactionsByPost, pollSelectionsByPost, recentCommentsByPost, causeByPost } = await deps.loadViewerPostFormattingContext(userId, [params.data.id], 5)
 
       void deps.enqueueContentAiScanForPost({
         id: updated.id,
@@ -927,6 +953,7 @@ export function registerPostInteractionRoutes(app: FastifyInstance, deps: PostIn
           viewerReaction: reactionsByPost[params.data.id] ?? null,
           viewerPollOptionId: pollSelectionsByPost[params.data.id] ?? null,
           recentComments: recentCommentsByPost[params.data.id] ?? [],
+          cause: causeByPost[params.data.id] ?? null,
         }),
       )
     }),
