@@ -3148,6 +3148,57 @@ async function readMeetingRtcRoomState(
   }
 }
 
+async function disconnectMeetingRtcPeer(args: { roomId: string; peerId: string; reason?: string | null }) {
+  if (!MEETING_RTC_SERVICE_URL) return { error: 'meeting_rtc_not_configured' as const }
+
+  const timeoutMs =
+    Number.isFinite(MEETING_RTC_REQUEST_TIMEOUT_MS) && MEETING_RTC_REQUEST_TIMEOUT_MS > 0
+      ? Math.floor(MEETING_RTC_REQUEST_TIMEOUT_MS)
+      : 8000
+
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), timeoutMs)
+
+  try {
+    const response = await fetch(
+      `${MEETING_RTC_SERVICE_URL}/v1/rooms/${encodeURIComponent(args.roomId)}/peers/${encodeURIComponent(args.peerId)}/disconnect`,
+      {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          ...(MEETING_RTC_SERVICE_SECRET ? { 'x-meeting-rtc-secret': MEETING_RTC_SERVICE_SECRET } : {}),
+        },
+        body: JSON.stringify({ reason: args.reason ?? null }),
+        signal: controller.signal,
+      },
+    )
+
+    const text = await response.text().catch(() => '')
+    let json: any = null
+    if (text) {
+      try {
+        json = JSON.parse(text)
+      } catch {
+        json = null
+      }
+    }
+
+    if (!response.ok) {
+      return {
+        error: (json && typeof json.error === 'string' ? json.error : 'meeting_rtc_service_error') as string,
+        statusCode: response.status,
+      }
+    }
+
+    return { ok: true as const }
+  } catch (err) {
+    const aborted = (err as { name?: string } | null)?.name === 'AbortError'
+    return { error: aborted ? 'meeting_rtc_timeout' : 'meeting_rtc_unreachable' }
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
 async function withSchemaGuard<T>(
   req: FastifyRequest,
   reply: FastifyReply,
@@ -7807,6 +7858,10 @@ const CommunityOrgMeetingParams = CommunityOrgSlugParams.extend({
   meetingId: z.string().trim().min(3).max(80),
 })
 
+const CommunityOrgMeetingParticipantParams = CommunityOrgMeetingParams.extend({
+  userId: z.string().trim().min(1).max(120),
+})
+
 const OrgMeetingScheduleInput = z
   .object({
     startsAt: z.string().datetime().optional().nullable(),
@@ -9399,14 +9454,17 @@ registerOrganizationCoreRoutes(app, {
 })
 
 registerOrganizationGovernanceMeetingsRoutes(app, {
+  CommunityOrgMemberModerationBody,
   CommunityOrgMeetingCreateBody,
   CommunityOrgMeetingJoinBody,
   CommunityOrgMeetingParams,
+  CommunityOrgMeetingParticipantParams,
   CommunityOrgMeetingRtcSessionBody,
   CommunityOrgMeetingUpdateBody,
   CommunityOrgSlugParams,
   MessageParticipantRole,
   canOrganizationPermission,
+  disconnectMeetingRtcPeer,
   ensureOrganizationMeetingTables,
   ensureOrganizationMeetingThread,
   findCommunity,

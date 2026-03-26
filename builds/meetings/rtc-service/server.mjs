@@ -276,6 +276,60 @@ const server = createServer(async (req, res) => {
     }
   }
 
+  if (method === 'POST' && requestUrl.pathname.startsWith('/v1/rooms/') && requestUrl.pathname.includes('/peers/') && requestUrl.pathname.endsWith('/disconnect')) {
+    if (MEETING_RTC_SECRET) {
+      const provided = String(req.headers['x-meeting-rtc-secret'] || '').trim()
+      if (!provided || provided !== MEETING_RTC_SECRET) {
+        sendJson(res, 401, { error: 'unauthorized' })
+        return
+      }
+    }
+
+    const segments = requestUrl.pathname.split('/').filter(Boolean)
+    const roomId = segments.length >= 6 ? decodeURIComponent(segments[2] || '') : ''
+    const peerId = segments.length >= 6 ? decodeURIComponent(segments[4] || '') : ''
+    if (!roomId || !peerId) {
+      sendJson(res, 400, { error: 'invalid_peer_target' })
+      return
+    }
+
+    const room = peersByRoom.get(roomId)
+    const peer = room?.get(peerId)
+    if (!peer) {
+      sendJson(res, 404, { error: 'peer_not_found' })
+      return
+    }
+
+    let reason = null
+    try {
+      const body = await readJsonBody(req)
+      reason = typeof body.reason === 'string' && body.reason.trim() ? body.reason.trim().slice(0, 280) : null
+    } catch {
+      reason = null
+    }
+
+    safeSend(peer.ws, {
+      type: 'moderation.disconnect',
+      peerId,
+      roomId,
+      reason,
+      ts: new Date().toISOString(),
+    })
+
+    try {
+      peer.ws.close(4000, 'moderator_disconnect')
+    } catch {
+      try {
+        peer.ws.terminate?.()
+      } catch {
+        // ignore
+      }
+    }
+
+    sendJson(res, 200, { ok: true })
+    return
+  }
+
   sendJson(res, 404, { error: 'not_found' })
 })
 
