@@ -920,6 +920,10 @@ export function registerOrganizationGovernanceMeetingsRoutes(
       `)) as OrganizationMeetingAdmissionRow[]
       const admissionStatus = deps.normalizeMeetingAdmissionStatus(admissionRows[0]?.status)
 
+      if (!access.value.canManageMeetings && admissionStatus === 'DENIED') {
+        return reply.code(403).send({ error: 'meeting_access_denied' })
+      }
+
       const status = deps.normalizeMeetingStatus(row.status)
       const visibility = deps.normalizeMeetingVisibility(row.visibility)
 
@@ -1052,6 +1056,122 @@ export function registerOrganizationGovernanceMeetingsRoutes(
     }),
   )
 
+  app.post('/communities/:province/:municipality/orgs/:slug/governance/meetings/:meetingId/participants/:userId/kick', async (req: FastifyRequest, reply: FastifyReply) =>
+    deps.withSchemaGuard(req, reply, async () => {
+      const actorUserId = (await deps.resolveUserId(req)) ?? null
+      if (!actorUserId) return reply.code(401).send({ error: 'unauthorized' })
+
+      const params = deps.CommunityOrgMeetingParticipantParams.safeParse(req.params)
+      if (!params.success) return reply.code(400).send({ error: 'invalid_params' })
+      const body = deps.CommunityOrgMemberModerationBody.safeParse(req.body ?? {})
+      if (!body.success) return reply.code(400).send({ error: body.error.flatten() })
+      if (params.data.userId === actorUserId) return reply.code(400).send({ error: 'cannot_remove_self' })
+
+      const access = await deps.resolveOrganizationMeetingAccess({
+        provinceRaw: params.data.province,
+        municipalityRaw: params.data.municipality,
+        slugRaw: params.data.slug,
+        viewerId: actorUserId,
+      })
+      if (!access.ok) return reply.code(access.statusCode).send({ error: access.error })
+      if (!access.value.canManageMeetings) return reply.code(403).send({ error: 'forbidden' })
+
+      await deps.ensureOrganizationMeetingTables()
+
+      const rows = (await prisma.$queryRaw(Prisma.sql`
+        SELECT id, business_id, thread_id
+        FROM organization_meeting
+        WHERE id = ${params.data.meetingId}
+          AND business_id = ${access.value.org.id}
+        LIMIT 1
+      `)) as Array<{ id: string; business_id: string; thread_id: string | null }>
+      const row = rows[0]
+      if (!row) return reply.code(404).send({ error: 'meeting_not_found' })
+
+      if (row.thread_id) {
+        await prisma.messageParticipant.deleteMany({
+          where: {
+            threadId: row.thread_id,
+            userId: params.data.userId,
+          },
+        })
+      }
+
+      await prisma.$executeRaw`
+        DELETE FROM organization_meeting_admission
+        WHERE meeting_id = ${row.id}
+          AND user_id = ${params.data.userId}
+      `
+
+      const rtcState = await deps.readMeetingRtcRoomState(row.id)
+      const activePeers = rtcState?.peers.filter((peer: { userId: string }) => peer.userId === params.data.userId) ?? []
+      for (const peer of activePeers) {
+        await deps.disconnectMeetingRtcPeer({ roomId: row.id, peerId: peer.peerId, reason: body.data.reason ?? 'Removed by moderator' })
+      }
+
+      return reply.send({ ok: true })
+    }),
+  )
+
+  app.post('/communities/:province/:municipality/orgs/:slug/governance/meetings/:meetingId/participants/:userId/ban', async (req: FastifyRequest, reply: FastifyReply) =>
+    deps.withSchemaGuard(req, reply, async () => {
+      const actorUserId = (await deps.resolveUserId(req)) ?? null
+      if (!actorUserId) return reply.code(401).send({ error: 'unauthorized' })
+
+      const params = deps.CommunityOrgMeetingParticipantParams.safeParse(req.params)
+      if (!params.success) return reply.code(400).send({ error: 'invalid_params' })
+      const body = deps.CommunityOrgMemberModerationBody.safeParse(req.body ?? {})
+      if (!body.success) return reply.code(400).send({ error: body.error.flatten() })
+      if (params.data.userId === actorUserId) return reply.code(400).send({ error: 'cannot_remove_self' })
+
+      const access = await deps.resolveOrganizationMeetingAccess({
+        provinceRaw: params.data.province,
+        municipalityRaw: params.data.municipality,
+        slugRaw: params.data.slug,
+        viewerId: actorUserId,
+      })
+      if (!access.ok) return reply.code(access.statusCode).send({ error: access.error })
+      if (!access.value.canManageMeetings) return reply.code(403).send({ error: 'forbidden' })
+
+      await deps.ensureOrganizationMeetingTables()
+
+      const rows = (await prisma.$queryRaw(Prisma.sql`
+        SELECT id, business_id, thread_id
+        FROM organization_meeting
+        WHERE id = ${params.data.meetingId}
+          AND business_id = ${access.value.org.id}
+        LIMIT 1
+      `)) as Array<{ id: string; business_id: string; thread_id: string | null }>
+      const row = rows[0]
+      if (!row) return reply.code(404).send({ error: 'meeting_not_found' })
+
+      if (row.thread_id) {
+        await prisma.messageParticipant.deleteMany({
+          where: {
+            threadId: row.thread_id,
+            userId: params.data.userId,
+          },
+        })
+      }
+
+      const now = new Date()
+      await prisma.$executeRaw`
+        INSERT INTO organization_meeting_admission (meeting_id, user_id, status, decided_by_user_id, created_at, updated_at)
+        VALUES (${row.id}, ${params.data.userId}, ${'DENIED'}, ${actorUserId}, ${now}, ${now})
+        ON CONFLICT (meeting_id, user_id)
+        DO UPDATE SET status = EXCLUDED.status, decided_by_user_id = EXCLUDED.decided_by_user_id, updated_at = EXCLUDED.updated_at
+      `
+
+      const rtcState = await deps.readMeetingRtcRoomState(row.id)
+      const activePeers = rtcState?.peers.filter((peer: { userId: string }) => peer.userId === params.data.userId) ?? []
+      for (const peer of activePeers) {
+        await deps.disconnectMeetingRtcPeer({ roomId: row.id, peerId: peer.peerId, reason: body.data.reason ?? 'Banned by moderator' })
+      }
+
+      return reply.send({ ok: true })
+    }),
+  )
+
   app.post('/communities/:province/:municipality/orgs/:slug/meetings/:meetingId/rtc/session', async (req: FastifyRequest, reply: FastifyReply) =>
     deps.withSchemaGuard(req, reply, async () => {
       const userId = (await deps.resolveUserId(req)) ?? null
@@ -1125,6 +1245,10 @@ export function registerOrganizationGovernanceMeetingsRoutes(
         LIMIT 1
       `)) as AdmissionLookupRow[]
       const admissionStatus = deps.normalizeMeetingAdmissionStatus(admissionRows[0]?.status)
+
+      if (!access.value.canManageMeetings && admissionStatus === 'DENIED') {
+        return reply.code(403).send({ error: 'meeting_access_denied' })
+      }
 
       type ParticipantLookupRow = { exists: number }
       const participantRows = (await prisma.$queryRaw(Prisma.sql`

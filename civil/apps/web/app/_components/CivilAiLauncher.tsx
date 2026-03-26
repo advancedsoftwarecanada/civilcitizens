@@ -6,6 +6,7 @@ import { Fragment, ReactNode, useCallback, useEffect, useRef, useState, type Key
 import clsx from 'clsx'
 import { HiOutlineArrowPath, HiOutlineArrowUp, HiOutlineXMark } from 'react-icons/hi2'
 import { buildApiUrl, parseApiResponse } from '../_lib/api'
+import { isMeetingRoomPath } from '../_lib/meetingRoomRoute'
 import { getStoredToken } from '../_lib/tokenStorage'
 import { hasDeclaredCivilStatus, hasHomeCommunity } from '../_lib/me'
 import { useViewerStore } from '../_lib/viewerStore'
@@ -390,6 +391,7 @@ export default function CivilAiLauncher() {
   const activeJobIdRef = useRef<string | null>(null)
   const launcherHiddenForRoute =
     CIVIL_AI_HIDDEN_PATHS.has(resolvedPathname) ||
+    isMeetingRoomPath(resolvedPathname) ||
     resolvedPathname === '/privacy' ||
     resolvedPathname === '/terms' ||
     resolvedPathname === '/safety' ||
