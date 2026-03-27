@@ -1,4 +1,4 @@
-import ChamberPostPageClient from './ChamberPostPageClient'
+import ChamberPostPageClient from '../../../../../_components/ChamberPostPageClient'
 
 type PageProps = {
   params: {

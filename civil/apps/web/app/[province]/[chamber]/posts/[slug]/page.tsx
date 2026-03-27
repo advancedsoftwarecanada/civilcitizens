@@ -1,6 +1,4 @@
-"use client"
-
-import ChamberPostPage from '../../../../c/[province]/[chamber]/posts/[slug]/page'
+import ChamberPostPageClient from '../../../../_components/ChamberPostPageClient'
 
 type PageProps = {
   params: {
@@ -11,5 +9,5 @@ type PageProps = {
 }
 
 export default function ProvinceChamberPostPage({ params }: PageProps) {
-  return <ChamberPostPage params={params} />
+  return <ChamberPostPageClient params={params} />
 }
