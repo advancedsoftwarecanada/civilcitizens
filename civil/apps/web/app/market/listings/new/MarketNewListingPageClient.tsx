@@ -10,7 +10,7 @@ import Modal from '../../../_components/Modal'
 import RichTextEditor from '../../../_components/RichTextEditor'
 import { pushToast } from '../../../_components/useToasts'
 import { buildApiUrl } from '../../../_lib/api'
-import { fetchAddressSearchResults } from '../../../_lib/addressSearch'
+import { resolveBestAddressSearchResult } from '../../../_lib/addressSearch'
 import { normalizeCanadianPostalCode, normalizeCanadianProvince, type SavedShippingAddress } from '../../../_lib/canadianAddresses'
 import { ensureViewerMe } from '../../../_lib/viewerMe'
 import { useViewerStore } from '../../../_lib/viewerStore'
@@ -1161,9 +1161,8 @@ export default function MarketNewListingPageClient() {
 
     void (async () => {
       try {
-        const results = await fetchAddressSearchResults(addressMapQuery, controller.signal, 1)
+        const result = await resolveBestAddressSearchResult(addressMapQuery, controller.signal, 1)
         if (cancelled) return
-        const result = results[0]
         if (!result) {
           setAddressMapPreview(null)
           setAddressMapStatus('error')

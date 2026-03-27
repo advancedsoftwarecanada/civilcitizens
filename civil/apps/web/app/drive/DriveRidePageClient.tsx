@@ -188,7 +188,7 @@ export default function DriveRidePageClient() {
             deliveryRequestCount={deliveryRequestCount}
             onExitDriverMode={handleExitDriverMode}
           />
-          <DriveDriverEarningsRail enabled={isDriverActive} />
+          <DriveDriverEarningsRail enabled={isDriverMode} />
           <RightRail mode="drive" organizationLinkTarget="chat" showDriveCallout={false} />
         </div>
       }

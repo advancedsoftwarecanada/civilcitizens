@@ -3,7 +3,9 @@ import {
   CANADIAN_PROVINCE_OPTIONS,
   formatCanadianPhysicalAddressInline,
   getCanadianAddressSystemDisplayName,
+  normalizeCanadianAddress,
   normalizeCanadianPostalCode,
+  normalizeCanadianProvince,
   type CanadianAddress,
 } from './canadianAddresses'
 
@@ -34,6 +36,8 @@ export type CivilPlaceSearchResults = {
   places: CivilPlaceSearchResult[]
   addresses: CivilPlaceSearchResult[]
 }
+
+export type AddressLikeSearchResult = NominatimAddress | CivilPlaceSearchResult
 
 export type RoutePoint = {
   latitude: number
@@ -442,6 +446,9 @@ function mapPlaceSearchRecord(record: Record<string, unknown>): CivilPlaceSearch
       display_name: displayName,
       lat: String(latitude),
       lon: String(longitude),
+      kind,
+      name,
+      category: normalizeText(record.category) || null,
       class: normalizeText(record.className ?? record.class) || null,
       type: normalizeText(record.typeName ?? record.type) || null,
       address,
@@ -698,6 +705,27 @@ export async function fetchPlaceSearchResults(
   }
 }
 
+export async function resolveBestAddressSearchResult(
+  query: string,
+  signal?: AbortSignal,
+  options?: number | AddressSearchOptions,
+): Promise<AddressLikeSearchResult | null> {
+  const trimmedQuery = query.trim()
+  if (trimmedQuery.length < MIN_ADDRESS_QUERY_LENGTH) return null
+
+  try {
+    const placeResults = await fetchPlaceSearchResults(trimmedQuery, signal, options)
+    return placeResults.places[0] ?? placeResults.addresses[0] ?? null
+  } catch (error) {
+    if (error instanceof Error && error.name === 'AbortError') {
+      throw error
+    }
+  }
+
+  const addressResults = await fetchAddressSearchResults(trimmedQuery, signal, options)
+  return addressResults[0] ?? null
+}
+
 export async function fetchReverseGeocodeResult(latitude: number, longitude: number, signal?: AbortSignal): Promise<NominatimAddress | null> {
   const response = await fetch(buildNominatimReverseUrl(latitude, longitude), {
     method: 'GET',
@@ -725,6 +753,30 @@ export function formatAddressPrimaryLabel(result: NominatimAddress) {
   if (houseNumber && road) return `${houseNumber} ${road}`
   if (road) return road
   return result.displayName.split(',')[0]?.trim() || result.displayName
+}
+
+export function buildCanadianAddressFromSearchResult(
+  result: AddressLikeSearchResult,
+  current?: CanadianAddress | null,
+): CanadianAddress {
+  const existing = normalizeCanadianAddress(current ?? null)
+  const nextPostal = normalizeCanadianPostalCode(result.address.postcode || result.originalPostalCode)
+  const originalPostal = normalizeCanadianPostalCode(result.originalPostalCode || result.address.postcode)
+
+  return {
+    ...existing,
+    line1: formatAddressPrimaryLabel(result),
+    line2: existing.line2 ?? '',
+    city: pickAddressLocalityRecord(result.address),
+    province: normalizeCanadianProvince(result.address.state || result.address.province || result.address.region || ''),
+    postalCode: nextPostal,
+    originalPostalCode: originalPostal,
+    country: (result.address.country_code || result.address.country || 'CA').toUpperCase(),
+    latitude: result.latitude,
+    longitude: result.longitude,
+    nominatimDisplayName: result.displayName,
+    nominatimRaw: result.nominatimRaw,
+  }
 }
 
 export function formatAddressSecondaryLabel(result: NominatimAddress) {

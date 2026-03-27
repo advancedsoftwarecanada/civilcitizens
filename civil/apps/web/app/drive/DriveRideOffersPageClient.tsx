@@ -204,7 +204,7 @@ export default function DriveRideOffersPageClient({ rideId }: { rideId: string }
               onEnterDriverMode={enterDriverMode}
               onExitDriverMode={exitDriverMode}
             />
-            <DriveDriverEarningsRail enabled={isDriverActive} />
+            <DriveDriverEarningsRail enabled={isDriverMode} />
             <RightRail mode="drive" organizationLinkTarget="chat" showDriveCallout={false} />
         </div>
         }

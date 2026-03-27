@@ -410,7 +410,7 @@ export default function DriveLandingPageClient() {
               onExitDriverMode={exitDriverMode}
             />
           ) : null}
-          <DriveDriverEarningsRail enabled={isDriverActive} />
+          <DriveDriverEarningsRail enabled={isDriverMode} />
           {isDriverMode ? <DriveContractHistoryRail rides={rides.items} delivery={delivery.items} activeRideIds={activeDriverContracts.map((item) => item.id)} /> : null}
           <RightRail mode="drive" organizationLinkTarget="chat" showDriveCallout={false} />
         </div>

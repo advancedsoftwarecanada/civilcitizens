@@ -346,7 +346,7 @@ export default function DriveDriverManagePageClient() {
             onEnterDriverMode={enterDriverMode}
             onExitDriverMode={exitDriverMode}
           />
-          <DriveDriverEarningsRail enabled={isDriverActive} />
+          <DriveDriverEarningsRail enabled={isDriverMode} />
           <RightRail mode="drive" organizationLinkTarget="chat" showDriveCallout={false} />
         </div>
       }

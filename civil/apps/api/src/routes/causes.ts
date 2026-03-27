@@ -657,7 +657,7 @@ export function registerCauseRoutes(app: FastifyInstance, deps: CauseRouteDeps) 
                 OR: localClauses,
               },
               orderBy: [{ lastActivityAt: 'desc' }, { createdAt: 'desc' }],
-              take: 4,
+              take: 5,
               include: deps.POST_INCLUDE,
             })
           : Promise.resolve([]),

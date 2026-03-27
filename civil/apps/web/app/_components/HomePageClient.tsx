@@ -43,7 +43,7 @@ export default function HomePageClient() {
             label: 'Latest',
           },
         ]}
-        rightRail={<RightRail showOrganizations showRsvps />}
+        rightRail={<RightRail mode="home" showOrganizations showRsvps />}
       />
     </>
   )

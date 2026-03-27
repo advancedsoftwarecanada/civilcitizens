@@ -265,7 +265,7 @@ export default function DriveDeliveryPageClient() {
             deliveryRequestCount={deliveryRequestCount}
             onExitDriverMode={handleExitDriverMode}
           />
-          <DriveDriverEarningsRail enabled={isDriverActive} />
+          <DriveDriverEarningsRail enabled={isDriverMode} />
           <RightRail mode="drive" organizationLinkTarget="chat" showDriveCallout={false} />
         </div>
       }

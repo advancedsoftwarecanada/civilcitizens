@@ -14,7 +14,6 @@ type DriveRideDeps = Record<string, any>
 const RIDE_DRIVER_FLAT_FEE_CENTS = 1000
 const RIDE_FUEL_RATE_CENTS_PER_KM = 65
 const RIDE_MIN_FUEL_CHARGE_CENTS = 500
-const RIDE_CIVIL_FEE_CENTS = 50
 const RIDE_AUTO_COMPLETE_MINUTES = 30
 const RIDE_OFFER_PER_KM_FEE_CENTS_MIN = 100
 const RIDE_OFFER_PER_KM_FEE_CENTS_MAX = 500
@@ -262,8 +261,13 @@ function readBaseCommunityMetaRecord(value: unknown) {
   return value && typeof value === 'object' && !Array.isArray(value) ? { ...(value as Record<string, unknown>) } : {}
 }
 
+function calculateRideCivilFeeCents(amountCents: number) {
+  return computeCivilPayFeeCents(Math.max(0, Math.round(amountCents || 0)))
+}
+
 function calculateRideCustomerChargeCents(driverAmountCents: number) {
-  return Math.max(0, Math.round(driverAmountCents || 0)) + RIDE_CIVIL_FEE_CENTS
+  const baseAmountCents = Math.max(0, Math.round(driverAmountCents || 0))
+  return baseAmountCents + calculateRideCivilFeeCents(baseAmountCents)
 }
 
 function formatDriveActorLabel(user: { name: string | null; handle: string | null } | null | undefined) {
@@ -358,7 +362,8 @@ export async function releaseDriveRideEscrow(
   }
 
   const driverPayoutCents = Math.max(0, Number(ride.accepted_offer_amount_cents) || 0)
-  const customerChargeCents = Math.max(driverPayoutCents + RIDE_CIVIL_FEE_CENTS, Number(ride.total_cost_cents) || 0)
+  const civilFeeCents = calculateRideCivilFeeCents(driverPayoutCents)
+  const customerChargeCents = Math.max(driverPayoutCents + civilFeeCents, Number(ride.total_cost_cents) || 0)
   if (driverPayoutCents <= 0 || !ride.wallet_transaction_id) {
     return { settled: false, ride }
   }
@@ -442,7 +447,7 @@ export async function releaseDriveRideEscrow(
       requesterUserId: requester.id,
       driverUserId: driver.id,
       customerChargeCents,
-      civilFeeCents: RIDE_CIVIL_FEE_CENTS,
+      civilFeeCents,
     },
     occurredAt: settledAt,
   })
@@ -452,7 +457,7 @@ export async function releaseDriveRideEscrow(
     eventId: `${ride.wallet_transaction_id}:civil-fee`,
     entryType: 'adjustment',
     status: 'completed',
-    amountCents: RIDE_CIVIL_FEE_CENTS,
+    amountCents: civilFeeCents,
     currency: 'cad',
     from: {
       entityType: 'ride_escrow',
@@ -471,7 +476,7 @@ export async function releaseDriveRideEscrow(
       requesterUserId: requester.id,
       driverUserId: driver.id,
       customerChargeCents,
-      civilFeeCents: RIDE_CIVIL_FEE_CENTS,
+      civilFeeCents,
     },
     occurredAt: settledAt,
   })
@@ -625,11 +630,14 @@ function buildRideEstimate(distanceKm: number) {
   const safeDistanceKm = Number.isFinite(distanceKm) && distanceKm > 0 ? distanceKm : 0
   const fuelChargeCents = Math.max(RIDE_MIN_FUEL_CHARGE_CENTS, Math.round(safeDistanceKm * RIDE_FUEL_RATE_CENTS_PER_KM))
   const routeDistanceKm = Number(safeDistanceKm.toFixed(1))
+  const subtotalCents = fuelChargeCents + RIDE_DRIVER_FLAT_FEE_CENTS
+  const civilFeeCents = calculateRideCivilFeeCents(subtotalCents)
   return {
     routeDistanceKm,
     fuelChargeCents,
     driverFeeCents: RIDE_DRIVER_FLAT_FEE_CENTS,
-    totalCostCents: fuelChargeCents + RIDE_DRIVER_FLAT_FEE_CENTS,
+    civilFeeCents,
+    totalCostCents: subtotalCents + civilFeeCents,
   }
 }
 
@@ -2225,6 +2233,7 @@ export function registerDriveRideRoutes(app: FastifyInstance, deps: DriveRideDep
 
       const requesterWallet = readWalletSummary(requester.communityMeta ?? null)
       const customerChargeCents = calculateRideCustomerChargeCents(offer.amount_cents)
+      const civilFeeCents = calculateRideCivilFeeCents(offer.amount_cents)
       if (!requesterWallet.enabled) {
         return reply.code(400).send({ error: 'wallet_required', requiredAmountCents: customerChargeCents })
       }
@@ -2278,7 +2287,7 @@ export function registerDriveRideRoutes(app: FastifyInstance, deps: DriveRideDep
               driverUserId: driver.id,
               acceptedOfferId: offer.id,
               customerChargeCents,
-              civilFeeCents: RIDE_CIVIL_FEE_CENTS,
+              civilFeeCents,
               driverPayoutCents: offer.amount_cents,
             })}::jsonb,
             NOW(),
@@ -2315,7 +2324,7 @@ export function registerDriveRideRoutes(app: FastifyInstance, deps: DriveRideDep
             driverUserId: driver.id,
             acceptedOfferId: offer.id,
             customerChargeCents,
-            civilFeeCents: RIDE_CIVIL_FEE_CENTS,
+            civilFeeCents,
             driverPayoutCents: offer.amount_cents,
           },
         })
@@ -2339,7 +2348,7 @@ export function registerDriveRideRoutes(app: FastifyInstance, deps: DriveRideDep
               contract_started_at = NULL,
               escrow_status = ${'held'},
               wallet_transaction_id = ${walletTransactionId},
-              fuel_charge_cents = ${RIDE_CIVIL_FEE_CENTS},
+              fuel_charge_cents = ${civilFeeCents},
               driver_fee_cents = ${offer.amount_cents},
               total_cost_cents = ${customerChargeCents},
               bid_driver_user_id = ${driver.id},
