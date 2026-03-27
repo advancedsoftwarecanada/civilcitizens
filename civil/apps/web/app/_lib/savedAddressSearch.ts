@@ -103,25 +103,28 @@ export function searchSavedShippingAddresses(
       const haystackCompact = compactSearchText(haystack)
       const tokenHits = queryTokens.filter((token) => haystack.includes(token)).length
 
-      let score = 0
-      score += scoreTextField(title, normalizedQuery, { exact: 2200, startsWith: 1600, includes: 1100 })
-      score += scoreTextField(label, normalizedQuery, { exact: 2000, startsWith: 1500, includes: 1000 })
-      score += scoreTextField(name, normalizedQuery, { exact: 1800, startsWith: 1300, includes: 900 })
-      score += scoreTextField(line1, normalizedQuery, { exact: 1500, startsWith: 1000, includes: 760 })
-      score += scoreTextField(detail, normalizedQuery, { exact: 900, startsWith: 640, includes: 420 })
-      score += scoreTextField(city, normalizedQuery, { exact: 520, startsWith: 300, includes: 180 })
-      score += scoreTextField(province, normalizedQuery, { exact: 420, startsWith: 220, includes: 120 })
+      let baseScore = 0
+      baseScore += scoreTextField(title, normalizedQuery, { exact: 2200, startsWith: 1600, includes: 1100 })
+      baseScore += scoreTextField(label, normalizedQuery, { exact: 2000, startsWith: 1500, includes: 1000 })
+      baseScore += scoreTextField(name, normalizedQuery, { exact: 1800, startsWith: 1300, includes: 900 })
+      baseScore += scoreTextField(line1, normalizedQuery, { exact: 1500, startsWith: 1000, includes: 760 })
+      baseScore += scoreTextField(detail, normalizedQuery, { exact: 900, startsWith: 640, includes: 420 })
+      baseScore += scoreTextField(city, normalizedQuery, { exact: 520, startsWith: 300, includes: 180 })
+      baseScore += scoreTextField(province, normalizedQuery, { exact: 420, startsWith: 220, includes: 120 })
 
       if (normalizedQueryCompact && haystackCompact.includes(normalizedQueryCompact)) {
-        score += 220
+        baseScore += 220
       }
 
       if (tokenHits === queryTokens.length && queryTokens.length > 0) {
-        score += 240
+        baseScore += 240
       } else if (tokenHits > 0) {
-        score += tokenHits * 90
+        baseScore += tokenHits * 90
       }
 
+      if (baseScore <= 0) return null
+
+      let score = baseScore
       if (queryTokens.includes('home') && isHome) {
         score += 1600
       } else if (isHome) {
@@ -131,8 +134,6 @@ export function searchSavedShippingAddresses(
       if (address.isDefault) {
         score += 30
       }
-
-      if (score <= 0) return null
 
       const distanceKm = options?.anchor && hasCoordinates(address)
         ? calculateDistanceKm(options.anchor, {
