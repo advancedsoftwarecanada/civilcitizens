@@ -26,6 +26,13 @@ type MapPoint = {
   kind?: 'pickup' | 'waypoint'
 }
 
+type NavigationPositionSample = {
+  latitude: number
+  longitude: number
+  accuracy: number | null
+  timestamp: number
+}
+
 type AddressDirectionsMapProps = {
   destination: MapPoint | null
   origin?: MapPoint | null
@@ -105,10 +112,20 @@ const APPROACH_ROUTE_LINE_WIDTH = 6
 const APPROACH_ROUTE_LINE_COLOR = '#f59e0b'
 const AVATAR_OVERLAP_THRESHOLD_METERS = 20
 const AVATAR_OVERLAP_SPACING_METERS = 18
+const NAVIGATION_HEADING_BUFFER_SIZE = 5
+const NAVIGATION_HEADING_SEGMENT_LIMIT = 3
+const NAVIGATION_HEADING_MIN_DISTANCE_METERS = 8
+const NAVIGATION_HEADING_MAX_ACCURACY_METERS = 65
+const NAVIGATION_HEADING_BLEND_FACTOR = 0.18
+const NAVIGATION_CAMERA_LOOKAHEAD_METERS = 55
 
 function normalizeHeading(value: number) {
   const normalized = value % 360
   return normalized < 0 ? normalized + 360 : normalized
+}
+
+function toRadians(value: number) {
+  return (value * Math.PI) / 180
 }
 
 function interpolateChannel(start: number, end: number, progress: number) {
@@ -209,6 +226,85 @@ function blurActiveEditableElement() {
 
 function calculateDistanceMeters(origin: { latitude: number; longitude: number }, destination: { latitude: number; longitude: number }) {
   return calculateDistanceKm(origin, destination) * 1000
+}
+
+function calculateTravelBearingDegrees(
+  latitude1: number,
+  longitude1: number,
+  latitude2: number,
+  longitude2: number,
+) {
+  const phi1 = toRadians(latitude1)
+  const phi2 = toRadians(latitude2)
+  const deltaLambda = toRadians(longitude2 - longitude1)
+
+  const y = Math.sin(deltaLambda) * Math.cos(phi2)
+  const x = Math.cos(phi1) * Math.sin(phi2) - Math.sin(phi1) * Math.cos(phi2) * Math.cos(deltaLambda)
+  return normalizeHeading((Math.atan2(y, x) * 180) / Math.PI)
+}
+
+function averageBearingDegrees(bearings: number[]) {
+  if (!bearings.length) return null
+
+  const vector = bearings.reduce(
+    (accumulator, bearing) => ({
+      x: accumulator.x + Math.cos(toRadians(bearing)),
+      y: accumulator.y + Math.sin(toRadians(bearing)),
+    }),
+    { x: 0, y: 0 },
+  )
+
+  if (Math.abs(vector.x) < 0.000001 && Math.abs(vector.y) < 0.000001) {
+    return null
+  }
+
+  return normalizeHeading((Math.atan2(vector.y, vector.x) * 180) / Math.PI)
+}
+
+function isAccuracyUsable(sample: NavigationPositionSample) {
+  return sample.accuracy === null || sample.accuracy <= NAVIGATION_HEADING_MAX_ACCURACY_METERS
+}
+
+function appendNavigationSample(
+  samples: NavigationPositionSample[],
+  sample: NavigationPositionSample,
+) {
+  return [...samples, sample].slice(-NAVIGATION_HEADING_BUFFER_SIZE)
+}
+
+function calculateSmoothedCourseHeading(samples: NavigationPositionSample[]) {
+  if (samples.length < 2) return null
+
+  const segmentBearings: number[] = []
+
+  for (let index = 1; index < samples.length; index += 1) {
+    const previous = samples[index - 1]
+    const current = samples[index]
+    if (!previous || !current) continue
+    if (!isAccuracyUsable(previous) || !isAccuracyUsable(current)) continue
+
+    const distanceMeters = calculateDistanceMeters(previous, current)
+    if (distanceMeters < NAVIGATION_HEADING_MIN_DISTANCE_METERS) continue
+
+    segmentBearings.push(
+      calculateTravelBearingDegrees(previous.latitude, previous.longitude, current.latitude, current.longitude),
+    )
+  }
+
+  if (!segmentBearings.length) return null
+  return averageBearingDegrees(segmentBearings.slice(-NAVIGATION_HEADING_SEGMENT_LIMIT))
+}
+
+function offsetPointAlongBearing(point: { latitude: number; longitude: number }, bearing: number, distanceMeters: number) {
+  const radians = toRadians(bearing)
+  const eastMeters = Math.sin(radians) * distanceMeters
+  const northMeters = Math.cos(radians) * distanceMeters
+  return offsetPointByMeters(point, eastMeters, northMeters)
+}
+
+function resolveShortestMapBearing(currentBearing: number | null | undefined, targetBearing: number) {
+  if (typeof currentBearing !== 'number' || !Number.isFinite(currentBearing)) return targetBearing
+  return currentBearing + normalizeBearingDelta(currentBearing, targetBearing)
 }
 
 function resolveDisplayMarkerPoints(markers: Array<{ id: string; point: MapPoint }>) {
@@ -461,7 +557,8 @@ export const AddressDirectionsMap = forwardRef<AddressDirectionsMapHandle, Addre
   const followZoomRef = useRef<number | null>(null)
   const hasAppliedFollowZoomRef = useRef(false)
   const pendingFollowResetRef = useRef(false)
-  const roadBearingRef = useRef<number | null>(null)
+  const navigationSamplesRef = useRef<NavigationPositionSample[]>([])
+  const courseHeadingRef = useRef<number | null>(null)
   const [mapReady, setMapReady] = useState(false)
   const [fullscreenActive, setFullscreenActive] = useState(false)
   const [navStatus, setNavStatus] = useState<'idle' | 'starting' | 'active'>('idle')
@@ -473,6 +570,7 @@ export const AddressDirectionsMap = forwardRef<AddressDirectionsMapHandle, Addre
   const [navigationNotice, setNavigationNotice] = useState<string | null>(null)
   const [routeOverviewActive, setRouteOverviewActive] = useState(false)
   const [deviceHeading, setDeviceHeading] = useState<number | null>(null)
+  const [courseHeading, setCourseHeading] = useState<number | null>(null)
   const [confirmExitOpen, setConfirmExitOpen] = useState(false)
   const viewerAvatarUrl = useViewerStore((state) => state.me?.avatarUrl ?? null)
   const resolvedOriginAvatarUrl = originAvatarUrl ?? viewerAvatarUrl
@@ -501,24 +599,30 @@ export const AddressDirectionsMap = forwardRef<AddressDirectionsMapHandle, Addre
     ? navigationRoute.geometry
     : routeCoordinates ?? null
   const previewApproachRouteCoordinates = navStatus === 'idle' ? approachRouteCoordinates ?? null : null
+  const activeCourseHeading = useMemo(() => {
+    if (typeof courseHeading === 'number' && Number.isFinite(courseHeading)) {
+      return normalizeHeading(courseHeading)
+    }
+    return null
+  }, [courseHeading])
   const activeBearing = useMemo(() => {
-    if (typeof activeOrigin?.latitude === 'number' && typeof activeOrigin.longitude === 'number') {
-      const routeBearing = resolveRouteFollowBearing(activeOrigin, activeRouteCoordinates)
-      if (typeof routeBearing === 'number' && Number.isFinite(routeBearing)) {
-        const blendedBearing = roadBearingRef.current === null ? routeBearing : blendBearing(roadBearingRef.current, routeBearing, ACTIVE_NAV_BEARING_BLEND_FACTOR)
-        roadBearingRef.current = blendedBearing
-        return -blendedBearing
+    if (activeCourseHeading === null) return 0
+    return -activeCourseHeading
+  }, [activeCourseHeading])
+  const followCameraCenter = useMemo(() => {
+    if (!activeOrigin) return null
+    if (activeCourseHeading === null) {
+      return {
+        latitude: activeOrigin.latitude,
+        longitude: activeOrigin.longitude,
       }
     }
-    if (typeof deviceHeading === 'number' && Number.isFinite(deviceHeading)) {
-      const normalized = normalizeHeading(deviceHeading)
-      roadBearingRef.current = normalized
-      return -normalized
-    }
-    roadBearingRef.current = null
-    return ACTIVE_NAV_FALLBACK_BEARING
-  }, [activeOrigin, activeRouteCoordinates, deviceHeading])
-  const headingCardinalLabel = useMemo(() => resolveHeadingCardinalLabel(deviceHeading, activeRouteCoordinates), [activeRouteCoordinates, deviceHeading])
+    return offsetPointAlongBearing(activeOrigin, activeCourseHeading, NAVIGATION_CAMERA_LOOKAHEAD_METERS)
+  }, [activeCourseHeading, activeOrigin])
+  const headingCardinalLabel = useMemo(
+    () => resolveHeadingCardinalLabel(activeCourseHeading ?? deviceHeading, activeRouteCoordinates),
+    [activeCourseHeading, activeRouteCoordinates, deviceHeading],
+  )
   const nextTurnPreview = useMemo(() => {
     if (!navigationRoute?.steps.length) return null
 
@@ -664,7 +768,8 @@ export const AddressDirectionsMap = forwardRef<AddressDirectionsMapHandle, Addre
     pendingFollowResetRef.current = false
     followZoomRef.current = null
     hasAppliedFollowZoomRef.current = false
-    roadBearingRef.current = null
+    navigationSamplesRef.current = []
+    courseHeadingRef.current = null
     setNavStatus('idle')
     setFullscreenActive(false)
     setNavigationOrigin(null)
@@ -675,6 +780,7 @@ export const AddressDirectionsMap = forwardRef<AddressDirectionsMapHandle, Addre
     setNavError(null)
     setRouteOverviewActive(false)
     setDeviceHeading(null)
+    setCourseHeading(null)
     setConfirmExitOpen(false)
 
     if (options?.arrived) {
@@ -735,7 +841,13 @@ export const AddressDirectionsMap = forwardRef<AddressDirectionsMapHandle, Addre
     }
   }, [destination, stopNavigation])
 
-  const handlePositionUpdate = useCallback((position: { latitude: number; longitude: number; heading?: number | null }, options?: { forceRoute?: boolean }) => {
+  const handlePositionUpdate = useCallback((position: {
+    latitude: number
+    longitude: number
+    heading?: number | null
+    accuracy?: number | null
+    timestamp?: number
+  }, options?: { forceRoute?: boolean }) => {
     const nextOrigin = {
       latitude: position.latitude,
       longitude: position.longitude,
@@ -746,6 +858,29 @@ export const AddressDirectionsMap = forwardRef<AddressDirectionsMapHandle, Addre
     setNavigationOrigin(nextOrigin)
     setNavigationStartPoint((current) => current ?? nextOrigin)
     setNavError(null)
+
+    const nextSample = {
+      latitude: position.latitude,
+      longitude: position.longitude,
+      accuracy: typeof position.accuracy === 'number' && Number.isFinite(position.accuracy) ? position.accuracy : null,
+      timestamp: typeof position.timestamp === 'number' && Number.isFinite(position.timestamp) ? position.timestamp : Date.now(),
+    } satisfies NavigationPositionSample
+
+    if (isAccuracyUsable(nextSample)) {
+      navigationSamplesRef.current = appendNavigationSample(navigationSamplesRef.current, nextSample)
+      const targetCourseHeading = calculateSmoothedCourseHeading(navigationSamplesRef.current)
+      if (targetCourseHeading !== null) {
+        const nextCourseHeading =
+          courseHeadingRef.current === null
+            ? targetCourseHeading
+            : blendBearing(courseHeadingRef.current, targetCourseHeading, NAVIGATION_HEADING_BLEND_FACTOR)
+        courseHeadingRef.current = nextCourseHeading
+        setCourseHeading(nextCourseHeading)
+      } else if (courseHeadingRef.current === null) {
+        setCourseHeading(null)
+      }
+    }
+
     if (typeof position.heading === 'number' && Number.isFinite(position.heading)) {
       setDeviceHeading(normalizeHeading(position.heading))
     }
@@ -809,6 +944,8 @@ export const AddressDirectionsMap = forwardRef<AddressDirectionsMapHandle, Addre
             latitude: location.latitude,
             longitude: location.longitude,
             heading: location.heading,
+            accuracy: location.accuracy,
+            timestamp: location.timestamp,
           },
           { forceRoute },
         )
@@ -1139,7 +1276,7 @@ export const AddressDirectionsMap = forwardRef<AddressDirectionsMapHandle, Addre
 
   useEffect(() => {
     if (!pendingFollowResetRef.current) return
-    if (!mapReady || !fullscreenActive || !activeOrigin) return
+    if (!mapReady || !fullscreenActive || !activeOrigin || !followCameraCenter) return
     if (navStatus !== 'active' || routeOverviewActive) return
 
     pendingFollowResetRef.current = false
@@ -1156,15 +1293,15 @@ export const AddressDirectionsMap = forwardRef<AddressDirectionsMapHandle, Addre
       map.stop?.()
       map.resize?.()
       map.easeTo({
-        center: [activeOrigin.longitude, activeOrigin.latitude],
+        center: [followCameraCenter.longitude, followCameraCenter.latitude],
         zoom: ACTIVE_NAV_ZOOM,
         pitch: ACTIVE_NAV_PITCH,
-        bearing: activeBearing,
+        bearing: resolveShortestMapBearing(map.getBearing?.(), activeBearing),
         duration: 0,
       })
       map.triggerRepaint?.()
     })
-  }, [activeBearing, activeOrigin, fullscreenActive, mapReady, navStatus, refreshMapViewport, routeOverviewActive])
+  }, [activeBearing, followCameraCenter, fullscreenActive, mapReady, navStatus, refreshMapViewport, routeOverviewActive])
 
   useEffect(() => {
     if (!mapReady || !mapRef.current || !destination) return
@@ -1428,11 +1565,15 @@ export const AddressDirectionsMap = forwardRef<AddressDirectionsMapHandle, Addre
         const targetZoom = followZoomRef.current ?? (hasAppliedFollowZoomRef.current ? map.getZoom?.() ?? ACTIVE_NAV_ZOOM : ACTIVE_NAV_ZOOM)
         hasAppliedFollowZoomRef.current = true
         map.resize?.()
+        const nextCenter = followCameraCenter ?? {
+          latitude: activeOrigin.latitude,
+          longitude: activeOrigin.longitude,
+        }
         map.easeTo({
-          center: [activeOrigin.longitude, activeOrigin.latitude],
+          center: [nextCenter.longitude, nextCenter.latitude],
           zoom: targetZoom,
           pitch: ACTIVE_NAV_PITCH,
-          bearing: activeBearing,
+          bearing: resolveShortestMapBearing(map.getBearing?.(), activeBearing),
           duration: ACTIVE_NAV_FOLLOW_DURATION_MS,
         })
         map.triggerRepaint?.()
@@ -1482,6 +1623,7 @@ export const AddressDirectionsMap = forwardRef<AddressDirectionsMapHandle, Addre
     activeRouteCoordinates,
     avatarMarkers,
     destination,
+    followCameraCenter,
     idleCameraMode,
     idleViewportKey,
     mapReady,
