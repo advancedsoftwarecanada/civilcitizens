@@ -11,6 +11,7 @@ import {
   VoteCommentInput,
   VotePollInput,
   findCommunity,
+  getProvinceDisplayName,
   normalizeProvinceCode,
   slugifyCommunityName,
 } from '@civil/shared'
@@ -31,6 +32,97 @@ function extractFirstPostUrl(value: string): string | null {
 }
 
 type PostInteractionsDeps = Record<string, any>
+
+function buildPostCreateFallback(post: any, viewerId: string) {
+  const community = post.provinceCode && post.communitySlug ? findCommunity(post.provinceCode, post.communitySlug) : null
+
+  return {
+    id: post.id,
+    seoSlug: post.seoSlug ?? null,
+    type: post.type,
+    title: post.title ?? null,
+    body: post.body,
+    topicSlugs: Array.isArray(post.hashtags) ? post.hashtags.map((tag: { tag: string }) => tag.tag) : [],
+    communitySlugs: Array.isArray(post.communityTags)
+      ? post.communityTags.map((tag: { communitySlug: string }) => tag.communitySlug)
+      : [],
+    mentionedUserIds: Array.isArray(post.mentions) ? post.mentions.map((mention: { userId: string }) => mention.userId) : [],
+    mentions: Array.isArray(post.mentions)
+      ? post.mentions.map((mention: { userId: string; handleSnapshot: string; user?: { handle?: string | null; name?: string | null } | null }) => ({
+          userId: mention.userId,
+          handle: mention.user?.handle ?? mention.handleSnapshot,
+          matchedHandle: mention.handleSnapshot,
+          name: mention.user?.name ?? null,
+        }))
+      : [],
+    mediaUrl: post.mediaUrl ?? null,
+    images: Array.isArray(post.images) ? post.images : null,
+    linkPreview: (post.linkPreview as Prisma.JsonValue | null) ?? null,
+    createdAt: post.createdAt,
+    updatedAt: post.updatedAt,
+    jurisdiction: post.jurisdiction,
+    provinceCode: post.provinceCode ?? null,
+    provinceName: community ? getProvinceDisplayName(community.province as any) : null,
+    communitySlug: post.communitySlug ?? null,
+    communityName: community?.name ?? null,
+    organization: post.business
+      ? {
+          id: post.business.id,
+          name: post.business.name,
+          slug: post.business.slug,
+          isVerified: Boolean(post.business.isVerified),
+          logoUrl: post.business.logoUrl ?? null,
+          coverUrl: post.business.coverUrl ?? null,
+          provinceCode: post.business.provinceCode ?? null,
+          communitySlug: post.business.communitySlug ?? null,
+        }
+      : null,
+    showBusinessAuthor: Boolean(post.businessId && post.showBusinessAuthor),
+    cause: null,
+    causeDraftId: null,
+    poll: null,
+    author: {
+      id: post.author.id,
+      handle: post.author.handle,
+      name: post.author.name ?? null,
+      avatarUrl: post.author.avatarUrl ?? null,
+      coverUrl: post.author.coverUrl ?? null,
+      isPremium: Boolean(post.author.premiumStatus),
+      isVerified: false,
+    },
+    recentComments: [],
+    counts: {
+      commentCount: post.commentCount ?? 0,
+      reactions: post.reactionTotal ?? 0,
+      recentPositive: post.recentPositive ?? 0,
+      upvotes: post.upvotes ?? 0,
+      downvotes: post.downvotes ?? 0,
+      score: post.score ?? 0,
+    },
+    votes: {
+      upvotes: post.upvotes ?? 0,
+      downvotes: post.downvotes ?? 0,
+      score: post.score ?? 0,
+    },
+    reactions: {
+      maple: post.reactionMaple ?? 0,
+      heart: post.reactionHeart ?? 0,
+      haha: post.reactionHaha ?? 0,
+      wow: post.reactionWow ?? 0,
+      sad: post.reactionSad ?? 0,
+      fire: post.reactionFire ?? 0,
+      total: post.reactionTotal ?? 0,
+      positive: post.reactionTotal ?? 0,
+    },
+    metrics: {
+      hotScore: post.hotScore ?? 0,
+    },
+    viewer: {
+      reaction: null,
+      vote: null,
+    },
+  }
+}
 
 export function registerPostInteractionRoutes(app: FastifyInstance, deps: PostInteractionsDeps) {
   app.post('/posts', async (req: FastifyRequest, reply: FastifyReply) =>
@@ -266,8 +358,19 @@ export function registerPostInteractionRoutes(app: FastifyInstance, deps: PostIn
         })
       }
 
-      const causeByPost = await deps.loadCauseSummariesByPostIds([created.id])
-      return reply.code(201).send(deps.formatPost(created, { viewerId: userId, cause: causeByPost[created.id] ?? null }))
+      let causeByPost: Record<string, unknown> = {}
+      try {
+        causeByPost = await deps.loadCauseSummariesByPostIds([created.id])
+      } catch (error) {
+        req.log.error({ err: error, postId: created.id }, 'post_create_cause_summary_failed')
+      }
+
+      try {
+        return reply.code(201).send(deps.formatPost(created, { viewerId: userId, cause: causeByPost[created.id] ?? null }))
+      } catch (error) {
+        req.log.error({ err: error, postId: created.id }, 'post_create_format_failed')
+        return reply.code(201).send(buildPostCreateFallback(created, userId))
+      }
     }),
   )
 
