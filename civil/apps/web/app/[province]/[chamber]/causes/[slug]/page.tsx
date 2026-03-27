@@ -1,5 +1,5 @@
 import type { Metadata } from 'next'
-import ChamberPostPage from '../../../../c/[province]/[chamber]/posts/[slug]/page'
+import ChamberPostPageClient from '../../../../c/[province]/[chamber]/posts/[slug]/ChamberPostPageClient'
 import { generateCauseMetadata } from '../../../../_lib/causeMetadata'
 
 type PageProps = {
@@ -19,5 +19,5 @@ export async function generateMetadata({ params }: PageProps): Promise<Metadata>
 }
 
 export default function ProvinceChamberCausePage({ params }: PageProps) {
-  return <ChamberPostPage params={params} />
+  return <ChamberPostPageClient params={params} />
 }
