@@ -2732,6 +2732,8 @@ export function registerDriveRideRoutes(app: FastifyInstance, deps: DriveRideDep
 
           if (!requester || !driver) throw new Error('user_not_found')
 
+          const requesterWallet = readWalletSummary(requester.communityMeta ?? null)
+
           const tipAmountCents = Math.max(0, Math.round(body.data.amountCents || 0))
           const feeCents = computeCivilPayFeeCents(tipAmountCents)
           const totalChargeCents = tipAmountCents + feeCents

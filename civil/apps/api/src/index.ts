@@ -4101,7 +4101,9 @@ type FormattedPost = {
   } | null
   showBusinessAuthor: boolean
   cause: {
+    draftId: string | null
     goalAmountCents: number
+    stageGoals: CauseSummary['stageGoals']
     raisedAmountCents: number
     remainingAmountCents: number
     contributionCount: number
@@ -4111,6 +4113,7 @@ type FormattedPost = {
     updatedAt: Date | null
     lastContributionAt: Date | null
   } | null
+  causeDraftId: string | null
   poll: {
     id: string
     resultsVisibility: PollResultsVisibilityValue

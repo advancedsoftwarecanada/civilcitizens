@@ -583,7 +583,7 @@ export function registerCauseRoutes(app: FastifyInstance, deps: CauseRouteDeps) 
           provinceCode: created.provinceCode ?? null,
           communitySlug: created.communitySlug ?? null,
           author: {
-            handle: created.author.handle,
+            handle: (created.author as { handle?: string | null } | null | undefined)?.handle ?? null,
           },
         },
       })

@@ -1155,7 +1155,7 @@ export function RightRail({
       ) : null}
 
       {shouldLoadCausesRail ? (
-        <Block>
+        <Block title="Civil Causes">
           <Link
             href="/causes/start"
             className="inline-flex w-full items-center justify-center rounded-full bg-red-600 px-4 py-3 text-sm font-semibold text-white transition hover:bg-red-700"
