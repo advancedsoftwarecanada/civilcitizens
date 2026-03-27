@@ -111,7 +111,7 @@ export default function FederalPartyPage({ params }: PageProps) {
   const [selectedDistrictCode, setSelectedDistrictCode] = useState<number | null>(null)
   const [mapFocusRequestToken, setMapFocusRequestToken] = useState(0)
   const [pendingMapFocus, setPendingMapFocus] = useState<{ provinceCode: string; districtSlug: string } | null>(null)
-  const [otherParties, setOtherParties] = useState<FederalPartyListItem[]>([])
+  const [otherParties, setOtherParties] = useState<FederalExplorerPartyListItem[]>([])
   const [otherPartiesStatus, setOtherPartiesStatus] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle')
   const mapSectionRef = useRef<HTMLElement | null>(null)
 
