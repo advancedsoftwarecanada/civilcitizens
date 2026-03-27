@@ -2,6 +2,18 @@ import { expect, test } from '@playwright/test'
 import { authenticatePage, createPublishedCause } from './helpers/civilApi'
 
 test.describe('Causes', () => {
+  test('loads public community feed pages without a login prompt', async ({ page, request }) => {
+    const cause = await createPublishedCause(request)
+    const communityPath = `/${encodeURIComponent(cause.province)}/${encodeURIComponent(cause.municipality)}`
+
+    await page.goto(communityPath)
+
+    await expect(page).toHaveURL(new RegExp(`${communityPath.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`))
+    await expect(page).not.toHaveURL(/\/login(?:\?|$)/)
+    await expect(page.getByText(cause.title)).toBeVisible()
+    await expect(page.getByText('Welcome back')).toHaveCount(0)
+  })
+
   test('loads published cause pages publicly without a login redirect', async ({ page, request }) => {
     const shareImageUrl = 'https://example.com/cause-share-preview.jpg'
     const cause = await createPublishedCause(request, { imageUrls: [shareImageUrl] })
