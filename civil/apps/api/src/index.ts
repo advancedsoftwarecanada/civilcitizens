@@ -5814,6 +5814,7 @@ registerPoliticianRoutes(app, {
 })
 
 registerNotificationsSearchRoutes(app, {
+  CIVIL_PUBLIC_HOST,
   NOTIFICATION_CHANNEL_PREFIX,
   NOTIFICATION_FEED_EXCLUDED_TYPES,
   REDIS_URL,

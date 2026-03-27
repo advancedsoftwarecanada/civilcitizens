@@ -73,6 +73,7 @@ services:
       CIVIL_ENV_PRIMARY: ${CIVIL_ENV_PRIMARY:-}
       CIVIL_ENV_FILES: ${CIVIL_ENV_FILES:-}
       CIVIL_ADMIN_EMAILS: ${CIVIL_ADMIN_EMAILS:-}
+      NOMINATIM_SERVER: ${NOMINATIM_SERVER:-}
       MAP_TILE_SERVER: ${MAP_TILE_SERVER:-http://192.168.2.254:8080}
       OSRM_SERVER: ${OSRM_SERVER:-http://192.168.2.254:5000}
     # Do not publish API to host; Nginx proxies to it via internal network
@@ -176,6 +177,7 @@ services:
       NEXT_PUBLIC_BASE_URL: ${NEXT_PUBLIC_BASE_URL:-https://${CIVIL_PUBLIC_HOST:-dev.civilcitizens.ca}}
       NEXT_PUBLIC_MEDIA_BASE_URL: ${NEXT_PUBLIC_MEDIA_BASE_URL:-https://${CIVIL_PUBLIC_HOST:-dev.civilcitizens.ca}/media}
       NEXT_PUBLIC_GTAG_ID: ${NEXT_PUBLIC_GTAG_ID:-}
+      NOMINATIM_SERVER: ${NOMINATIM_SERVER:-}
       MAP_TILE_SERVER: ${MAP_TILE_SERVER:-http://192.168.2.254:8080}
       OSRM_SERVER: ${OSRM_SERVER:-http://192.168.2.254:5000}
     depends_on:
