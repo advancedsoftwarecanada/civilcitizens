@@ -15,7 +15,11 @@ import { XMLParser } from 'fast-xml-parser'
 import { COMMUNITIES, PROVINCES, findCommunity, normalizeProvinceCode, slugifyCommunityName } from '@civil/shared'
 import { z } from 'zod'
 import { browseFederalPartyDistricts, resolveCommunityElectoralDistrictContext } from '../geospatial.js'
-import { scrapeAndSyncPpcCandidates, type PpcCandidateImportSummary } from '../politicianScrapers/ppc.js'
+import {
+  listPpcRidingAliases,
+  scrapeAndSyncPpcCandidates,
+  type PpcCandidateImportSummary,
+} from '../politicianScrapers/ppc.js'
 
 type CommunityLookupRecord = (typeof COMMUNITIES)[number]
 
@@ -1869,10 +1873,11 @@ export function registerPoliticianRoutes(app: FastifyInstance, deps: Politicians
     const user = await deps.loadAdminUserOrReply(req, reply)
     if (!user) return
 
-    const [{ databaseReady, stats }, byElections, byElectionStorageReady] = await Promise.all([
+    const [{ databaseReady, stats }, byElections, byElectionStorageReady, ppcRidingAliases] = await Promise.all([
       loadFederalDatasetStatsSafe(),
       loadManualByElectionsSafe(),
       loadByElectionStorageReadySafe(),
+      listPpcRidingAliases(),
     ])
     const sources = await Promise.all(
       FEDERAL_DATASET_SOURCES.map(async (source) => {
@@ -1906,6 +1911,7 @@ export function registerPoliticianRoutes(app: FastifyInstance, deps: Politicians
       sources,
       stats,
       byElections,
+      ppcRidingAliases,
     })
   })
 
