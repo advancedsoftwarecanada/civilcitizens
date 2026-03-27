@@ -95,6 +95,8 @@ type CauseContributorUserRow = {
 const CauseDraftUpdateBody = z.object({
   title: z.string().trim().min(1).max(160).optional(),
   body: z.string().max(30000).optional(),
+  mediaUrl: z.string().url().optional().nullable(),
+  images: z.array(z.string().url()).max(12).optional().nullable(),
   goalAmountCents: z.coerce.number().int().min(CAUSE_MINIMUM_GOAL_CENTS).max(CAUSE_MAXIMUM_GOAL_CENTS).optional(),
   stageGoals: z.array(CauseStageGoalInput).max(24).optional(),
   provinceCode: z.string().trim().min(2).max(2).optional().nullable(),
@@ -111,6 +113,29 @@ function buildCommunityOrClauses(keys: Set<string>) {
       return { provinceCode, communitySlug }
     })
     .filter((value): value is { provinceCode: string; communitySlug: string } => Boolean(value))
+}
+
+function normalizeCauseDraftMedia(input: {
+  currentMediaUrl: string | null
+  currentImages: string[]
+  nextMediaUrl?: string | null
+  nextImages?: string[] | null
+}) {
+  const imagesSource = input.nextImages === undefined ? input.currentImages : input.nextImages ?? []
+  const normalizedImages = Array.from(
+    new Set(
+      imagesSource
+        .map((value) => value?.trim())
+        .filter((value): value is string => Boolean(value)),
+    ),
+  )
+  const requestedMediaUrl = input.nextMediaUrl === undefined ? input.currentMediaUrl : input.nextMediaUrl
+  const normalizedMediaUrl = requestedMediaUrl?.trim() || normalizedImages[0] || null
+
+  return {
+    mediaUrl: normalizedMediaUrl,
+    images: normalizedImages.length ? normalizedImages : normalizedMediaUrl ? [normalizedMediaUrl] : [],
+  }
 }
 
 export function registerCauseRoutes(app: FastifyInstance, deps: CauseRouteDeps) {
@@ -329,6 +354,12 @@ export function registerCauseRoutes(app: FastifyInstance, deps: CauseRouteDeps) 
 
         const nextTitle = body.data.title ?? current.title
         const nextBody = body.data.body ?? current.body
+        const nextMedia = normalizeCauseDraftMedia({
+          currentMediaUrl: current.mediaUrl,
+          currentImages: current.images,
+          nextMediaUrl: body.data.mediaUrl,
+          nextImages: body.data.images,
+        })
         const nextGoalAmountCents = body.data.goalAmountCents ?? current.goalAmountCents
         const nextStageGoals = body.data.stageGoals ?? current.stageGoals
 
@@ -365,6 +396,8 @@ export function registerCauseRoutes(app: FastifyInstance, deps: CauseRouteDeps) 
               creatorUserId: viewerId,
               title: body.data.title,
               body: body.data.body,
+              mediaUrl: body.data.mediaUrl === undefined && body.data.images === undefined ? undefined : nextMedia.mediaUrl,
+              images: body.data.images === undefined && body.data.mediaUrl === undefined ? undefined : nextMedia.images,
               goalAmountCents: body.data.goalAmountCents,
               stageGoals: body.data.stageGoals,
               provinceCode: normalizedProvinceCode,
@@ -384,6 +417,8 @@ export function registerCauseRoutes(app: FastifyInstance, deps: CauseRouteDeps) 
                 data: {
                   title: nextTitle,
                   body: normalizedBody,
+                  mediaUrl: nextMedia.mediaUrl,
+                  images: nextMedia.images.length ? (nextMedia.images as Prisma.InputJsonValue) : Prisma.JsonNull,
                   provinceCode: normalizedProvinceCode === undefined ? undefined : normalizedProvinceCode,
                   communitySlug: normalizedCommunitySlug === undefined ? undefined : normalizedCommunitySlug,
                   ...(resolvedPreview ? { linkPreview: resolvedPreview as Prisma.InputJsonValue } : body.data.body !== undefined ? { linkPreview: Prisma.JsonNull } : {}),
@@ -494,6 +529,8 @@ export function registerCauseRoutes(app: FastifyInstance, deps: CauseRouteDeps) 
                 title,
                 type: 'cause',
                 seoSlug,
+                mediaUrl: draft.mediaUrl ?? undefined,
+                images: draft.images.length ? (draft.images as Prisma.InputJsonValue) : undefined,
                 provinceCode: community.province,
                 communitySlug: community.slug,
                 jurisdiction: deps.DEFAULT_JURISDICTION,

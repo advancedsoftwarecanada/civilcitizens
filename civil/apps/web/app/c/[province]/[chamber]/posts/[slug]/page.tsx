@@ -14,6 +14,7 @@ import RichTextEditor from '../../../../../_components/RichTextEditor'
 import CommentComposer from '../../../../../_components/CommentComposer'
 import CommentThread, { type ApiComment } from '../../../../../_components/CommentThread'
 import CivilLinkPreviewList from '../../../../../_components/CivilLinkPreviewList'
+import CivilPostMedia from '../../../../../_components/CivilPostMedia'
 import CauseContributorCard, { type CauseContributorItem } from '../../../../../_components/CauseContributorCard'
 import CauseSummaryCard from '../../../../../_components/CauseSummaryCard'
 import LinkPreviewCard from '../../../../../_components/LinkPreviewCard'
@@ -25,7 +26,6 @@ import SharePostModal from '../../../../../_components/SharePostModal'
 import ShareSendModal from '../../../../../_components/ShareSendModal'
 import Modal from '../../../../../_components/Modal'
 import { pushToast } from '../../../../../_components/useToasts'
-import { hasHomeCommunity } from '../../../../../_lib/me'
 import { redirectToAuthModal } from '../../../../../_lib/authModal'
 import { buildPostShareTarget } from '../../../../../_lib/shareTarget'
 import { linkifyContentInHtml, stripCivilUrlsFromHtml, stripCivilUrlsFromText } from '../../../../../_lib/civilLinks'
@@ -124,36 +124,21 @@ export default function ChamberPostPage({ params }: PageProps) {
 
   const loadViewer = useCallback(async () => {
     const token = localStorage.getItem('token')
-    if (!token) {
-      redirectToAuthModal('login')
-      return
-    }
+    if (!token) return
     try {
       const cached = useViewerStore.getState().me
       if (cached) {
-        if (!hasHomeCommunity(cached)) {
-          router.replace('/welcome')
-          return
-        }
         setViewer(cached)
         return
       }
 
       const data = await ensureViewerMe({ token })
-      if (!data) {
-        redirectToAuthModal('login')
-        return
-      }
-      if (!hasHomeCommunity(data)) {
-        router.replace('/welcome')
-        return
-      }
+      if (!data) return
       setViewer(data)
     } catch {
-      redirectToAuthModal('login')
       /* noop */
     }
-  }, [router])
+  }, [])
 
   const loadPost = useCallback(async (sortMode: 'hot' | 'new') => {
     setStatus('loading')
@@ -851,7 +836,7 @@ export default function ChamberPostPage({ params }: PageProps) {
             </div>
 
             <div className="space-y-4 text-[16px] leading-7 text-gray-900">
-              {post.mediaUrl ? (
+              {post.type === 'cause' ? <CivilPostMedia images={post.images} mediaUrl={post.mediaUrl} /> : post.mediaUrl ? (
                 <div className="overflow-hidden rounded-2xl border border-gray-200 bg-gray-50">
                   <img
                     src={post.mediaUrl}

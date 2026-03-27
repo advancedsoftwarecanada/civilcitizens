@@ -1,8 +1,9 @@
 'use client'
 
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { type ChangeEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import clsx from 'clsx'
+import { LuImagePlus } from 'react-icons/lu'
 import DashboardShell from '../../../_components/DashboardShell'
 import Modal from '../../../_components/Modal'
 import type { ApiPost } from '../../../_components/PostComposer'
@@ -29,6 +30,8 @@ type CauseDraft = {
   id: string
   title: string
   body: string
+  mediaUrl: string | null
+  images: string[]
   goalAmountCents: number
   stageGoals: CauseStageGoal[]
   provinceCode: string | null
@@ -75,9 +78,25 @@ type DraftFormState = {
   stageGoals: CauseStageGoalForm[]
 }
 
+type PhotoItem = {
+  id: string
+  file?: File
+  previewUrl: string
+  assetId?: string | null
+  mediaUrl?: string | null
+  status: 'idle' | 'uploading' | 'processing' | 'ready' | 'error'
+  error?: string | null
+}
+
 const GOAL_DESCRIPTION_MAX_LENGTH = 200
 const STORY_MAX_LENGTH = 3000
 const STAGE_GOAL_MAX_CENTS = 1_000_000
+const PHOTO_MAX_BYTES = 25 * 1024 * 1024
+const ACCEPTED_IMAGE_TYPES = 'image/jpeg,image/png,image/webp,image/avif,image/heic,image/heif'
+const ACCEPTED_IMAGE_TYPE_LIST = ACCEPTED_IMAGE_TYPES.split(',')
+const MAX_IMAGE_DIMENSION = 8000
+const MAX_IMAGE_MEGA_PIXELS = 40
+const MAX_CAUSE_IMAGES = 12
 
 function buildCommunityKey(provinceCode: string, communitySlug: string) {
   return `${provinceCode.toUpperCase()}:${communitySlug.toLowerCase()}`
@@ -107,6 +126,60 @@ function clampStageGoalAmount(amountCents: number, minimumCents = 0) {
 
 function stripHtml(value: string) {
   return value.replace(/<[^>]*>/g, ' ').replace(/&nbsp;/gi, ' ').replace(/\s+/g, ' ').trim()
+}
+
+function pickPhotoVariantUrl(variants?: Record<string, { url?: string | null } | null>) {
+  if (!variants) return null
+  const preference = ['post-xl', 'post-lg', 'post-md', 'cover-xl', 'cover-lg', 'cover-md', 'avatar@2x', 'avatar@1x']
+  for (const key of preference) {
+    const candidate = variants[key]?.url
+    if (candidate) return candidate
+  }
+  const fallback = Object.values(variants).find((variant) => variant?.url)
+  return fallback?.url ?? null
+}
+
+const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
+
+const readImageDimensions = async (file: File): Promise<{ width: number; height: number } | null> => {
+  try {
+    const objectUrl = URL.createObjectURL(file)
+    return await new Promise((resolve) => {
+      const img = new Image()
+      img.onload = () => {
+        resolve({ width: img.naturalWidth || img.width, height: img.naturalHeight || img.height })
+        URL.revokeObjectURL(objectUrl)
+      }
+      img.onerror = () => {
+        resolve(null)
+        URL.revokeObjectURL(objectUrl)
+      }
+      img.src = objectUrl
+    })
+  } catch {
+    return null
+  }
+}
+
+function buildDraftPhotoItems(draft: CauseDraft): PhotoItem[] {
+  const draftImages = Array.isArray(draft.images) && draft.images.length
+    ? draft.images
+    : draft.mediaUrl
+      ? [draft.mediaUrl]
+      : []
+
+  return draftImages.map((imageUrl, index) => ({
+    id: `existing-${index}-${imageUrl}`,
+    previewUrl: imageUrl,
+    mediaUrl: imageUrl,
+    status: 'ready' as const,
+  }))
+}
+
+function revokePhotoPreview(previewUrl: string) {
+  if (previewUrl.startsWith('blob:')) {
+    URL.revokeObjectURL(previewUrl)
+  }
 }
 
 function createStageGoal(): CauseStageGoal {
@@ -188,6 +261,9 @@ export default function CauseDraftEditorPageClient({ draftId }: { draftId: strin
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [publishConfirmOpen, setPublishConfirmOpen] = useState(false)
+  const [photos, setPhotos] = useState<PhotoItem[]>([])
+  const fileInputRef = useRef<HTMLInputElement | null>(null)
+  const photosRef = useRef<PhotoItem[]>([])
   const [form, setForm] = useState<DraftFormState>({
     title: '',
     body: '',
@@ -255,6 +331,7 @@ export default function CauseDraftEditorPageClient({ draftId }: { draftId: strin
         if (!cancelled) {
           setLoadedDraft(draft)
           setLoadedCause(draftPayload?.cause ?? null)
+          setPhotos(buildDraftPhotoItems(draft))
           setFollowOptions(options)
           setForm({
             title: draft.title,
@@ -295,10 +372,230 @@ export default function CauseDraftEditorPageClient({ draftId }: { draftId: strin
   )
   const hasAnyGoalProgress = goalProgress.some((goal) => goal.progressCents > 0)
   const storyPlainText = useMemo(() => stripHtml(form.body), [form.body])
+  const readyPhotoUrls = useMemo(
+    () => photos.map((photo) => photo.mediaUrl).filter((value): value is string => Boolean(value)),
+    [photos],
+  )
+  const hasPhotoUploadsInFlight = useMemo(
+    () => photos.some((photo) => photo.status === 'uploading' || photo.status === 'processing'),
+    [photos],
+  )
+  const hasPhotoUploadErrors = useMemo(
+    () => photos.some((photo) => photo.status === 'error'),
+    [photos],
+  )
+  const photosReady = photos.length === 0 || readyPhotoUrls.length === photos.length
   const selectedCommunity = useMemo(
     () => followOptions.find((option) => buildCommunityKey(option.provinceCode, option.communitySlug) === form.communityKey) ?? null,
     [followOptions, form.communityKey],
   )
+
+  useEffect(() => {
+    photosRef.current = photos
+  }, [photos])
+
+  useEffect(() => {
+    return () => {
+      photosRef.current.forEach((photo) => revokePhotoPreview(photo.previewUrl))
+    }
+  }, [])
+
+  const startPhotoUpload = useCallback(async (id: string, file: File) => {
+    setPhotos((prev) => prev.map((photo) => (photo.id === id ? { ...photo, status: 'uploading', error: null } : photo)))
+
+    const token = getStoredToken()
+    if (!token) {
+      redirectToAuthModal('login')
+      setPhotos((prev) =>
+        prev.map((photo) => (photo.id === id ? { ...photo, status: 'error', error: 'Sign in to upload a photo.' } : photo)),
+      )
+      return
+    }
+
+    try {
+      const initRes = await fetch(buildApiUrl('/media/uploads'), {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          category: 'post_image',
+          mime: file.type || 'application/octet-stream',
+          byteSize: file.size,
+          filename: file.name,
+        }),
+      })
+
+      if (!initRes.ok) {
+        const payload = await initRes.json().catch(() => ({}))
+        const reason = typeof payload?.error === 'string' ? payload.error : 'upload_init_failed'
+        throw new Error(reason)
+      }
+
+      const initPayload = await initRes.json()
+      const assetId: string = initPayload.assetId
+      const upload: { url?: string; method?: string; headers?: Record<string, string> } = initPayload.upload || {}
+      const proxyPath: string | null = typeof initPayload?.proxyPath === 'string' ? initPayload.proxyPath : null
+
+      const tryDirect = async () => {
+        if (!upload.url) return false
+        if (typeof window !== 'undefined' && window.location.protocol === 'https:' && upload.url.startsWith('http:')) {
+          return false
+        }
+
+        const response = await fetch(upload.url, {
+          method: upload.method || 'PUT',
+          headers: upload.headers,
+          body: file,
+        })
+
+        return response.ok
+      }
+
+      const tryProxy = async () => {
+        if (!proxyPath) return false
+        const response = await fetch(buildApiUrl(proxyPath), {
+          method: 'PUT',
+          headers: {
+            authorization: `Bearer ${token}`,
+            'content-type': file.type || 'application/octet-stream',
+            'x-upload-byte-size': String(file.size),
+          },
+          body: file,
+        })
+
+        return response.ok
+      }
+
+      const directOk = upload.url
+        ? await tryDirect().catch(() => false)
+        : false
+      const proxyOk = directOk
+        ? true
+        : await tryProxy().catch(() => false)
+
+      if (!directOk && !proxyOk) {
+        throw new Error('upload_failed')
+      }
+
+      const completeRes = await fetch(buildApiUrl('/media/uploads/complete'), {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({ assetId }),
+      })
+
+      if (!completeRes.ok) {
+        throw new Error('processing_not_scheduled')
+      }
+
+      setPhotos((prev) => prev.map((photo) => (photo.id === id ? { ...photo, assetId, status: 'processing' } : photo)))
+
+      let lastError: unknown = null
+      for (let attempt = 0; attempt < 30; attempt += 1) {
+        const response = await fetch(buildApiUrl(`/media/assets/${assetId}`), {
+          headers: {
+            authorization: `Bearer ${token}`,
+          },
+        }).catch((error) => {
+          lastError = error
+          return null
+        })
+
+        if (response && response.ok) {
+          const payload = await response.json().catch(() => ({}))
+          const asset = payload?.asset
+          if (asset?.status === 'ready') {
+            const variantUrl = pickPhotoVariantUrl(asset.variants)
+            if (!variantUrl) {
+              throw new Error('variant_missing')
+            }
+            setPhotos((prev) => prev.map((photo) => (photo.id === id ? { ...photo, mediaUrl: variantUrl, status: 'ready' } : photo)))
+            return
+          }
+          if (asset?.status === 'failed') {
+            throw new Error(asset.failureReason ?? 'processing_failed')
+          }
+        }
+
+        await wait(2000)
+      }
+
+      throw lastError ?? new Error('processing_timeout')
+    } catch (error) {
+      setPhotos((prev) =>
+        prev.map((photo) =>
+          photo.id === id ? { ...photo, status: 'error', error: error instanceof Error ? error.message : 'Upload failed' } : photo,
+        ),
+      )
+    }
+  }, [])
+
+  const handlePhotoFile = useCallback(async (event: ChangeEvent<HTMLInputElement>) => {
+    const fileList = event.target.files
+    if (!fileList || fileList.length === 0) return
+
+    const files = Array.from(fileList)
+    event.target.value = ''
+
+    const remainingSlots = Math.max(0, MAX_CAUSE_IMAGES - photos.length)
+    if (remainingSlots === 0) {
+      pushToast(`You can add up to ${MAX_CAUSE_IMAGES} photos per cause.`, 'error')
+      return
+    }
+
+    if (files.length > remainingSlots) {
+      pushToast(`Only the first ${remainingSlots} photos were added. Causes support up to ${MAX_CAUSE_IMAGES} photos.`, 'error')
+    }
+
+    const newPhotos: PhotoItem[] = []
+
+    for (const file of files.slice(0, remainingSlots)) {
+      if (!ACCEPTED_IMAGE_TYPE_LIST.includes(file.type)) {
+        pushToast(`Skipped ${file.name}: invalid file type.`, 'error')
+        continue
+      }
+
+      if (file.size > PHOTO_MAX_BYTES) {
+        pushToast(`Skipped ${file.name}: file too large (max 25MB).`, 'error')
+        continue
+      }
+
+      try {
+        const dimensions = await readImageDimensions(file)
+        if (!dimensions) {
+          pushToast(`Skipped ${file.name}: could not read image.`, 'error')
+          continue
+        }
+
+        const megaPixels = (dimensions.width * dimensions.height) / 1_000_000
+        if (dimensions.width > MAX_IMAGE_DIMENSION || dimensions.height > MAX_IMAGE_DIMENSION || megaPixels > MAX_IMAGE_MEGA_PIXELS) {
+          pushToast(`Skipped ${file.name}: image resolution too high.`, 'error')
+          continue
+        }
+
+        const id = Math.random().toString(36).slice(2)
+        const previewUrl = URL.createObjectURL(file)
+        newPhotos.push({ id, file, previewUrl, status: 'idle' })
+      } catch {
+        pushToast(`Skipped ${file.name}: error processing image.`, 'error')
+      }
+    }
+
+    if (!newPhotos.length) return
+    setPhotos((prev) => [...prev, ...newPhotos])
+  }, [photos.length])
+
+  useEffect(() => {
+    photos.forEach((photo) => {
+      if (photo.status === 'idle' && photo.file) {
+        void startPhotoUpload(photo.id, photo.file)
+      }
+    })
+  }, [photos, startPhotoUpload])
 
   const handleStoryChange = useCallback((value: string) => {
     const nextLength = stripHtml(value).length
@@ -319,6 +616,10 @@ export default function CauseDraftEditorPageClient({ draftId }: { draftId: strin
       redirectToAuthModal('login')
       return false
     }
+    if (!photosReady || hasPhotoUploadsInFlight) {
+      pushToast('Please wait for photo uploads to finish before saving.', 'error')
+      return false
+    }
 
     setSaving(true)
     try {
@@ -332,6 +633,8 @@ export default function CauseDraftEditorPageClient({ draftId }: { draftId: strin
         body: JSON.stringify({
           title: form.title.trim() || 'Untitled Cause',
           body: form.body,
+          mediaUrl: readyPhotoUrls[0] ?? null,
+          images: readyPhotoUrls,
           goalAmountCents: totalGoalCents,
           stageGoals: form.stageGoals.map((goal, index) => ({
             id: goal.id,
@@ -375,7 +678,7 @@ export default function CauseDraftEditorPageClient({ draftId }: { draftId: strin
     } finally {
       setSaving(false)
     }
-  }, [draftId, form.body, form.communityKey, form.stageGoals, form.title, loadedCause, totalGoalCents])
+  }, [draftId, form.body, form.communityKey, form.stageGoals, form.title, hasPhotoUploadsInFlight, loadedCause, photosReady, readyPhotoUrls, totalGoalCents])
 
   const publishDraft = useCallback(async () => {
     const token = getStoredToken()
@@ -394,6 +697,10 @@ export default function CauseDraftEditorPageClient({ draftId }: { draftId: strin
     }
     if (storyPlainText.length > STORY_MAX_LENGTH) {
       pushToast(`Story must be ${STORY_MAX_LENGTH.toLocaleString('en-CA')} characters or less.`, 'error')
+      return
+    }
+    if (!photosReady || hasPhotoUploadsInFlight) {
+      pushToast('Please wait for photo uploads to finish before publishing.', 'error')
       return
     }
     if (!form.communityKey) {
@@ -451,7 +758,7 @@ export default function CauseDraftEditorPageClient({ draftId }: { draftId: strin
     } finally {
       setSaving(false)
     }
-  }, [draftId, form.communityKey, form.stageGoals, form.title, persistDraft, router, storyPlainText.length, totalGoalCents])
+  }, [draftId, form.communityKey, form.stageGoals, form.title, hasPhotoUploadsInFlight, persistDraft, photosReady, router, storyPlainText.length, totalGoalCents])
 
   if (loading) {
     return (
@@ -476,7 +783,7 @@ export default function CauseDraftEditorPageClient({ draftId }: { draftId: strin
               </span>
               <button
                 type="button"
-                disabled={saving || !statusCanEdit}
+                disabled={saving || !statusCanEdit || hasPhotoUploadsInFlight}
                 onClick={() => void persistDraft()}
                 className="inline-flex items-center justify-center rounded-full bg-green-600 px-5 py-2 text-sm font-semibold text-white transition hover:bg-green-700 disabled:opacity-60"
               >
@@ -485,7 +792,7 @@ export default function CauseDraftEditorPageClient({ draftId }: { draftId: strin
               {!loadedDraft?.publishedPostId ? (
                 <button
                   type="button"
-                  disabled={saving || !statusCanEdit}
+                  disabled={saving || !statusCanEdit || hasPhotoUploadsInFlight}
                   onClick={() => setPublishConfirmOpen(true)}
                   className="inline-flex items-center justify-center rounded-full bg-blue-600 px-5 py-2 text-sm font-semibold text-white transition hover:bg-blue-700 disabled:opacity-60"
                 >
@@ -544,6 +851,82 @@ export default function CauseDraftEditorPageClient({ draftId }: { draftId: strin
                 <span>{selectedCommunity ? `Publishing into ${selectedCommunity.label}` : 'Choose a community to publish this cause into the feed.'}</span>
                 <span>{storyPlainText.length}/{STORY_MAX_LENGTH} characters</span>
               </div>
+            </div>
+
+            <div className="grid gap-3">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <p className="text-sm font-semibold text-slate-800">Photos</p>
+                  <p className="mt-1 text-xs text-slate-500">Add up to {MAX_CAUSE_IMAGES} photos to make the cause page and share preview more visual.</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={!statusCanEdit || saving || photos.length >= MAX_CAUSE_IMAGES}
+                  className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 disabled:opacity-60"
+                >
+                  <LuImagePlus className="h-4 w-4" />
+                  Add Photos
+                </button>
+              </div>
+
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept={ACCEPTED_IMAGE_TYPES}
+                className="hidden"
+                multiple
+                onChange={handlePhotoFile}
+              />
+
+              {photos.length ? (
+                <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+                  {photos.map((photo) => (
+                    <div
+                      key={photo.id}
+                      className="relative aspect-square overflow-hidden rounded-xl border border-slate-200 bg-slate-50"
+                    >
+                      <img
+                        src={photo.mediaUrl ?? photo.previewUrl}
+                        alt="Cause upload"
+                        className="h-full w-full object-cover"
+                      />
+                      {photo.status === 'uploading' || photo.status === 'processing' ? (
+                        <div className="absolute inset-0 flex items-center justify-center bg-black/50 text-xs font-semibold text-white">
+                          {photo.status === 'uploading' ? 'Uploading...' : 'Processing...'}
+                        </div>
+                      ) : null}
+                      {photo.status === 'error' ? (
+                        <div className="absolute inset-0 flex items-center justify-center bg-red-500/80 p-2 text-center text-xs font-semibold text-white">
+                          {photo.error ?? 'Error'}
+                        </div>
+                      ) : null}
+                      <button
+                        type="button"
+                        className="absolute right-1 top-1 rounded-full bg-black/50 p-1 text-white hover:bg-black/70"
+                        onClick={() => {
+                          revokePhotoPreview(photo.previewUrl)
+                          setPhotos((prev) => prev.filter((item) => item.id !== photo.id))
+                        }}
+                      >
+                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" className="h-4 w-4">
+                          <path d="M6.28 5.22a.75.75 0 00-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 101.06 1.06L10 11.06l3.72 3.72a.75.75 0 101.06-1.06L11.06 10l3.72-3.72a.75.75 0 00-1.06-1.06L10 8.94 6.28 5.22z" />
+                        </svg>
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-4 py-6 text-sm text-slate-500">
+                  No photos added yet.
+                </div>
+              )}
+
+              <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-slate-500">
+                <span>{readyPhotoUrls.length}/{Math.max(photos.length, readyPhotoUrls.length)} ready</span>
+                {hasPhotoUploadsInFlight ? <span>Finishing uploads…</span> : null}
+              </div>
+              {hasPhotoUploadErrors ? <p className="text-xs text-red-600">Some photos failed to upload. Remove them or retry with new files before saving.</p> : null}
             </div>
           </div>
         </section>
