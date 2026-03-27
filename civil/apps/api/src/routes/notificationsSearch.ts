@@ -40,7 +40,243 @@ const CombinedSearchQuery = z.object({
   postLimit: z.coerce.number().int().min(1).max(10).default(3),
 })
 
+const PlaceSearchQuery = z.object({
+  q: z.string().trim().min(1).max(120),
+  limit: z.coerce.number().int().min(1).max(10).default(10),
+})
+
+const POI_CLASSES = new Set(['amenity', 'tourism', 'shop', 'healthcare', 'leisure', 'historic', 'office', 'craft'])
+const HEALTHCARE_TYPES = new Set(['hospital', 'clinic', 'doctors', 'dentist', 'pharmacy', 'healthcare', 'laboratory', 'midwife', 'veterinary'])
+const FOOD_TYPES = new Set(['restaurant', 'cafe', 'fast_food', 'bar', 'pub', 'food_court', 'ice_cream'])
+const TRANSPORT_TYPES = new Set(['parking', 'fuel', 'bus_station', 'charging_station', 'ferry_terminal', 'taxi'])
+const GENERIC_NAME_VALUES = new Set(['yes', 'building'])
+
+type PlaceSearchResultPayload = {
+  kind: 'place' | 'address'
+  name: string
+  typeName: string | null
+  category: string | null
+  lat: number
+  lng: number
+  address: string
+  displayName: string
+  className: string | null
+  addressFields: Record<string, string>
+  placeId: number | null
+  osmType: string | null
+  osmId: number | null
+  importance: number | null
+}
+
+function trimTrailingSlash(value: string) {
+  return value.replace(/\/+$/, '')
+}
+
+function normalizeText(value: unknown) {
+  return typeof value === 'string' ? value.trim() : ''
+}
+
+function normalizeNumber(value: unknown) {
+  if (typeof value === 'number' && Number.isFinite(value)) return value
+  if (typeof value === 'string') {
+    const parsed = Number(value.trim())
+    if (Number.isFinite(parsed)) return parsed
+  }
+  return null
+}
+
+function normalizeAddressRecord(value: unknown) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {} as Record<string, string>
+  return Object.entries(value as Record<string, unknown>).reduce<Record<string, string>>((accumulator, [key, entry]) => {
+    const text = normalizeText(entry)
+    if (text) accumulator[key] = text
+    return accumulator
+  }, {})
+}
+
+function readForwardedHeader(req: FastifyRequest, name: string) {
+  const raw = req.headers[name]
+  if (Array.isArray(raw)) return raw[0]?.trim() || null
+  return typeof raw === 'string' ? raw.split(',')[0]?.trim() || null : null
+}
+
+function readCloudflareScheme(req: FastifyRequest) {
+  const raw = readForwardedHeader(req, 'cf-visitor')
+  if (!raw) return null
+  const match = raw.match(/"scheme":"(https|http)"/i)
+  return match?.[1]?.toLowerCase() || null
+}
+
+function buildPublicOrigin(req: FastifyRequest, civilPublicHost: string) {
+  const host = readForwardedHeader(req, 'x-forwarded-host') || readForwardedHeader(req, 'host') || civilPublicHost
+  const forwardedProto = readForwardedHeader(req, 'x-forwarded-proto')
+  const cloudflareProto = readCloudflareScheme(req)
+  const inferredPublicProto = host.endsWith('civilcitizens.ca') ? 'https' : null
+  const proto = forwardedProto || cloudflareProto || inferredPublicProto || req.protocol || 'http'
+  return `${proto}://${host}`
+}
+
+function getNominatimBaseUrl(req: FastifyRequest, civilPublicHost: string) {
+  const configured = normalizeText(process.env.NOMINATIM_SERVER)
+  if (configured) return trimTrailingSlash(configured)
+  return `${buildPublicOrigin(req, civilPublicHost)}/nominatim`
+}
+
+function buildNominatimSearchUrl(req: FastifyRequest, civilPublicHost: string, query: string, limit: number) {
+  const url = new URL(`${getNominatimBaseUrl(req, civilPublicHost)}/search`)
+  url.searchParams.set('q', query)
+  url.searchParams.set('format', 'json')
+  url.searchParams.set('addressdetails', '1')
+  url.searchParams.set('namedetails', '1')
+  url.searchParams.set('limit', String(limit))
+  url.searchParams.set('dedupe', '1')
+  url.searchParams.set('countrycodes', 'ca')
+  return url.toString()
+}
+
+function pickLocalityRecord(address: Record<string, string>) {
+  return (
+    address.city ||
+    address.municipality ||
+    address.town ||
+    address.village ||
+    address.borough ||
+    address.city_district ||
+    address.township ||
+    address.hamlet ||
+    address.suburb ||
+    address.county ||
+    ''
+  )
+}
+
+function buildStreetLabel(address: Record<string, string>) {
+  const houseNumber = normalizeText(address.house_number)
+  const road = normalizeText(address.road)
+  if (houseNumber && road) return `${houseNumber} ${road}`
+  return road
+}
+
+function buildAddressPrimaryLabel(address: Record<string, string>, displayName: string) {
+  return buildStreetLabel(address) || displayName.split(',')[0]?.trim() || displayName
+}
+
+function buildAddressSummary(address: Record<string, string>, displayName: string, kind: PlaceSearchResultPayload['kind']) {
+  const street = buildStreetLabel(address)
+  const locality = normalizeText(pickLocalityRecord(address))
+  const province = normalizeText(address.state || address.province)
+  const pieces = [street, locality, province].filter(Boolean)
+  if (pieces.length) return pieces.join(', ')
+
+  if (kind === 'place') {
+    const [, ...segments] = displayName.split(',')
+    const remainder = segments.map((segment) => segment.trim()).filter(Boolean).join(', ')
+    if (remainder) return remainder
+  }
+
+  return displayName
+}
+
+function isMeaningfulName(value: string) {
+  return Boolean(value) && !GENERIC_NAME_VALUES.has(value.toLowerCase())
+}
+
+function readExplicitName(record: Record<string, unknown>, address: Record<string, string>) {
+  const namedetails =
+    record.namedetails && typeof record.namedetails === 'object' && !Array.isArray(record.namedetails)
+      ? (record.namedetails as Record<string, unknown>)
+      : null
+
+  const candidates = [
+    normalizeText(record.name),
+    normalizeText(namedetails?.name),
+    normalizeText(namedetails?.['name:en']),
+    normalizeText(address.amenity),
+    normalizeText(address.shop),
+    normalizeText(address.tourism),
+    normalizeText(address.healthcare),
+    normalizeText(address.leisure),
+    normalizeText(address.office),
+  ]
+
+  return candidates.find((candidate) => isMeaningfulName(candidate)) || ''
+}
+
+function inferCategory(className: string | null, typeName: string | null) {
+  const normalizedType = normalizeText(typeName)
+  if (HEALTHCARE_TYPES.has(normalizedType)) return 'healthcare'
+  if (FOOD_TYPES.has(normalizedType)) return 'food'
+  if (TRANSPORT_TYPES.has(normalizedType)) return 'transport'
+  return className
+}
+
+function buildSearchScore(result: PlaceSearchResultPayload, query: string) {
+  const normalizedQuery = query.toLowerCase()
+  const normalizedName = result.name.toLowerCase()
+  const normalizedDisplay = result.displayName.toLowerCase()
+  let score = result.importance ?? 0
+
+  if (result.kind === 'place') score += 5
+  if (normalizedName === normalizedQuery) score += 10
+  else if (normalizedName.startsWith(normalizedQuery)) score += 6
+  else if (normalizedName.includes(normalizedQuery)) score += 3
+  if (normalizedDisplay.includes(normalizedQuery)) score += 1
+
+  return score
+}
+
+function dedupeResults(results: PlaceSearchResultPayload[]) {
+  const seen = new Set<string>()
+  return results.filter((result) => {
+    const key = [
+      result.kind,
+      result.placeId ?? 'na',
+      result.osmType ?? 'na',
+      result.osmId ?? 'na',
+      result.name.toLowerCase(),
+      result.lat.toFixed(6),
+      result.lng.toFixed(6),
+    ].join('::')
+    if (seen.has(key)) return false
+    seen.add(key)
+    return true
+  })
+}
+
+function mapPlaceSearchResult(record: Record<string, unknown>): PlaceSearchResultPayload | null {
+  const displayName = normalizeText(record.display_name)
+  const lat = normalizeNumber(record.lat)
+  const lng = normalizeNumber(record.lon)
+  if (!displayName || lat === null || lng === null) return null
+
+  const className = normalizeText(record.class) || null
+  const typeName = normalizeText(record.type) || null
+  const addressFields = normalizeAddressRecord(record.address)
+  const explicitName = readExplicitName(record, addressFields)
+  const isPoi = Boolean(explicitName) || (className ? POI_CLASSES.has(className) : false)
+  const kind: PlaceSearchResultPayload['kind'] = isPoi ? 'place' : 'address'
+  const name = explicitName || (isPoi ? displayName.split(',')[0]?.trim() || displayName : buildAddressPrimaryLabel(addressFields, displayName))
+
+  return {
+    kind,
+    name,
+    typeName,
+    category: inferCategory(className, typeName),
+    lat,
+    lng,
+    address: buildAddressSummary(addressFields, displayName, kind),
+    displayName,
+    className,
+    addressFields,
+    placeId: normalizeNumber(record.place_id),
+    osmType: normalizeText(record.osm_type) || null,
+    osmId: normalizeNumber(record.osm_id),
+    importance: normalizeNumber(record.importance),
+  }
+}
+
 type NotificationsSearchDeps = {
+  CIVIL_PUBLIC_HOST: string
   NOTIFICATION_CHANNEL_PREFIX: string
   NOTIFICATION_FEED_EXCLUDED_TYPES: readonly string[]
   REDIS_URL: string
@@ -127,6 +363,77 @@ export function registerNotificationsSearchRoutes(app: FastifyInstance, deps: No
 
       const results = await deps.searchUsersForQuery({ viewerId: userId, query: normalizedQuery, limit })
       return reply.send({ items: results })
+    }),
+  )
+
+  app.get('/search/places', async (req: FastifyRequest, reply: FastifyReply) =>
+    deps.withSchemaGuard(req, reply, async () => {
+      const parse = PlaceSearchQuery.safeParse(req.query)
+      if (!parse.success) return reply.code(400).send({ error: parse.error.flatten() })
+
+      const { q, limit } = parse.data
+      const normalizedQuery = deps.normalizeSearchTerm(q)
+      if (!normalizedQuery) {
+        return reply.send({
+          query: q,
+          places: [],
+          addresses: [],
+          meta: {
+            total: 0,
+            poiCount: 0,
+            hasPois: false,
+          },
+        })
+      }
+
+      try {
+        const upstreamResponse = await fetch(buildNominatimSearchUrl(req, deps.CIVIL_PUBLIC_HOST, normalizedQuery, limit), {
+          method: 'GET',
+          headers: { accept: 'application/json' },
+          cache: 'no-store',
+        })
+
+        if (!upstreamResponse.ok) {
+          req.log.warn({ query: normalizedQuery, statusCode: upstreamResponse.status }, 'search_places_upstream_failed')
+          return reply.code(upstreamResponse.status).send({ error: 'nominatim_search_failed' })
+        }
+
+        const payload = (await upstreamResponse.json().catch(() => [])) as unknown
+        const normalizedResults = Array.isArray(payload)
+          ? dedupeResults(
+              payload.flatMap((entry) => {
+                if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return []
+                const mapped = mapPlaceSearchResult(entry as Record<string, unknown>)
+                return mapped ? [mapped] : []
+              }),
+            )
+          : []
+
+        const rankedResults = [...normalizedResults].sort((left, right) => buildSearchScore(right, normalizedQuery) - buildSearchScore(left, normalizedQuery))
+        const places = rankedResults.filter((result) => result.kind === 'place')
+        const addresses = rankedResults.filter((result) => result.kind === 'address')
+
+        req.log.info({
+          query: normalizedQuery,
+          totalResults: rankedResults.length,
+          poiCount: places.length,
+          hasPois: places.length > 0,
+        }, 'search_places_completed')
+
+        return reply.send({
+          query: normalizedQuery,
+          places,
+          addresses,
+          meta: {
+            total: rankedResults.length,
+            poiCount: places.length,
+            hasPois: places.length > 0,
+          },
+        })
+      } catch (error) {
+        req.log.error({ err: error, query: normalizedQuery }, 'search_places_request_failed')
+        return reply.code(502).send({ error: 'search_places_failed' })
+      }
     }),
   )
 

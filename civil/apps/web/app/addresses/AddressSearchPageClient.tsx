@@ -16,14 +16,15 @@ import {
   buildAddressesHref,
   buildAddressesHrefFromAddress,
   calculateDistanceKm,
+  fetchPlaceSearchResults,
   estimateTravelMinutes,
   fetchDrivingRoute,
   fetchAddressSearchResults,
-  formatAddressPrimaryLabel,
-  formatAddressSecondaryLabel,
+  formatPlaceSearchPrimaryLabel,
+  formatPlaceSearchSecondaryLabel,
   isAddressPostalVerified,
   isUsableAddressQuery,
-  type NominatimAddress,
+  type CivilPlaceSearchResult,
 } from '../_lib/addressSearch'
 import {
   isCanadianAddressPostalVerified,
@@ -346,7 +347,7 @@ export default function AddressSearchPageClient() {
       ? `/${encodeURIComponent(organizationProvince)}/${encodeURIComponent(organizationCommunity)}`
       : null
 
-  const [results, setResults] = useState<NominatimAddress[]>([])
+  const [results, setResults] = useState<CivilPlaceSearchResult[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [savedAddresses, setSavedAddresses] = useState<SavedShippingAddress[]>([])
@@ -449,13 +450,13 @@ export default function AddressSearchPageClient() {
     setLoading(true)
     setError(null)
 
-    void fetchAddressSearchResults(trimmedQuery, controller.signal, 8)
+    void fetchPlaceSearchResults(trimmedQuery, controller.signal, 8)
       .then((nextResults) => {
-        setResults(nextResults)
+        setResults([...nextResults.places, ...nextResults.addresses])
       })
       .catch((err) => {
         if ((err as Error).name === 'AbortError') return
-        setError('Unable to search addresses right now.')
+        setError('Unable to search places right now.')
       })
       .finally(() => {
         setLoading(false)
@@ -476,7 +477,7 @@ export default function AddressSearchPageClient() {
       !matchedByCoordinates && (initialPostalToken || initialStreetToken)
         ? results.find((entry) => {
             const entryPostalToken = extractPostalCodeToken(entry.address.postcode || entry.displayName)
-            const entryStreetToken = normalizeAddressCompareText(formatAddressPrimaryLabel(entry))
+            const entryStreetToken = normalizeAddressCompareText(formatPlaceSearchPrimaryLabel(entry))
             if (initialPostalToken && entryPostalToken && initialPostalToken !== entryPostalToken) return false
             if (initialStreetToken && entryStreetToken && initialStreetToken !== entryStreetToken) return false
             return Boolean((initialPostalToken && entryPostalToken) || (initialStreetToken && entryStreetToken))
@@ -491,6 +492,10 @@ export default function AddressSearchPageClient() {
         placeId: null,
         osmType: null,
         osmId: null,
+        kind: 'address',
+        name: initialLabel || initialQuery || initialAddress.split(',')[0] || 'Selected destination',
+        category: null,
+        distanceKm: null,
         displayName: initialAddress || initialLabel || initialQuery,
         latitude: initialLatitude,
         longitude: initialLongitude,
@@ -501,13 +506,13 @@ export default function AddressSearchPageClient() {
         originalPostalCode: null,
         postalCodeVerified: false,
         nominatimRaw: {},
-      } satisfies NominatimAddress
+      } satisfies CivilPlaceSearchResult
     }
     return null
   }, [initialAddress, initialLabel, initialLatitude, initialLongitude, initialQuery, results])
 
-  const destinationLabel = selectedDestination ? formatAddressPrimaryLabel(selectedDestination) : initialLabel || initialQuery || 'Address'
-  const destinationDetail = selectedDestination ? formatAddressSecondaryLabel(selectedDestination) : initialAddress || null
+  const destinationLabel = selectedDestination ? formatPlaceSearchPrimaryLabel(selectedDestination) : initialLabel || initialQuery || 'Address'
+  const destinationDetail = selectedDestination ? formatPlaceSearchSecondaryLabel(selectedDestination) : initialAddress || null
 
   const orderedSavedAddresses = useMemo(
     () => [...savedAddresses].sort((left, right) => Number(right.isDefault) - Number(left.isDefault) || String(left.label ?? '').localeCompare(String(right.label ?? ''))),
@@ -768,11 +773,11 @@ export default function AddressSearchPageClient() {
       {error ? <div className="rounded-2xl border border-rose-100 bg-rose-50 px-4 py-3 text-sm text-rose-700">{error}</div> : null}
 
       {!loading && !error && !selectedDestination && isUsableAddressQuery(query) ? (
-        <div className="rounded-2xl border border-slate-100 bg-slate-50 px-4 py-6 text-sm text-slate-500">No address matches found yet.</div>
+        <div className="rounded-2xl border border-slate-100 bg-slate-50 px-4 py-6 text-sm text-slate-500">No place or address matches found yet.</div>
       ) : null}
 
       {!isUsableAddressQuery(query) ? (
-        <div className="rounded-2xl border border-slate-100 bg-slate-50 px-4 py-6 text-sm text-slate-500">Use the main search bar to look up an address.</div>
+        <div className="rounded-2xl border border-slate-100 bg-slate-50 px-4 py-6 text-sm text-slate-500">Use the main search bar to look up an address or place.</div>
       ) : null}
 
       <div className="space-y-6">
@@ -802,7 +807,7 @@ export default function AddressSearchPageClient() {
           <div>
             <div className="flex flex-wrap items-center gap-2">
               <h2 className="text-xl font-semibold text-slate-900">{destinationLabel}</h2>
-              {isAddressPostalVerified(selectedDestination) ? (
+              {selectedDestination?.kind === 'address' && isAddressPostalVerified(selectedDestination) ? (
                 <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 px-2.5 py-1 text-[11px] font-semibold uppercase tracking-[0.18em] text-emerald-700">
                   <HiOutlineCheckBadge className="h-4 w-4" />
                   Verified Address

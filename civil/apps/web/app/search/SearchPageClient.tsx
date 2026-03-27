@@ -30,10 +30,9 @@ import { buildApiUrl } from '../_lib/api'
 import { redirectToAuthModal } from '../_lib/authModal'
 import { formatUserDisplayName } from '../_lib/text'
 import { getStoredToken } from '../_lib/tokenStorage'
+import { buildSearchRequestParams } from './searchRequest'
 
 const MIN_QUERY_LENGTH = 2
-const PAGE_LIMIT = 25
-const ALL_SECTION_LIMIT = 8
 
 const SEARCH_TABS: Array<{ value: SearchType; label: string }> = [
   { value: 'all', label: 'All' },
@@ -172,13 +171,7 @@ export default function SearchPageClient({ initialQuery = '', initialType = 'all
       setError(null)
 
       try {
-        const params = new URLSearchParams({ q: trimmed, type: 'all' })
-        params.set('peopleLimit', String(searchType === 'people' ? PAGE_LIMIT : ALL_SECTION_LIMIT))
-        params.set('communityLimit', String(searchType === 'communities' ? PAGE_LIMIT : ALL_SECTION_LIMIT))
-        params.set('organizationLimit', String(searchType === 'organizations' ? PAGE_LIMIT : ALL_SECTION_LIMIT))
-        params.set('eventLimit', String(searchType === 'events' ? PAGE_LIMIT : ALL_SECTION_LIMIT))
-        params.set('marketLimit', String(searchType === 'market' ? PAGE_LIMIT : ALL_SECTION_LIMIT))
-        params.set('postLimit', String(searchType === 'posts' ? PAGE_LIMIT : ALL_SECTION_LIMIT))
+        const params = buildSearchRequestParams(trimmed, searchType)
 
         const response = await fetch(buildApiUrl(`/search?${params.toString()}`), {
           headers: { authorization: `Bearer ${token}` },

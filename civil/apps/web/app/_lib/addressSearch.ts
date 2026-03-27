@@ -23,6 +23,18 @@ export type NominatimAddress = {
   nominatimRaw: Record<string, unknown>
 }
 
+export type CivilPlaceSearchResult = NominatimAddress & {
+  kind: 'place' | 'address'
+  name: string
+  category: string | null
+  distanceKm: number | null
+}
+
+export type CivilPlaceSearchResults = {
+  places: CivilPlaceSearchResult[]
+  addresses: CivilPlaceSearchResult[]
+}
+
 export type RoutePoint = {
   latitude: number
   longitude: number
@@ -51,6 +63,11 @@ export type AddressSearchOptions = {
   latitude?: number | null
   longitude?: number | null
   radiusKm?: number | null
+}
+
+type PlaceSearchApiResponse = {
+  places?: unknown
+  addresses?: unknown
 }
 
 type AddressCorrectionResolveResponse = {
@@ -364,6 +381,123 @@ function normalizeAddressSearchOptions(options?: number | AddressSearchOptions) 
   }
 }
 
+function normalizePlaceKind(value: unknown): CivilPlaceSearchResult['kind'] {
+  return normalizeText(value) === 'place' ? 'place' : 'address'
+}
+
+function formatSearchCategoryLabel(value: string | null | undefined) {
+  const normalized = normalizeText(value)
+  if (!normalized) return ''
+  return normalized
+    .split(/[_\s-]+/)
+    .filter(Boolean)
+    .map((segment) => segment.charAt(0).toUpperCase() + segment.slice(1))
+    .join(' ')
+}
+
+function mapPlaceSearchRecord(record: Record<string, unknown>): CivilPlaceSearchResult | null {
+  const displayName = normalizeText(record.displayName ?? record.display_name)
+  const latitude = normalizeNumber(record.lat)
+  const longitude = normalizeNumber(record.lng ?? record.lon)
+  if (!displayName || latitude === null || longitude === null) return null
+
+  const address = normalizeAddressRecord(record.addressFields ?? record.address_fields ?? record.address)
+  const kind = normalizePlaceKind(record.kind)
+  const name =
+    normalizeText(record.name) ||
+    (kind === 'place' ? displayName.split(',')[0]?.trim() || displayName : formatAddressPrimaryLabel({
+      placeId: normalizeNumber(record.placeId ?? record.place_id),
+      osmType: normalizeText(record.osmType ?? record.osm_type) || null,
+      osmId: normalizeNumber(record.osmId ?? record.osm_id),
+      displayName,
+      latitude,
+      longitude,
+      className: normalizeText(record.className ?? record.class) || null,
+      typeName: normalizeText(record.typeName ?? record.type) || null,
+      importance: normalizeNumber(record.importance),
+      address,
+      originalPostalCode: normalizeCanadianPostalCode(normalizeText(address.postcode)) || null,
+      postalCodeVerified: false,
+      nominatimRaw: {},
+    }))
+
+  return {
+    kind,
+    name,
+    category: normalizeText(record.category) || null,
+    distanceKm: null,
+    placeId: normalizeNumber(record.placeId ?? record.place_id),
+    osmType: normalizeText(record.osmType ?? record.osm_type) || null,
+    osmId: normalizeNumber(record.osmId ?? record.osm_id),
+    displayName,
+    latitude,
+    longitude,
+    className: normalizeText(record.className ?? record.class) || null,
+    typeName: normalizeText(record.typeName ?? record.type) || null,
+    importance: normalizeNumber(record.importance),
+    address,
+    originalPostalCode: normalizeCanadianPostalCode(normalizeText(address.postcode)) || null,
+    postalCodeVerified: false,
+    nominatimRaw: {
+      display_name: displayName,
+      lat: String(latitude),
+      lon: String(longitude),
+      class: normalizeText(record.className ?? record.class) || null,
+      type: normalizeText(record.typeName ?? record.type) || null,
+      address,
+    },
+  } satisfies CivilPlaceSearchResult
+}
+
+function applyDistancesToPlaceResults(results: CivilPlaceSearchResult[], options: ReturnType<typeof normalizeAddressSearchOptions>) {
+  const anchorLatitude = options.latitude
+  const anchorLongitude = options.longitude
+  if (!hasFiniteCoordinate(anchorLatitude) || !hasFiniteCoordinate(anchorLongitude)) return results
+
+  return results.map((result) => ({
+    ...result,
+    distanceKm: calculateDistanceKm(
+      { latitude: anchorLatitude, longitude: anchorLongitude },
+      { latitude: result.latitude, longitude: result.longitude },
+    ),
+  }))
+}
+
+function filterPlaceResultsByRadius(results: CivilPlaceSearchResult[], options: ReturnType<typeof normalizeAddressSearchOptions>) {
+  const anchorLatitude = options.latitude
+  const anchorLongitude = options.longitude
+  const radiusKm = options.radiusKm
+  if (
+    !hasFiniteCoordinate(anchorLatitude) ||
+    !hasFiniteCoordinate(anchorLongitude) ||
+    typeof radiusKm !== 'number' ||
+    !Number.isFinite(radiusKm)
+  ) {
+    return results
+  }
+
+  return results.filter((result) => {
+    const distanceKm =
+      result.distanceKm ??
+      calculateDistanceKm(
+        { latitude: anchorLatitude, longitude: anchorLongitude },
+        { latitude: result.latitude, longitude: result.longitude },
+      )
+    return distanceKm <= radiusKm
+  })
+}
+
+function sortPlaceResults(results: CivilPlaceSearchResult[]) {
+  return [...results].sort((left, right) => {
+    if (left.distanceKm !== null && right.distanceKm !== null && left.distanceKm !== right.distanceKm) {
+      return left.distanceKm - right.distanceKm
+    }
+    if (left.distanceKm !== null) return -1
+    if (right.distanceKm !== null) return 1
+    return (right.importance ?? 0) - (left.importance ?? 0)
+  })
+}
+
 export function buildNominatimSearchUrl(query: string, limit = 5, options?: Pick<AddressSearchOptions, 'latitude' | 'longitude' | 'radiusKm'>) {
   const params = new URLSearchParams({
     q: query.trim(),
@@ -416,7 +550,7 @@ function mapNominatimRecord(record: Record<string, unknown>): NominatimAddress |
   } satisfies NominatimAddress
 }
 
-async function applyPostalCorrections(results: NominatimAddress[], signal?: AbortSignal) {
+async function applyPostalCorrections<T extends NominatimAddress>(results: T[], signal?: AbortSignal): Promise<T[]> {
   if (!results.length) return results
 
   try {
@@ -448,7 +582,7 @@ async function applyPostalCorrections(results: NominatimAddress[], signal?: Abor
           ...result.address,
           postcode: correction.correctedPostal,
         },
-      }
+      } as T
     })
   } catch {
     return results
@@ -514,6 +648,56 @@ export async function fetchAddressSearchResults(
   return applyPostalCorrections(filteredResults, signal)
 }
 
+export async function fetchPlaceSearchResults(
+  query: string,
+  signal?: AbortSignal,
+  options?: number | AddressSearchOptions,
+): Promise<CivilPlaceSearchResults> {
+  const trimmedQuery = query.trim()
+  if (trimmedQuery.length < MIN_ADDRESS_QUERY_LENGTH) {
+    return { places: [], addresses: [] }
+  }
+
+  const normalizedOptions = normalizeAddressSearchOptions(options)
+  const params = new URLSearchParams({
+    q: trimmedQuery,
+    limit: String(Math.max(1, Math.min(10, normalizedOptions.limit))),
+  })
+
+  const response = await fetch(buildApiUrl(`/search/places?${params.toString()}`), {
+    method: 'GET',
+    headers: { accept: 'application/json' },
+    signal,
+    cache: 'no-store',
+  })
+
+  if (!response.ok) {
+    throw new Error(`place_search_failed:${response.status}`)
+  }
+
+  const payload = (await response.json().catch(() => null)) as PlaceSearchApiResponse | null
+  const places = Array.isArray(payload?.places)
+    ? payload.places.flatMap((entry) => {
+        if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return []
+        const mapped = mapPlaceSearchRecord(entry as Record<string, unknown>)
+        return mapped ? [mapped] : []
+      })
+    : []
+  const addresses = Array.isArray(payload?.addresses)
+    ? payload.addresses.flatMap((entry) => {
+        if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return []
+        const mapped = mapPlaceSearchRecord(entry as Record<string, unknown>)
+        return mapped ? [mapped] : []
+      })
+    : []
+
+  const correctedAddresses = await applyPostalCorrections(addresses, signal)
+  return {
+    places: sortPlaceResults(filterPlaceResultsByRadius(applyDistancesToPlaceResults(places, normalizedOptions), normalizedOptions)),
+    addresses: sortPlaceResults(filterPlaceResultsByRadius(applyDistancesToPlaceResults(correctedAddresses, normalizedOptions), normalizedOptions)),
+  }
+}
+
 export async function fetchReverseGeocodeResult(latitude: number, longitude: number, signal?: AbortSignal): Promise<NominatimAddress | null> {
   const response = await fetch(buildNominatimReverseUrl(latitude, longitude), {
     method: 'GET',
@@ -552,6 +736,40 @@ export function formatAddressSecondaryLabel(result: NominatimAddress) {
   return result.displayName
 }
 
+export function formatPlaceSearchPrimaryLabel(result: CivilPlaceSearchResult) {
+  if (result.kind === 'place') {
+    return normalizeText(result.name) || result.displayName.split(',')[0]?.trim() || result.displayName
+  }
+  return formatAddressPrimaryLabel(result)
+}
+
+export function formatPlaceSearchSecondaryLabel(result: CivilPlaceSearchResult) {
+  const streetLabel = (() => {
+    const houseNumber = normalizeText(result.address.house_number)
+    const road = normalizeText(result.address.road)
+    if (houseNumber && road) return `${houseNumber} ${road}`
+    return road
+  })()
+  const locality = normalizeText(pickAddressLocalityRecord(result.address))
+  const province = normalizeProvinceDisplay(normalizeText(result.address.state || result.address.province))
+  const postcode = result.kind === 'address' && result.postalCodeVerified ? normalizeText(result.address.postcode) : ''
+  const pieces = result.kind === 'place' ? [streetLabel, locality, province].filter(Boolean) : [locality, province, postcode].filter(Boolean)
+  if (pieces.length) return pieces.join(' • ')
+
+  if (result.kind === 'place') {
+    const [, ...segments] = result.displayName.split(',')
+    const remainder = segments.map((segment) => segment.trim()).filter(Boolean).join(', ')
+    if (remainder) return remainder
+  }
+
+  return formatAddressSecondaryLabel(result)
+}
+
+export function formatPlaceSearchCategoryLabel(result: CivilPlaceSearchResult) {
+  if (result.kind !== 'place') return ''
+  return formatSearchCategoryLabel(result.typeName) || formatSearchCategoryLabel(result.category) || 'Place'
+}
+
 export function isAddressPostalVerified(result: NominatimAddress | null | undefined) {
   return Boolean(result?.postalCodeVerified)
 }
@@ -582,6 +800,16 @@ export function buildAddressesHrefFromResult(result: NominatimAddress, query?: s
   return buildAddressesHref({
     query: query ?? formatAddressPrimaryLabel(result),
     label: formatAddressPrimaryLabel(result),
+    address: result.displayName,
+    latitude: result.latitude,
+    longitude: result.longitude,
+  })
+}
+
+export function buildAddressesHrefFromPlaceResult(result: CivilPlaceSearchResult, query?: string | null) {
+  return buildAddressesHref({
+    query: query ?? formatPlaceSearchPrimaryLabel(result),
+    label: formatPlaceSearchPrimaryLabel(result),
     address: result.displayName,
     latitude: result.latitude,
     longitude: result.longitude,

@@ -21,14 +21,16 @@ import {
 } from './searchTypes'
 import { buildApiUrl, parseApiResponse } from '../../_lib/api'
 import {
-  buildAddressesHrefFromResult,
   calculateDistanceKm,
-  fetchAddressSearchResults,
-  formatAddressPrimaryLabel,
-  formatAddressSecondaryLabel,
+  buildAddressesHrefFromPlaceResult,
+  fetchPlaceSearchResults,
   isAddressPostalVerified,
   isUsableAddressQuery,
-  type NominatimAddress,
+  formatPlaceSearchCategoryLabel,
+  formatPlaceSearchPrimaryLabel,
+  formatPlaceSearchSecondaryLabel,
+  type CivilPlaceSearchResult,
+  type CivilPlaceSearchResults,
 } from '../../_lib/addressSearch'
 import { redirectToAuthModal } from '../../_lib/authModal'
 import {
@@ -49,8 +51,9 @@ const ORGANIZATION_LIMIT = 2
 const EVENT_LIMIT = 2
 const MARKET_LIMIT = 2
 const POST_LIMIT = 2
-const ADDRESS_FETCH_LIMIT = 8
-const ADDRESS_DISTANCE_LIMIT_KM = 1000
+const PLACE_FETCH_LIMIT = 8
+const MAP_RESULT_DISTANCE_LIMIT_KM = 1000
+const PLACE_SEARCH_DEBOUNCE_MS = 300
 const GENERAL_SEARCH_STEPS = [
   'Searching people',
   'Searching communities',
@@ -77,8 +80,8 @@ type SearchAnchor = {
   longitude: number
 }
 
-type VisibleAddressResult = {
-  result: NominatimAddress
+type VisibleMapSearchResult = {
+  result: CivilPlaceSearchResult
   distanceKm: number | null
 }
 
@@ -114,20 +117,21 @@ function formatDistanceBadge(distanceKm: number) {
 
 export function SearchResults({ query, open, onResultSelect, onLoadingStateChange }: SearchResultsProps) {
   const trimmedQuery = query.trim()
+  const [debouncedPlaceQuery, setDebouncedPlaceQuery] = useState(trimmedQuery)
   const [peopleResults, setPeopleResults] = useState<UserSearchResult[]>([])
   const [communityResults, setCommunityResults] = useState<CommunitySearchResult[]>([])
   const [organizationResults, setOrganizationResults] = useState<OrganizationSearchResult[]>([])
   const [eventResults, setEventResults] = useState<EventSearchResult[]>([])
   const [marketResults, setMarketResults] = useState<MarketSearchResult[]>([])
   const [postResults, setPostResults] = useState<PostSearchResult[]>([])
-  const [addressResults, setAddressResults] = useState<NominatimAddress[]>([])
+  const [placeResults, setPlaceResults] = useState<CivilPlaceSearchResults>({ places: [], addresses: [] })
   const [addressSearchAnchor, setAddressSearchAnchor] = useState<SearchAnchor | null>(null)
   const [loading, setLoading] = useState(false)
-  const [addressLoading, setAddressLoading] = useState(false)
+  const [placeLoading, setPlaceLoading] = useState(false)
   const [loadingStepIndex, setLoadingStepIndex] = useState(0)
   const [error, setError] = useState<string | null>(null)
   const abortRef = useRef<AbortController | null>(null)
-  const addressAbortRef = useRef<AbortController | null>(null)
+  const placeAbortRef = useRef<AbortController | null>(null)
   const addressAnchorAttemptedRef = useRef(false)
 
   useEffect(() => {
@@ -135,6 +139,21 @@ export function SearchResults({ query, open, onResultSelect, onLoadingStateChang
     addressAnchorAttemptedRef.current = false
     setAddressSearchAnchor(null)
   }, [open])
+
+  useEffect(() => {
+    if (!open) {
+      setDebouncedPlaceQuery(trimmedQuery)
+      return
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      setDebouncedPlaceQuery(trimmedQuery)
+    }, PLACE_SEARCH_DEBOUNCE_MS)
+
+    return () => {
+      window.clearTimeout(timeoutId)
+    }
+  }, [open, trimmedQuery])
 
   useEffect(() => {
     if (!open || !isUsableAddressQuery(trimmedQuery) || addressAnchorAttemptedRef.current) return
@@ -205,34 +224,34 @@ export function SearchResults({ query, open, onResultSelect, onLoadingStateChang
   }, [open, trimmedQuery])
 
   useEffect(() => {
-    if (!open || !isUsableAddressQuery(trimmedQuery)) {
-      setAddressResults([])
-      setAddressLoading(false)
-      if (addressAbortRef.current) {
-        addressAbortRef.current.abort()
-        addressAbortRef.current = null
+    if (!open || !isUsableAddressQuery(debouncedPlaceQuery)) {
+      setPlaceResults({ places: [], addresses: [] })
+      setPlaceLoading(false)
+      if (placeAbortRef.current) {
+        placeAbortRef.current.abort()
+        placeAbortRef.current = null
       }
       return
     }
 
     const controller = new AbortController()
-    addressAbortRef.current = controller
-    setAddressLoading(true)
+    placeAbortRef.current = controller
+    setPlaceLoading(true)
 
-    void fetchAddressSearchResults(trimmedQuery, controller.signal, ADDRESS_FETCH_LIMIT)
+    void fetchPlaceSearchResults(debouncedPlaceQuery, controller.signal, PLACE_FETCH_LIMIT)
       .then((results) => {
-        setAddressResults(results)
+        setPlaceResults(results)
       })
       .catch((err) => {
         if ((err as Error).name === 'AbortError') return
-        setAddressResults([])
+        setPlaceResults({ places: [], addresses: [] })
       })
       .finally(() => {
-        setAddressLoading(false)
+        setPlaceLoading(false)
       })
 
     return () => controller.abort()
-  }, [open, trimmedQuery])
+  }, [debouncedPlaceQuery, open])
 
   useEffect(() => {
     if (!open || trimmedQuery.length < MIN_QUERY_LENGTH) {
@@ -324,13 +343,13 @@ export function SearchResults({ query, open, onResultSelect, onLoadingStateChang
     }
   }, [open, trimmedQuery])
 
-  const visibleAddressResults = useMemo(() => {
-    if (!addressResults.length) return []
+  const visiblePlaceResults = useMemo(() => {
+    if (!placeResults.places.length) return []
     if (!hasCoordinates(addressSearchAnchor)) {
-      return addressResults.slice(0, 4).map((result) => ({ result, distanceKm: null }))
+      return placeResults.places.slice(0, 4).map((result) => ({ result, distanceKm: null }))
     }
 
-    return addressResults
+    return placeResults.places
       .map((result) => ({
         result,
         distanceKm: calculateDistanceKm(addressSearchAnchor, {
@@ -338,15 +357,34 @@ export function SearchResults({ query, open, onResultSelect, onLoadingStateChang
           longitude: result.longitude,
         }),
       }))
-      .filter((entry) => entry.distanceKm <= ADDRESS_DISTANCE_LIMIT_KM)
+      .filter((entry) => entry.distanceKm <= MAP_RESULT_DISTANCE_LIMIT_KM)
       .sort((left, right) => left.distanceKm - right.distanceKm)
       .slice(0, 4)
-  }, [addressResults, addressSearchAnchor]) satisfies VisibleAddressResult[]
+  }, [addressSearchAnchor, placeResults.places]) satisfies VisibleMapSearchResult[]
 
-  const anyLoading = loading || addressLoading
+  const visibleAddressResults = useMemo(() => {
+    if (!placeResults.addresses.length) return []
+    if (!hasCoordinates(addressSearchAnchor)) {
+      return placeResults.addresses.slice(0, 4).map((result) => ({ result, distanceKm: null }))
+    }
+
+    return placeResults.addresses
+      .map((result) => ({
+        result,
+        distanceKm: calculateDistanceKm(addressSearchAnchor, {
+          latitude: result.latitude,
+          longitude: result.longitude,
+        }),
+      }))
+      .filter((entry) => entry.distanceKm <= MAP_RESULT_DISTANCE_LIMIT_KM)
+      .sort((left, right) => left.distanceKm - right.distanceKm)
+      .slice(0, 4)
+  }, [addressSearchAnchor, placeResults.addresses]) satisfies VisibleMapSearchResult[]
+
+  const anyLoading = loading || placeLoading
   const loadingSteps = useMemo(() => {
     const steps = isUsableAddressQuery(trimmedQuery)
-      ? ['Searching addresses', ...GENERAL_SEARCH_STEPS]
+      ? ['Searching places', ...GENERAL_SEARCH_STEPS]
       : [...GENERAL_SEARCH_STEPS]
     return steps
   }, [trimmedQuery])
@@ -359,6 +397,7 @@ export function SearchResults({ query, open, onResultSelect, onLoadingStateChang
     eventResults.length > 0 ||
     marketResults.length > 0 ||
     postResults.length > 0 ||
+    visiblePlaceResults.length > 0 ||
     visibleAddressResults.length > 0
 
   const sectionHref = useMemo(
@@ -411,7 +450,7 @@ export function SearchResults({ query, open, onResultSelect, onLoadingStateChang
 
   return (
     <div
-      className="absolute left-0 top-[calc(100%+0.5rem)] z-40 w-full min-w-[18rem] rounded-2xl border border-slate-200 bg-white p-3 text-left shadow-2xl shadow-slate-900/12"
+      className="absolute left-0 top-[calc(100%+0.5rem)] z-40 max-h-[min(70vh,42rem)] w-full min-w-[18rem] overflow-y-auto overscroll-contain rounded-2xl border border-slate-200 bg-white p-3 text-left shadow-2xl shadow-slate-900/12"
       onMouseDown={(event) => event.preventDefault()}
     >
       {anyLoading ? (
@@ -428,21 +467,56 @@ export function SearchResults({ query, open, onResultSelect, onLoadingStateChang
         <div className="rounded-2xl border border-rose-100 bg-rose-50 px-4 py-3 text-sm text-rose-700">{error}</div>
       ) : anyLoading && !hasAnyResults ? (
         <div className="rounded-2xl border border-slate-100 bg-slate-50 px-4 py-3 text-sm text-slate-500">Still working on this search…</div>
-      ) : !hasAnyResults && !addressLoading ? (
-        <div className="rounded-2xl border border-slate-100 bg-slate-50 px-4 py-3 text-sm text-slate-500">No Civil matches yet.</div>
+      ) : !hasAnyResults && !placeLoading ? (
+        <div className="rounded-2xl border border-slate-100 bg-slate-50 px-4 py-3 text-sm text-slate-500">No Civil or map matches yet.</div>
       ) : (
         <div className="space-y-4">
+          {visiblePlaceResults.length > 0 ? (
+            <CompactSection title="Places" href={sectionHref.addresses} onResultSelect={onResultSelect}>
+              <ul className="divide-y divide-slate-100">
+                {visiblePlaceResults.map(({ result, distanceKm }) => {
+                  const categoryLabel = formatPlaceSearchCategoryLabel(result)
+                  return (
+                    <li key={`${result.placeId ?? result.displayName}-${result.latitude}-${result.longitude}`}>
+                      <Link href={buildAddressesHrefFromPlaceResult(result, trimmedQuery)} onClick={onResultSelect} className="flex items-start gap-3 rounded-2xl px-3 py-2.5 text-sm text-slate-600 transition hover:bg-slate-50">
+                        <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-full ${result.category === 'shop' || result.category === 'food' ? 'bg-amber-50 text-amber-700' : result.category === 'healthcare' ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-slate-500'}`}>
+                          {result.category === 'shop' || result.category === 'food' ? <HiOutlineShoppingBag className="h-5 w-5" /> : result.category === 'healthcare' ? <HiOutlineBuildingOffice2 className="h-5 w-5" /> : <HiOutlineMapPin className="h-5 w-5" />}
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <p className="break-words text-sm font-semibold leading-5 text-slate-900">{formatPlaceSearchPrimaryLabel(result)}</p>
+                          <div className="mt-1 flex flex-wrap items-center gap-1.5">
+                            {categoryLabel ? (
+                              <span className="inline-flex shrink-0 items-center rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-600">
+                                {categoryLabel}
+                              </span>
+                            ) : null}
+                            {distanceKm !== null ? (
+                              <span className="inline-flex shrink-0 items-center rounded-full bg-sky-50 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.18em] text-sky-700">
+                                {formatDistanceBadge(distanceKm)}
+                              </span>
+                            ) : null}
+                          </div>
+                          <p className="mt-1 break-words text-xs leading-5 text-slate-500">{formatPlaceSearchSecondaryLabel(result)}</p>
+                        </div>
+                      </Link>
+                    </li>
+                  )
+                })}
+              </ul>
+            </CompactSection>
+          ) : null}
+
           {visibleAddressResults.length > 0 ? (
             <CompactSection title="Addresses" href={sectionHref.addresses} onResultSelect={onResultSelect}>
               <ul className="divide-y divide-slate-100">
                 {visibleAddressResults.map(({ result, distanceKm }) => (
                   <li key={`${result.placeId ?? result.displayName}-${result.latitude}-${result.longitude}`}>
-                    <Link href={buildAddressesHrefFromResult(result, trimmedQuery)} onClick={onResultSelect} className="flex items-start gap-3 rounded-2xl px-3 py-2.5 text-sm text-slate-600 transition hover:bg-slate-50">
+                    <Link href={buildAddressesHrefFromPlaceResult(result, trimmedQuery)} onClick={onResultSelect} className="flex items-start gap-3 rounded-2xl px-3 py-2.5 text-sm text-slate-600 transition hover:bg-slate-50">
                       <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-slate-100 text-slate-500">
                         <HiOutlineMapPin className="h-5 w-5" />
                       </div>
                       <div className="min-w-0 flex-1">
-                        <p className="break-words text-sm font-semibold leading-5 text-slate-900">{formatAddressPrimaryLabel(result)}</p>
+                        <p className="break-words text-sm font-semibold leading-5 text-slate-900">{formatPlaceSearchPrimaryLabel(result)}</p>
                         <div className="mt-1 flex flex-wrap items-center gap-1.5">
                           {distanceKm !== null ? (
                             <span className="inline-flex shrink-0 items-center rounded-full bg-sky-50 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.18em] text-sky-700">
@@ -456,7 +530,7 @@ export function SearchResults({ query, open, onResultSelect, onLoadingStateChang
                             </span>
                           ) : null}
                         </div>
-                        <p className="mt-1 break-words text-xs leading-5 text-slate-500">{formatAddressSecondaryLabel(result)}</p>
+                        <p className="mt-1 break-words text-xs leading-5 text-slate-500">{formatPlaceSearchSecondaryLabel(result)}</p>
                       </div>
                     </Link>
                   </li>
