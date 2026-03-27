@@ -460,6 +460,15 @@ export function RightRail({
 
   const railOrganizationsEmptyLabel = organizationBlockVariant === 'followed' ? 'No organizations followed yet.' : 'No organizations yet.'
 
+  const homeCauses = useMemo(() => {
+    const seen = new Set<string>()
+    return [...authoredCauses, ...localCauses].filter((post) => {
+      if (!post?.id || seen.has(post.id)) return false
+      seen.add(post.id)
+      return true
+    })
+  }, [authoredCauses, localCauses])
+
   const manageCreateEventHref = useMemo(() => {
     const org = eventOrganizations[0]
     if (org?.provinceCode && org.communitySlug) {
@@ -1549,82 +1558,86 @@ export function RightRail({
       {/* Communities Section */}
       {!hideSocialBlocks && !hideCommunities && !isFamilyLockedSession ? (
         <Block title="Your Communities" action={{ label: 'View all', href: '/communities/settings' }}>
-          <div className="space-y-5">
-            {data?.communities.length ? (
-              <ul className="space-y-3">
-                {data.communities.map((comm) => {
-                  const formattedName = comm.name
-                    .split('-')
-                    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
-                    .join(' ')
+          {data?.communities.length ? (
+            <ul className="space-y-3">
+              {data.communities.map((comm) => {
+                const formattedName = comm.name
+                  .split('-')
+                  .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+                  .join(' ')
 
-                  return (
-                    <li key={`${comm.provinceCode}:${comm.communitySlug}`} className="flex items-start justify-between gap-3 rounded-xl border border-slate-200 bg-slate-900 px-3 py-2">
+                return (
+                  <li key={`${comm.provinceCode}:${comm.communitySlug}`} className="flex items-start justify-between gap-3 rounded-xl border border-slate-200 bg-slate-900 px-3 py-2">
+                    <Link
+                      href={`/${comm.provinceCode.toLowerCase()}/${comm.communitySlug.toLowerCase()}`}
+                      className="flex-1 whitespace-normal break-words text-sm font-semibold leading-5 text-white hover:text-white"
+                    >
+                      {formattedName}
+                    </Link>
+                    {comm.newPosts > 0 && (
                       <Link
                         href={`/${comm.provinceCode.toLowerCase()}/${comm.communitySlug.toLowerCase()}`}
-                        className="flex-1 whitespace-normal break-words text-sm font-semibold leading-5 text-white hover:text-white"
+                        className="mt-0.5 shrink-0 flex items-center gap-1 text-xs font-semibold text-white/90 hover:text-white"
                       >
-                        {formattedName}
+                        <HiOutlineBell className="h-4 w-4" />
+                        ({comm.newPosts})
                       </Link>
-                      {comm.newPosts > 0 && (
-                        <Link
-                          href={`/${comm.provinceCode.toLowerCase()}/${comm.communitySlug.toLowerCase()}`}
-                          className="mt-0.5 shrink-0 flex items-center gap-1 text-xs font-semibold text-white/90 hover:text-white"
-                        >
-                          <HiOutlineBell className="h-4 w-4" />
-                          ({comm.newPosts})
-                        </Link>
-                      )}
-                    </li>
-                  )
-                })}
-              </ul>
-            ) : (
-              <p className="text-sm text-slate-500">No communities followed.</p>
-            )}
+                    )}
+                  </li>
+                )
+              })}
+            </ul>
+          ) : (
+            <p className="text-sm text-slate-500">No communities followed.</p>
+          )}
+        </Block>
+      ) : null}
 
-            {mode === 'home' ? (
-              <div className="border-t border-slate-200 pt-5">
-                <div className="mb-4 flex items-start justify-between gap-3">
-                  <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-500">Causes</h3>
-                  <Link
-                    href="/causes"
-                    className="inline-flex items-center justify-center rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:border-slate-300"
-                  >
-                    View Causes
-                  </Link>
-                </div>
+      {mode === 'home' && !hideSocialBlocks && !isFamilyLockedSession ? (
+        <Block title="Causes" action={{ label: 'View Causes', href: '/causes' }}>
+          {homeCauses.length ? (
+            <ul className="space-y-3">
+              {homeCauses.slice(0, 5).map((post) => {
+                const title = post.title?.trim() || 'Untitled cause'
+                const detailParts = [
+                  post.communityName?.trim() || null,
+                  post.cause ? `Goal ${formatCurrency(post.cause.goalAmountCents)}` : null,
+                ].filter((value): value is string => Boolean(value))
+                const cause = post.cause
+                const progressWidth = cause ? Math.max(cause.progressPercent > 0 ? 6 : 0, Math.min(100, cause.progressPercent)) : 0
 
-                {localCauses.length ? (
-                  <ul className="space-y-3">
-                    {localCauses.slice(0, 5).map((post) => {
-                      const title = post.title?.trim() || 'Untitled cause'
-                      const detailParts = [
-                        post.communityName?.trim() || null,
-                        post.cause ? `Goal ${formatCurrency(post.cause.goalAmountCents)}` : null,
-                      ].filter((value): value is string => Boolean(value))
-
-                      return (
-                        <li key={post.id}>
-                          <Link
-                            href={buildCauseHref(post)}
-                            className="block rounded-2xl border border-slate-200 bg-white px-4 py-3 transition hover:border-red-200 hover:bg-red-50/40"
-                          >
-                            <p className="line-clamp-2 text-sm font-semibold text-slate-900">{title}</p>
-                            {detailParts.length ? <p className="mt-1 text-xs font-medium text-slate-500">{detailParts.join(' • ')}</p> : null}
-                          </Link>
-                        </li>
-                      )
-                    })}
-                  </ul>
-                ) : data?.communities.length ? (
-                  <p className="text-sm text-slate-500">No active causes in your communities right now.</p>
-                ) : (
-                  <p className="text-sm text-slate-500">Follow a community to see local causes here.</p>
-                )}
-              </div>
-            ) : null}
-          </div>
+                return (
+                  <li key={post.id}>
+                    <Link
+                      href={buildCauseHref(post)}
+                      className="block rounded-2xl border border-slate-200 bg-white px-4 py-3 transition hover:border-red-200 hover:bg-red-50/40"
+                    >
+                      <p className="line-clamp-2 text-sm font-semibold text-slate-900">{title}</p>
+                      {detailParts.length ? <p className="mt-1 text-xs font-medium text-slate-500">{detailParts.join(' • ')}</p> : null}
+                      {cause ? (
+                        <div className="mt-3 space-y-1.5">
+                          <div className="h-2 overflow-hidden rounded-full bg-slate-100">
+                            <div
+                              className="h-full rounded-full bg-[linear-gradient(90deg,#10b981,#34d399)] transition-[width] duration-300"
+                              style={{ width: `${progressWidth}%` }}
+                            />
+                          </div>
+                          <div className="flex items-center justify-between gap-3 text-[11px] font-medium text-slate-500">
+                            <span>{formatCurrency(cause.raisedAmountCents)} raised</span>
+                            <span>{cause.progressPercent}%</span>
+                          </div>
+                        </div>
+                      ) : null}
+                    </Link>
+                  </li>
+                )
+              })}
+            </ul>
+          ) : data?.communities.length ? (
+            <p className="text-center text-sm text-slate-500">No active causes in your communities right now.</p>
+          ) : (
+            <p className="text-center text-sm text-slate-500">Follow a community to see local causes here.</p>
+          )}
         </Block>
       ) : null}
 

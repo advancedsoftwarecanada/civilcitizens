@@ -518,7 +518,7 @@ export default function MobileDock() {
     }
 
     if (pathname === '/home') {
-      return <RightRail showOrganizations showRsvps />
+      return <RightRail mode="home" showOrganizations showRsvps />
     }
     const isFriendsDirectoryRoute =
       pathname?.startsWith('/friends') || Boolean(pathname?.match(/^\/u\/[^/]+\/friends(?:\/|$)/))
