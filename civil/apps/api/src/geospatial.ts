@@ -1155,3 +1155,80 @@ export async function browseFederalPartyDistricts(args: {
     }),
   }
 }
+
+export async function browseCurrentFederalDistricts(args: {
+  provinceCode?: string | null
+}) {
+  await ensureSpatialDataReady()
+
+  const normalizedProvinceCode = args.provinceCode?.trim().toLowerCase() || null
+  const districts = normalizedProvinceCode
+    ? await listElectoralDistrictsForProvince({
+        provinceCode: normalizedProvinceCode,
+      })
+    : await listAllElectoralDistricts()
+
+  const districtKeys = districts.map((district) => ({
+    provinceCode: district.provinceCode,
+    communitySlug: district.slug,
+  }))
+  const startOfToday = new Date()
+  startOfToday.setHours(0, 0, 0, 0)
+
+  const [followCounts, postCounts, activeSeatByKey, byElectionByKey] = await Promise.all([
+    districtKeys.length
+      ? prisma.communityFollow.groupBy({
+          by: ['provinceCode', 'communitySlug'],
+          where: { OR: districtKeys },
+          _count: { _all: true },
+        })
+      : Promise.resolve([] as DistrictStatsCount[]),
+    districtKeys.length
+      ? prisma.post.groupBy({
+          by: ['provinceCode', 'communitySlug'],
+          where: {
+            OR: districtKeys,
+            createdAt: { gte: startOfToday },
+          },
+          _count: { _all: true },
+        })
+      : Promise.resolve([] as DistrictStatsCount[]),
+    loadDistrictActiveSeatByKey(districts),
+    loadPublishedByElectionByKey(districts),
+  ])
+
+  const followMap = new Map(followCounts.map((entry: DistrictStatsCount) => [`${entry.provinceCode}:${entry.communitySlug}`, entry._count._all]))
+  const postMap = new Map(postCounts.map((entry: DistrictStatsCount) => [`${entry.provinceCode}:${entry.communitySlug}`, entry._count._all]))
+  const selectedDistrict = districts.find((district) => {
+    const key = `${district.provinceCode}:${district.slug}`
+    return Boolean(activeSeatByKey.get(key))
+  }) ?? null
+
+  return {
+    provinceCode: normalizedProvinceCode ?? 'ca',
+    resolvedFrom: null,
+    postalCode: null,
+    tileServerBaseUrl: getPublicMapTileServerBaseUrl(),
+    styleUrl: getMapStyleUrl(),
+    userLocation: null,
+    selectedDistrictCode: normalizedProvinceCode
+      ? selectedDistrict?.code ?? districts[0]?.code ?? null
+      : null,
+    districts: districts.map((district: ResolvedDistrict) => {
+      const key = `${district.provinceCode}:${district.slug}`
+      const activeSeat = activeSeatByKey.get(key) ?? null
+      const districtParty = activeSeat?.party ?? null
+
+      return {
+        ...district,
+        party: districtParty,
+        partyStatus: districtParty ? 'seat' : null,
+        activeSeat,
+        selectedPartyPolitician: null,
+        byElection: byElectionByKey.get(key) ?? null,
+        postsToday: postMap.get(key) ?? 0,
+        followerCount: followMap.get(key) ?? 0,
+      }
+    }),
+  }
+}
