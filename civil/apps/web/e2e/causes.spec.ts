@@ -2,6 +2,22 @@ import { expect, test } from '@playwright/test'
 import { authenticatePage, createPublishedCause } from './helpers/civilApi'
 
 test.describe('Causes', () => {
+  test('loads published cause pages publicly without a login redirect', async ({ page, request }) => {
+    const shareImageUrl = 'https://example.com/cause-share-preview.jpg'
+    const cause = await createPublishedCause(request, { imageUrls: [shareImageUrl] })
+
+    await page.goto(cause.path)
+
+    await expect(page).toHaveURL(new RegExp(`${cause.path.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`))
+    await expect(page.getByText(cause.title)).toBeVisible()
+    await expect(page.getByText('Funding roadmap')).toBeVisible()
+    await expect(page.getByText(cause.firstStageDescription)).toBeVisible()
+    await expect(page).not.toHaveURL(/\/login(?:\?|$)/)
+    await expect(page.locator('meta[property="og:title"]')).toHaveAttribute('content', cause.title)
+    await expect(page.locator('meta[property="og:image"]')).toHaveAttribute('content', shareImageUrl)
+    await expect(page.locator('meta[name="twitter:card"]')).toHaveAttribute('content', 'summary_large_image')
+  })
+
   test('supports one-time and monthly donations through the confirmation modal', async ({ page, request }) => {
     const cause = await createPublishedCause(request)
 

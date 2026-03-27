@@ -76,6 +76,7 @@ export type PublishedCauseContext = {
   goalLabel: string
   raisedLabel: string
   firstStageDescription: string
+  imageUrls: string[]
 }
 
 function uniq(prefix: string) {
@@ -315,7 +316,12 @@ export async function createTestOrganization(request: APIRequestContext): Promis
   }
 }
 
-export async function createPublishedCause(request: APIRequestContext): Promise<PublishedCauseContext> {
+export async function createPublishedCause(
+  request: APIRequestContext,
+  options?: {
+    imageUrls?: string[]
+  },
+): Promise<PublishedCauseContext> {
   const author = await registerUser(request)
   const supporter = await registerUser(request)
   const location = await pickCommunity(request)
@@ -367,6 +373,8 @@ export async function createPublishedCause(request: APIRequestContext): Promise<
     data: {
       title,
       body: '<p>This is a Playwright-backed Cause body that is long enough to publish and verify the public Cause rendering path.</p>',
+      mediaUrl: options?.imageUrls?.[0] ?? null,
+      images: options?.imageUrls ?? [],
       goalAmountCents: 25_000,
       stageGoals,
       provinceCode: location.province,
@@ -405,6 +413,7 @@ export async function createPublishedCause(request: APIRequestContext): Promise<
     goalLabel: '$250',
     raisedLabel: '$25',
     firstStageDescription,
+    imageUrls: options?.imageUrls ?? [],
   }
 }
 

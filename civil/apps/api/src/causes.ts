@@ -80,6 +80,8 @@ export type CauseDraft = {
   creatorUserId: string
   title: string
   body: string
+  mediaUrl: string | null
+  images: string[]
   goalAmountCents: number
   stageGoals: CauseStageGoal[]
   provinceCode: string | null
@@ -108,6 +110,8 @@ type CauseDraftRow = {
   creator_user_id: string
   title: string
   body: string
+  media_url: string | null
+  images: unknown
   goal_amount_cents: number
   stage_goals: unknown
   province_code: string | null
@@ -219,6 +223,13 @@ function serializeCauseStageGoals(goals: CauseStageGoal[]) {
       sortOrder: index,
     })),
   )
+}
+
+function normalizeCauseDraftImages(value: unknown): string[] {
+  if (!Array.isArray(value)) return []
+  return value
+    .map((item) => (typeof item === 'string' ? item.trim() : ''))
+    .filter((item): item is string => Boolean(item))
 }
 
 function mapCauseRow(row: CauseRow): CauseSummary {
@@ -333,6 +344,8 @@ function mapCauseDraftRow(row: CauseDraftRow): CauseDraft {
     creatorUserId: row.creator_user_id,
     title: row.title,
     body: row.body,
+    mediaUrl: typeof row.media_url === 'string' && row.media_url.trim() ? row.media_url.trim() : null,
+    images: normalizeCauseDraftImages(row.images),
     goalAmountCents: clampCurrency(row.goal_amount_cents),
     stageGoals: normalizeCauseStageGoals(row.stage_goals),
     provinceCode: row.province_code,
@@ -728,6 +741,8 @@ export async function ensureCivilCauseTables() {
             creator_user_id TEXT NOT NULL REFERENCES "User"(id) ON DELETE CASCADE,
             title TEXT NOT NULL DEFAULT 'Untitled Cause',
             body TEXT NOT NULL DEFAULT '',
+            media_url TEXT,
+            images JSONB NOT NULL DEFAULT '[]'::jsonb,
             goal_amount_cents INTEGER NOT NULL CHECK (goal_amount_cents BETWEEN ${CAUSE_MINIMUM_GOAL_CENTS} AND ${CAUSE_MAXIMUM_GOAL_CENTS}),
             stage_goals JSONB NOT NULL DEFAULT '[]'::jsonb,
             province_code TEXT,
@@ -772,6 +787,14 @@ export async function ensureCivilCauseTables() {
         `
           ALTER TABLE civil_cause_draft
           ADD COLUMN IF NOT EXISTS stage_goals JSONB NOT NULL DEFAULT '[]'::jsonb
+        `,
+        `
+          ALTER TABLE civil_cause_draft
+          ADD COLUMN IF NOT EXISTS media_url TEXT
+        `,
+        `
+          ALTER TABLE civil_cause_draft
+          ADD COLUMN IF NOT EXISTS images JSONB NOT NULL DEFAULT '[]'::jsonb
         `,
         `
           ALTER TABLE civil_cause_draft
@@ -900,16 +923,28 @@ export async function createCauseRecord(db: CauseDbClient, input: { postId: stri
 
 export async function createCauseDraft(
   db: CauseDbClient,
-  input: { creatorUserId: string; title?: string; goalAmountCents?: number; stageGoals?: CauseStageGoal[]; provinceCode?: string | null; communitySlug?: string | null },
+  input: {
+    creatorUserId: string
+    title?: string
+    mediaUrl?: string | null
+    images?: string[]
+    goalAmountCents?: number
+    stageGoals?: CauseStageGoal[]
+    provinceCode?: string | null
+    communitySlug?: string | null
+  },
 ) {
   await ensureCivilCauseTables()
   const id = randomUUID()
+  const draftImages = normalizeCauseDraftImages(input.images)
   await db.$executeRaw`
     INSERT INTO civil_cause_draft (
       id,
       creator_user_id,
       title,
       body,
+      media_url,
+      images,
       goal_amount_cents,
       stage_goals,
       province_code,
@@ -921,6 +956,8 @@ export async function createCauseDraft(
       ${input.creatorUserId},
       ${input.title?.trim() || 'Untitled Cause'},
       ${''},
+      ${input.mediaUrl?.trim() || null},
+      ${JSON.stringify(draftImages)}::jsonb,
       ${clampCurrency(input.goalAmountCents ?? 250000)},
       ${serializeCauseStageGoals(normalizeCauseStageGoals(input.stageGoals ?? []))}::jsonb,
       ${input.provinceCode ?? null},
@@ -936,13 +973,13 @@ export async function loadCauseDraftById(id: string, creatorUserId?: string) {
   await ensureCivilCauseTables()
   const rows = creatorUserId
     ? await prisma.$queryRaw<CauseDraftRow[]>`
-      SELECT id, creator_user_id, title, body, goal_amount_cents, stage_goals, province_code, community_slug, published_post_id, created_at, updated_at
+      SELECT id, creator_user_id, title, body, media_url, images, goal_amount_cents, stage_goals, province_code, community_slug, published_post_id, created_at, updated_at
         FROM civil_cause_draft
         WHERE id = ${id} AND creator_user_id = ${creatorUserId}
         LIMIT 1
       `
     : await prisma.$queryRaw<CauseDraftRow[]>`
-      SELECT id, creator_user_id, title, body, goal_amount_cents, stage_goals, province_code, community_slug, published_post_id, created_at, updated_at
+      SELECT id, creator_user_id, title, body, media_url, images, goal_amount_cents, stage_goals, province_code, community_slug, published_post_id, created_at, updated_at
         FROM civil_cause_draft
         WHERE id = ${id}
         LIMIT 1
@@ -956,13 +993,13 @@ export async function loadCauseDraftByPublishedPostId(postId: string, creatorUse
   await ensureCivilCauseTables()
   const rows = creatorUserId
     ? await prisma.$queryRaw<CauseDraftRow[]>`
-      SELECT id, creator_user_id, title, body, goal_amount_cents, stage_goals, province_code, community_slug, published_post_id, created_at, updated_at
+      SELECT id, creator_user_id, title, body, media_url, images, goal_amount_cents, stage_goals, province_code, community_slug, published_post_id, created_at, updated_at
         FROM civil_cause_draft
         WHERE published_post_id = ${postId} AND creator_user_id = ${creatorUserId}
         LIMIT 1
       `
     : await prisma.$queryRaw<CauseDraftRow[]>`
-      SELECT id, creator_user_id, title, body, goal_amount_cents, stage_goals, province_code, community_slug, published_post_id, created_at, updated_at
+      SELECT id, creator_user_id, title, body, media_url, images, goal_amount_cents, stage_goals, province_code, community_slug, published_post_id, created_at, updated_at
         FROM civil_cause_draft
         WHERE published_post_id = ${postId}
         LIMIT 1
@@ -979,6 +1016,8 @@ export async function updateCauseDraft(
     creatorUserId: string
     title?: string
     body?: string
+    mediaUrl?: string | null
+    images?: string[]
     goalAmountCents?: number
     stageGoals?: CauseStageGoal[]
     provinceCode?: string | null
@@ -989,6 +1028,8 @@ export async function updateCauseDraft(
   await ensureCivilCauseTables()
   const hasTitle = input.title !== undefined
   const hasBody = input.body !== undefined
+  const hasMediaUrl = input.mediaUrl !== undefined
+  const hasImages = input.images !== undefined
   const hasGoal = input.goalAmountCents !== undefined
   const hasStageGoals = input.stageGoals !== undefined
   const hasProvinceCode = input.provinceCode !== undefined
@@ -999,6 +1040,8 @@ export async function updateCauseDraft(
     SET
       title = CASE WHEN ${hasTitle} THEN ${input.title ?? ''} ELSE title END,
       body = CASE WHEN ${hasBody} THEN ${input.body ?? ''} ELSE body END,
+      media_url = CASE WHEN ${hasMediaUrl} THEN ${input.mediaUrl?.trim() || null} ELSE media_url END,
+      images = CASE WHEN ${hasImages} THEN ${JSON.stringify(normalizeCauseDraftImages(input.images ?? []))}::jsonb ELSE images END,
       goal_amount_cents = CASE WHEN ${hasGoal} THEN ${clampCurrency(input.goalAmountCents ?? 0)} ELSE goal_amount_cents END,
       stage_goals = CASE WHEN ${hasStageGoals} THEN ${serializeCauseStageGoals(normalizeCauseStageGoals(input.stageGoals ?? []))}::jsonb ELSE stage_goals END,
       province_code = CASE WHEN ${hasProvinceCode} THEN ${input.provinceCode ?? null} ELSE province_code END,
