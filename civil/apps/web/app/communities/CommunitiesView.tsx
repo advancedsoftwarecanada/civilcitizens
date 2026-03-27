@@ -24,6 +24,7 @@ import PartyChip from '../_components/politics/PartyChip'
 import { getAuthedEntryPath, type MeResponse } from '../_lib/me'
 import { useViewerStore } from '../_lib/viewerStore'
 import { ensureViewerMe } from '../_lib/viewerMe'
+import { requestLocationPermission } from '../_lib/locationService'
 import {
   GEOLOCATION_POSTAL_SENTINEL,
   formatStoredPostalCode,
@@ -855,50 +856,19 @@ export function CommunitiesView({ mode = 'default' }: { mode?: CommunitiesPageMo
     setDistrictError(null)
     setShowGeoOverlay(true)
 
-    navigator.geolocation.getCurrentPosition(
-      async (pos) => {
-        setGeoStatus('Matching your city…')
-        try {
-          const { latitude, longitude } = pos.coords
-          const res = await fetch(buildApiUrl('/communities/geolocate'), {
-            method: 'POST',
-            headers: {
-              'content-type': 'application/json',
-              authorization: `Bearer ${token}`,
-            },
-            body: JSON.stringify({ lat: latitude, lng: longitude, limit: 8 }),
-          })
-          const data = await jsonOrThrow<CommunityGeolocateResponse>(res)
-          const primary = data.primary ?? null
-          const alternatives = Array.isArray(data.alternatives) ? data.alternatives : []
-          setGeoAlternatives(alternatives)
-          await loadDistrictPreview({ lat: latitude, lng: longitude })
-          if (primary) {
-            await applyGeolocationMatch(primary, 'auto')
-          } else {
-            setGeoDetected(null)
-            setGeoSelected(null)
-            setGeoStatus('We could not find an exact city match. Please choose a suggestion below.')
-            setGeoError('We matched nearby cities. Pick the correct one to continue.')
-          }
-        } catch (error) {
-          console.error('Geolocation lookup failed', error)
-          setGeoStatus('Unable to match your location automatically.')
-          const fallbackMessage = isWelcomeMode
-            ? 'Unable to match your location right now. Try another postal code or pick from the suggestions above.'
-            : 'Unable to match your location right now. Please choose manually.'
-          setGeoError(getErrorMessage(error) ?? fallbackMessage)
-          pushToast('Unable to identify your city automatically right now.', 'error')
-        } finally {
-          setGeoBusy(false)
-          setShowGeoOverlay(false)
-        }
-      },
-      (err) => {
-        console.warn('Geolocation request denied or failed', err)
+    void (async () => {
+      const locationResult = await requestLocationPermission({
+        reason: isWelcomeMode ? 'communities-welcome-auto-detect' : 'communities-auto-detect',
+        highAccuracy: false,
+        timeoutMs: 15000,
+        maximumAgeMs: 600000,
+      })
+
+      if (!locationResult.ok || !locationResult.location) {
         setGeoBusy(false)
         setShowGeoOverlay(false)
-        if (err.code === 1) {
+
+        if (locationResult.errorCode === 'permission_denied' || locationResult.state === 'denied') {
           setGeoStatus('Location permission was denied.')
           setGeoError(
             isWelcomeMode
@@ -911,7 +881,10 @@ export function CommunitiesView({ mode = 'default' }: { mode?: CommunitiesPageMo
               : 'Location permission denied. Select your city manually.',
             'error',
           )
-        } else if (err.code === 3) {
+          return
+        }
+
+        if (locationResult.errorCode === 'timeout') {
           setGeoStatus('Location lookup timed out.')
           setGeoError(
             isWelcomeMode
@@ -924,23 +897,62 @@ export function CommunitiesView({ mode = 'default' }: { mode?: CommunitiesPageMo
               : 'Location lookup timed out. Try again or choose manually.',
             'error',
           )
-        } else {
-          setGeoStatus('We could not retrieve your location.')
-          setGeoError(
-            isWelcomeMode
-              ? 'We could not retrieve your location. Adjust permissions and retry, or enter your postal code above.'
-              : 'Please select your province and city manually.',
-          )
-          pushToast(
-            isWelcomeMode
-              ? 'We could not retrieve your location. Adjust permissions or use the postal search above.'
-              : 'We could not retrieve your location. Select your city manually.',
-            'error',
-          )
+          return
         }
-      },
-      { enableHighAccuracy: false, timeout: 15000, maximumAge: 600000 },
-    )
+
+        setGeoStatus('We could not retrieve your location.')
+        setGeoError(
+          isWelcomeMode
+            ? 'We could not retrieve your location. Adjust permissions and retry, or enter your postal code above.'
+            : 'Please select your province and city manually.',
+        )
+        pushToast(
+          isWelcomeMode
+            ? 'We could not retrieve your location. Adjust permissions or use the postal search above.'
+            : 'We could not retrieve your location. Select your city manually.',
+          'error',
+        )
+        return
+      }
+
+      setGeoStatus('Matching your city…')
+      try {
+        const latitude = locationResult.location.latitude
+        const longitude = locationResult.location.longitude
+        const res = await fetch(buildApiUrl('/communities/geolocate'), {
+          method: 'POST',
+          headers: {
+            'content-type': 'application/json',
+            authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({ lat: latitude, lng: longitude, limit: 8 }),
+        })
+        const data = await jsonOrThrow<CommunityGeolocateResponse>(res)
+        const primary = data.primary ?? null
+        const alternatives = Array.isArray(data.alternatives) ? data.alternatives : []
+        setGeoAlternatives(alternatives)
+        await loadDistrictPreview({ lat: latitude, lng: longitude })
+        if (primary) {
+          await applyGeolocationMatch(primary, 'auto')
+        } else {
+          setGeoDetected(null)
+          setGeoSelected(null)
+          setGeoStatus('We could not find an exact city match. Please choose a suggestion below.')
+          setGeoError('We matched nearby cities. Pick the correct one to continue.')
+        }
+      } catch (error) {
+        console.error('Geolocation lookup failed', error)
+        setGeoStatus('Unable to match your location automatically.')
+        const fallbackMessage = isWelcomeMode
+          ? 'Unable to match your location right now. Try another postal code or pick from the suggestions above.'
+          : 'Unable to match your location right now. Please choose manually.'
+        setGeoError(getErrorMessage(error) ?? fallbackMessage)
+        pushToast('Unable to identify your city automatically right now.', 'error')
+      } finally {
+        setGeoBusy(false)
+        setShowGeoOverlay(false)
+      }
+    })()
   }
 
   type HomeSetSource = 'picker' | 'list' | 'welcome'

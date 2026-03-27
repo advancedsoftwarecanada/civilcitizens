@@ -17,6 +17,7 @@ import {
 } from 'react-icons/hi2'
 import CivilCard from '../_components/CivilCard'
 import DashboardShell from '../_components/DashboardShell'
+import EnableLocationServicesButton from '../_components/EnableLocationServicesButton'
 import { RightRail } from '../_components/RightRail'
 import { AddressDirectionsMap, type AddressDirectionsMapHandle } from '../_components/map/AddressDirectionsMap'
 import { pushToast } from '../_components/useToasts'
@@ -24,6 +25,7 @@ import { calculateDistanceKm, fetchDrivingRoute } from '../_lib/addressSearch'
 import { buildApiUrl } from '../_lib/api'
 import { redirectToAuthModal } from '../_lib/authModal'
 import { formatCanadianPhysicalAddressInline } from '../_lib/canadianAddresses'
+import { getCurrentLocation } from '../_lib/locationService'
 import { getStoredToken } from '../_lib/tokenStorage'
 import MessageCallClient from '../messages/_components/MessageCallClient'
 import DriveDriverEarningsRail from './DriveDriverEarningsRail'
@@ -340,31 +342,31 @@ export default function DriveContractPageClient({ rideId }: { rideId: string }) 
   }, [rideId])
 
   useEffect(() => {
-    if (!ride || ride.driverLocation || typeof navigator === 'undefined' || !navigator.geolocation) {
+    if (!ride || ride.driverLocation) {
       setLocalDriverPoint(null)
       return
     }
 
     let cancelled = false
-    navigator.geolocation.getCurrentPosition(
-      (position) => {
-        if (cancelled) return
-        setLocalDriverPoint({
-          latitude: position.coords.latitude,
-          longitude: position.coords.longitude,
-          label: 'Your current location',
-        })
-      },
-      () => {
-        if (cancelled) return
+    void getCurrentLocation({
+      reason: 'drive-contract-local-driver-point',
+      highAccuracy: true,
+      timeoutMs: 10_000,
+      maximumAgeMs: 60_000,
+      minIntervalMs: 10_000,
+    }).then((locationResult) => {
+      if (cancelled) return
+      if (!locationResult.ok || !locationResult.location) {
         setLocalDriverPoint(null)
-      },
-      {
-        enableHighAccuracy: true,
-        timeout: 10_000,
-        maximumAge: 60_000,
-      },
-    )
+        return
+      }
+
+      setLocalDriverPoint({
+        latitude: locationResult.location.latitude,
+        longitude: locationResult.location.longitude,
+        label: 'Your current location',
+      })
+    })
 
     return () => {
       cancelled = true
@@ -1154,6 +1156,23 @@ export default function DriveContractPageClient({ rideId }: { rideId: string }) 
                         <span className="text-slate-600">Distance to pickup</span>
                         <span className="font-semibold text-slate-950">{formatDistanceLabel(distanceKmToPickup)}</span>
                       </div>
+                      {!driverPoint ? (
+                        <div className="border-t border-amber-200 pt-3">
+                          <p className="text-xs text-amber-800">Enable location once to keep your pickup route updated without repeated prompts.</p>
+                          <EnableLocationServicesButton
+                            reason="drive-contract-enable-location"
+                            successMessage="Live route updates enabled."
+                            onEnabled={(location) => {
+                              setLocalDriverPoint({
+                                latitude: location.latitude,
+                                longitude: location.longitude,
+                                label: 'Your current location',
+                              })
+                            }}
+                            className="mt-3 inline-flex items-center rounded-full border border-amber-300 bg-white px-4 py-2 text-sm font-semibold text-amber-900 shadow-sm transition hover:border-amber-400 hover:bg-amber-100"
+                          />
+                        </div>
+                      ) : null}
                     </div>
                   </div>
                 </div>

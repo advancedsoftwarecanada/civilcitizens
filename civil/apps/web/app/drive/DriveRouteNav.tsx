@@ -1,8 +1,11 @@
 'use client'
 
+import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { HiOutlineClock, HiOutlineMap, HiOutlineTruck, HiOutlineUserCircle } from 'react-icons/hi2'
+import EnableLocationServicesButton from '../_components/EnableLocationServicesButton'
+import { getLocationPermissionState, type CivilLocationPermissionState } from '../_lib/locationService'
 import DriveActiveRideLocationSync from './DriveActiveRideLocationSync'
 import { useDriveViewerState } from './useDriveViewerState'
 
@@ -38,11 +41,44 @@ export default function DriveRouteNav() {
   const pathname = usePathname()
   const { isDriverMode, enterDriverMode } = useDriveViewerState()
   const items = isDriverMode ? DRIVER_NAV_ITEMS : REQUESTER_NAV_ITEMS
+  const [locationPermissionState, setLocationPermissionState] = useState<CivilLocationPermissionState | null>(null)
+
+  useEffect(() => {
+    let cancelled = false
+
+    void getLocationPermissionState('drive-route-nav').then((state) => {
+      if (!cancelled) {
+        setLocationPermissionState(state)
+      }
+    })
+
+    return () => {
+      cancelled = true
+    }
+  }, [])
 
   return (
     <>
       <DriveActiveRideLocationSync enabled />
-      <nav className="w-full" aria-label="Drive sections">
+      <nav className="w-full space-y-3" aria-label="Drive sections">
+        {locationPermissionState && locationPermissionState !== 'granted' && locationPermissionState !== 'unsupported' ? (
+          <div className="flex flex-col gap-3 rounded-[24px] border border-emerald-200 bg-emerald-50 px-4 py-4 md:flex-row md:items-center md:justify-between">
+            <div>
+              <p className="text-sm font-semibold text-emerald-950">Enable Location Services</p>
+              <p className="mt-1 text-sm text-emerald-900">Rides and delivery will keep using GPS silently after the first approval.</p>
+            </div>
+            <EnableLocationServicesButton
+              reason="drive-route-nav-enable-location"
+              onEnabled={() => {
+                setLocationPermissionState('granted')
+              }}
+              onResult={(result) => {
+                setLocationPermissionState(result.state)
+              }}
+              className="inline-flex items-center justify-center rounded-full border border-emerald-700 bg-emerald-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-emerald-500"
+            />
+          </div>
+        ) : null}
         <div
           className={`grid w-full gap-3 ${
             items.length >= 4

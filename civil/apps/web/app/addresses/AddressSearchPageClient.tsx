@@ -7,6 +7,7 @@ import { HiOutlineCheckBadge, HiOutlineHeart, HiOutlineSparkles } from 'react-ic
 import Block from '../_components/Block'
 import CivilCard from '../_components/CivilCard'
 import DashboardShell from '../_components/DashboardShell'
+import EnableLocationServicesButton from '../_components/EnableLocationServicesButton'
 import Modal from '../_components/Modal'
 import { AddressDirectionsMap, type AddressDirectionsMapHandle } from '../_components/map/AddressDirectionsMap'
 import { buildApiUrl, parseApiResponse } from '../_lib/api'
@@ -29,6 +30,7 @@ import {
   normalizeSavedShippingAddress,
   type SavedShippingAddress,
 } from '../_lib/canadianAddresses'
+import { getCurrentLocation } from '../_lib/locationService'
 import { getStoredToken } from '../_lib/tokenStorage'
 
 type ShippingAddressListResponse = {
@@ -534,33 +536,39 @@ export default function AddressSearchPageClient() {
     [originOptions, selectedOriginId],
   )
 
-  const resolveCurrentLocationOrigin = useCallback(() => {
-    if (typeof navigator === 'undefined' || !navigator.geolocation) {
-      setOriginError('Current location is not available on this device.')
+  const resolveCurrentLocationOrigin = useCallback(async () => {
+    setOriginLoading(true)
+    setOriginError(null)
+
+    const locationResult = await getCurrentLocation({
+      reason: 'addresses-current-origin',
+      highAccuracy: true,
+      timeoutMs: 10000,
+      maximumAgeMs: 60000,
+      minIntervalMs: 10000,
+    })
+
+    if (!locationResult.ok || !locationResult.location) {
       setResolvedOrigin(null)
+      if (locationResult.errorCode === 'not_supported') {
+        setOriginError('Current location is not available on this device.')
+      } else if (locationResult.errorCode === 'not_granted' || locationResult.errorCode === 'permission_denied') {
+        setOriginError('Enable Location Services to route from your current position, or choose a saved address.')
+      } else {
+        setOriginError(locationResult.errorMessage ?? 'Unable to resolve your current location right now.')
+      }
+      setOriginLoading(false)
       return
     }
 
-    setOriginLoading(true)
-    setOriginError(null)
-    navigator.geolocation.getCurrentPosition(
-      (position) => {
-        setResolvedOrigin({
-          id: 'current',
-          label: 'Current Location',
-          latitude: position.coords.latitude,
-          longitude: position.coords.longitude,
-          detail: 'Using this device location',
-        })
-        setOriginLoading(false)
-      },
-      () => {
-        setOriginError('Location permission was denied or unavailable.')
-        setResolvedOrigin(null)
-        setOriginLoading(false)
-      },
-      { enableHighAccuracy: true, timeout: 10000, maximumAge: 60000 },
-    )
+    setResolvedOrigin({
+      id: 'current',
+      label: 'Current Location',
+      latitude: locationResult.location.latitude,
+      longitude: locationResult.location.longitude,
+      detail: 'Using this device location',
+    })
+    setOriginLoading(false)
   }, [])
 
   const resolveSavedOrigin = useCallback(async (option: OriginOption) => {
@@ -808,6 +816,26 @@ export default function AddressSearchPageClient() {
 
           {originLoading ? <div className="rounded-2xl border border-slate-100 bg-slate-50 px-4 py-3 text-sm text-slate-500">Resolving route origin…</div> : null}
           {originError ? <div className="rounded-2xl border border-rose-100 bg-rose-50 px-4 py-3 text-sm text-rose-700">{originError}</div> : null}
+          {selectedOriginId === 'current' && !resolvedOrigin ? (
+            <div className="flex">
+              <EnableLocationServicesButton
+                reason="addresses-enable-location"
+                successMessage="Current location enabled."
+                onEnabled={(location) => {
+                  setResolvedOrigin({
+                    id: 'current',
+                    label: 'Current Location',
+                    latitude: location.latitude,
+                    longitude: location.longitude,
+                    detail: 'Using this device location',
+                  })
+                  setOriginError(null)
+                  setOriginLoading(false)
+                }}
+                className="inline-flex items-center rounded-full border border-emerald-300 bg-emerald-50 px-4 py-2 text-sm font-semibold text-emerald-900 shadow-sm transition hover:border-emerald-400 hover:bg-emerald-100"
+              />
+            </div>
+          ) : null}
 
           {travelSummary && resolvedOrigin ? (
             <div className="grid gap-3 rounded-[24px] border border-emerald-200 bg-emerald-50 px-4 py-4 md:grid-cols-[minmax(0,1fr)_auto] md:items-center">
