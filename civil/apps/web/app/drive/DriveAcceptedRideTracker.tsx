@@ -10,6 +10,7 @@ import { AddressDirectionsMap } from '../_components/map/AddressDirectionsMap'
 import { calculateDistanceKm, fetchDrivingRoute } from '../_lib/addressSearch'
 import { redirectToAuthModal } from '../_lib/authModal'
 import { formatCanadianPhysicalAddressInline } from '../_lib/canadianAddresses'
+import { getCurrentLocation } from '../_lib/locationService'
 import { getStoredToken } from '../_lib/tokenStorage'
 import {
   formatDriveDurationMinutes,
@@ -139,32 +140,32 @@ export default function DriveAcceptedRideTracker({
   const [distanceKmTrip, setDistanceKmTrip] = useState<number | null>(null)
 
   useEffect(() => {
-    if (ride.viewerRole !== 'requester' || ride.requesterLocation || typeof navigator === 'undefined' || !navigator.geolocation) {
+    if (ride.viewerRole !== 'requester' || ride.requesterLocation) {
       setLocalRequesterPoint(null)
       return
     }
 
     let cancelled = false
 
-    navigator.geolocation.getCurrentPosition(
-      (position) => {
-        if (cancelled) return
-        setLocalRequesterPoint({
-          latitude: position.coords.latitude,
-          longitude: position.coords.longitude,
-          label: 'Your location',
-        })
-      },
-      () => {
-        if (cancelled) return
+    void getCurrentLocation({
+      reason: 'drive-accepted-ride-requester-location',
+      highAccuracy: true,
+      timeoutMs: 10_000,
+      maximumAgeMs: 60_000,
+      minIntervalMs: 10_000,
+    }).then((locationResult) => {
+      if (cancelled) return
+      if (!locationResult.ok || !locationResult.location) {
         setLocalRequesterPoint(null)
-      },
-      {
-        enableHighAccuracy: true,
-        timeout: 10_000,
-        maximumAge: 60_000,
-      },
-    )
+        return
+      }
+
+      setLocalRequesterPoint({
+        latitude: locationResult.location.latitude,
+        longitude: locationResult.location.longitude,
+        label: 'Your location',
+      })
+    })
 
     return () => {
       cancelled = true

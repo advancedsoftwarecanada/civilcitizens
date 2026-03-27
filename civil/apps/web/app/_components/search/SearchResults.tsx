@@ -37,6 +37,7 @@ import {
   type CanadianAddress,
   type SavedShippingAddress,
 } from '../../_lib/canadianAddresses'
+import { getCurrentLocation } from '../../_lib/locationService'
 import { formatUserDisplayName } from '../../_lib/text'
 import { getStoredToken } from '../../_lib/tokenStorage'
 import VerifiedAvatar from '../VerifiedAvatar'
@@ -142,25 +143,21 @@ export function SearchResults({ query, open, onResultSelect, onLoadingStateChang
     let cancelled = false
 
     const resolveAnchor = async () => {
-      if (typeof navigator !== 'undefined' && navigator.geolocation) {
-        try {
-          const currentLocation = await new Promise<SearchAnchor>((resolve, reject) => {
-            navigator.geolocation.getCurrentPosition(
-              (position) => {
-                resolve({
-                  latitude: position.coords.latitude,
-                  longitude: position.coords.longitude,
-                })
-              },
-              reject,
-              { enableHighAccuracy: true, timeout: 5000, maximumAge: 300000 },
-            )
+      const locationResult = await getCurrentLocation({
+        reason: 'search-address-anchor',
+        highAccuracy: true,
+        timeoutMs: 5000,
+        maximumAgeMs: 300000,
+        minIntervalMs: 10_000,
+      })
+      if (locationResult.ok && locationResult.location) {
+        if (!cancelled) {
+          setAddressSearchAnchor({
+            latitude: locationResult.location.latitude,
+            longitude: locationResult.location.longitude,
           })
-          if (!cancelled) setAddressSearchAnchor(currentLocation)
-          return
-        } catch {
-          // fall through to saved home/default address
         }
+        return
       }
 
       const storedAddress = readStoredMarketShippingAddress()

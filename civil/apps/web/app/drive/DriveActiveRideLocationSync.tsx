@@ -2,6 +2,7 @@
 
 import { useEffect, useRef } from 'react'
 import { buildApiUrl } from '../_lib/api'
+import { getCurrentLocation } from '../_lib/locationService'
 import { getStoredToken } from '../_lib/tokenStorage'
 import type { DriveFeedResponse, DriveRideRequestItem } from './driveShared'
 
@@ -41,7 +42,7 @@ export default function DriveActiveRideLocationSync({ enabled }: { enabled: bool
   const lastSyncedLocationRef = useRef<{ latitude: number; longitude: number; at: number } | null>(null)
 
   useEffect(() => {
-    if (!enabled || typeof window === 'undefined' || typeof navigator === 'undefined' || !navigator.geolocation) {
+    if (!enabled || typeof window === 'undefined') {
       activeRideIdsRef.current = []
       lastSyncedLocationRef.current = null
       return
@@ -101,40 +102,30 @@ export default function DriveActiveRideLocationSync({ enabled }: { enabled: bool
         activeRideIdsRef.current = activeRideIds
         if (!activeRideIds.length) return
 
-        await new Promise<void>((resolve) => {
-          navigator.geolocation.getCurrentPosition(
-            async (position) => {
-              if (cancelled) {
-                resolve()
-                return
-              }
-
-              const latitude = position.coords.latitude
-              const longitude = position.coords.longitude
-              const now = Date.now()
-              const previous = lastSyncedLocationRef.current
-              const movedKm =
-                previous
-                  ? calculateDistanceKm(previous, { latitude, longitude })
-                  : Number.POSITIVE_INFINITY
-
-              if (!force && previous && now - previous.at < MIN_LOCATION_SYNC_INTERVAL_MS && movedKm < MIN_LOCATION_SYNC_DISTANCE_KM) {
-                resolve()
-                return
-              }
-
-              lastSyncedLocationRef.current = { latitude, longitude, at: now }
-              await postLocation(latitude, longitude)
-              resolve()
-            },
-            () => resolve(),
-            {
-              enableHighAccuracy: true,
-              timeout: 10_000,
-              maximumAge: 60_000,
-            },
-          )
+        const locationResult = await getCurrentLocation({
+          reason: 'drive-active-ride-sync',
+          highAccuracy: true,
+          timeoutMs: 10_000,
+          maximumAgeMs: 60_000,
+          minIntervalMs: MIN_LOCATION_SYNC_INTERVAL_MS,
         })
+        if (cancelled || !locationResult.ok || !locationResult.location) return
+
+        const latitude = locationResult.location.latitude
+        const longitude = locationResult.location.longitude
+        const now = Date.now()
+        const previous = lastSyncedLocationRef.current
+        const movedKm =
+          previous
+            ? calculateDistanceKm(previous, { latitude, longitude })
+            : Number.POSITIVE_INFINITY
+
+        if (!force && previous && now - previous.at < MIN_LOCATION_SYNC_INTERVAL_MS && movedKm < MIN_LOCATION_SYNC_DISTANCE_KM) {
+          return
+        }
+
+        lastSyncedLocationRef.current = { latitude, longitude, at: now }
+        await postLocation(latitude, longitude)
       } finally {
         syncing = false
       }

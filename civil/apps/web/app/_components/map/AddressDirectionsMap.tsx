@@ -16,6 +16,7 @@ import {
   HiOutlineXMark,
 } from 'react-icons/hi2'
 import { calculateDistanceKm, fetchDrivingRoute, type DrivingRoute, type DrivingRouteStep } from '../../_lib/addressSearch'
+import { isLocationSupported, startLocationWatch } from '../../_lib/locationService'
 import { useViewerStore } from '../../_lib/viewerStore'
 
 type MapPoint = {
@@ -443,7 +444,7 @@ export const AddressDirectionsMap = forwardRef<AddressDirectionsMapHandle, Addre
     center: [number, number]
     zoom: number
   } | null>(null)
-  const watchIdRef = useRef<number | null>(null)
+  const watchCleanupRef = useRef<(() => void) | null>(null)
   const routeAbortRef = useRef<AbortController | null>(null)
   const routeRequestAtRef = useRef<number>(0)
   const routePointRef = useRef<MapPoint | null>(null)
@@ -648,10 +649,9 @@ export const AddressDirectionsMap = forwardRef<AddressDirectionsMapHandle, Addre
   }, [clearNavigationNotice])
 
   const stopWatcher = useCallback(() => {
-    if (watchIdRef.current !== null && typeof navigator !== 'undefined' && navigator.geolocation) {
-      navigator.geolocation.clearWatch(watchIdRef.current)
-      watchIdRef.current = null
-    }
+    const stopWatch = watchCleanupRef.current
+    watchCleanupRef.current = null
+    stopWatch?.()
   }, [])
 
   const stopNavigation = useCallback(async (options?: { arrived?: boolean }) => {
@@ -735,10 +735,10 @@ export const AddressDirectionsMap = forwardRef<AddressDirectionsMapHandle, Addre
     }
   }, [destination, stopNavigation])
 
-  const handlePositionUpdate = useCallback((position: GeolocationPosition, options?: { forceRoute?: boolean }) => {
+  const handlePositionUpdate = useCallback((position: { latitude: number; longitude: number; heading?: number | null }, options?: { forceRoute?: boolean }) => {
     const nextOrigin = {
-      latitude: position.coords.latitude,
-      longitude: position.coords.longitude,
+      latitude: position.latitude,
+      longitude: position.longitude,
       label: 'Current Location',
     } satisfies MapPoint
 
@@ -746,15 +746,15 @@ export const AddressDirectionsMap = forwardRef<AddressDirectionsMapHandle, Addre
     setNavigationOrigin(nextOrigin)
     setNavigationStartPoint((current) => current ?? nextOrigin)
     setNavError(null)
-    if (typeof position.coords.heading === 'number' && Number.isFinite(position.coords.heading)) {
-      setDeviceHeading(normalizeHeading(position.coords.heading))
+    if (typeof position.heading === 'number' && Number.isFinite(position.heading)) {
+      setDeviceHeading(normalizeHeading(position.heading))
     }
     void refreshNavigationRoute(nextOrigin, { force: options?.forceRoute })
   }, [onNavigationOriginChange, refreshNavigationRoute])
 
   const handleStartNavigation = useCallback(async () => {
     if (!destination) return
-    if (typeof navigator === 'undefined' || !navigator.geolocation) {
+    if (!isLocationSupported()) {
       setNavError('Live navigation is not available on this device.')
       return
     }
@@ -793,29 +793,44 @@ export const AddressDirectionsMap = forwardRef<AddressDirectionsMapHandle, Addre
       }
     }
 
-    navigator.geolocation.getCurrentPosition(
-      (position) => {
-        handlePositionUpdate(position, { forceRoute: true })
-        const watchId = navigator.geolocation.watchPosition(
-          (nextPosition) => {
-            handlePositionUpdate(nextPosition)
+    let started = false
+    let startError = 'Location permission was denied or unavailable.'
+    const stopWatch = await startLocationWatch({
+      reason: 'address-directions-navigation',
+      userInitiated: true,
+      highAccuracy: true,
+      timeoutMs: 10000,
+      maximumAgeMs: 2000,
+      onLocation: (location) => {
+        const forceRoute = !started
+        started = true
+        handlePositionUpdate(
+          {
+            latitude: location.latitude,
+            longitude: location.longitude,
+            heading: location.heading,
           },
-          () => {
-            setNavError('Location updates were interrupted.')
-          },
-          { enableHighAccuracy: true, maximumAge: 2000, timeout: 10000 },
+          { forceRoute },
         )
-        watchIdRef.current = watchId
       },
-      () => {
-        setNavStatus('idle')
-        setFullscreenActive(false)
-        onNavigationOriginChange?.(null)
-        setNavError('Location permission was denied or unavailable.')
+      onError: (result) => {
+        const message = result.errorMessage ?? (started ? 'Location updates were interrupted.' : 'Location permission was denied or unavailable.')
+        if (started) {
+          setNavError(message)
+          return
+        }
+        startError = message
       },
-      { enableHighAccuracy: true, maximumAge: 0, timeout: 10000 },
-    )
-  }, [destination, handlePositionUpdate, onNavigationOriginChange])
+    })
+
+    if (!started) {
+      await stopNavigation()
+      setNavError(startError)
+      return
+    }
+
+    watchCleanupRef.current = stopWatch
+  }, [destination, handlePositionUpdate, stopNavigation])
 
   useImperativeHandle(
     ref,

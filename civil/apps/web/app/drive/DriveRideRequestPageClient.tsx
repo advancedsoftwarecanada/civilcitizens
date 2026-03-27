@@ -35,6 +35,7 @@ import {
   type CanadianAddress,
   type SavedShippingAddress,
 } from '../_lib/canadianAddresses'
+import { requestLocationPermission } from '../_lib/locationService'
 import { getStoredToken } from '../_lib/tokenStorage'
 import DriveDriverEarningsRail from './DriveDriverEarningsRail'
 import DriveModeRail from './DriveModeRail'
@@ -593,22 +594,20 @@ export default function DriveRideRequestPageClient({ mode = 'create', rideId }: 
   }, [])
 
   const handleUseCurrentLocation = useCallback(async () => {
-    if (typeof navigator === 'undefined' || !navigator.geolocation) {
-      pushToast('Current location is not available on this device.', 'error')
-      return
-    }
-
     setLocatingPickup(true)
     try {
-      const position = await new Promise<GeolocationPosition>((resolve, reject) => {
-        navigator.geolocation.getCurrentPosition(resolve, reject, {
-          enableHighAccuracy: true,
-          timeout: 10000,
-          maximumAge: 60000,
-        })
+      const locationResult = await requestLocationPermission({
+        reason: 'drive-ride-request-pickup',
+        highAccuracy: true,
+        timeoutMs: 10000,
+        maximumAgeMs: 60000,
       })
+      if (!locationResult.ok || !locationResult.location) {
+        pushToast(locationResult.errorMessage ?? 'Location permission was denied or unavailable.', 'error')
+        return
+      }
 
-      const resolved = await fetchReverseGeocodeResult(position.coords.latitude, position.coords.longitude)
+      const resolved = await fetchReverseGeocodeResult(locationResult.location.latitude, locationResult.location.longitude)
       if (!resolved) {
         pushToast('Unable to resolve your current location as an address.', 'error')
         return

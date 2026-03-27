@@ -2,10 +2,12 @@
 
 import { useEffect, useMemo, useState } from 'react'
 import { HiOutlineCalendarDays, HiOutlineClock } from 'react-icons/hi2'
+import EnableLocationServicesButton from '../_components/EnableLocationServicesButton'
 import Modal from '../_components/Modal'
 import { AddressDirectionsMap } from '../_components/map/AddressDirectionsMap'
 import { fetchDrivingRoute } from '../_lib/addressSearch'
 import { formatCanadianPhysicalAddressInline } from '../_lib/canadianAddresses'
+import { getCurrentLocation } from '../_lib/locationService'
 import { formatDriveDateTime, formatDriveMoney, type DriveRideRequestItem } from './driveShared'
 
 const RIDE_OFFER_CIVIL_FEE_CENTS = 50
@@ -117,32 +119,28 @@ export default function DriveRideOfferModal({
       setDriverOrigin(null)
       return
     }
-    if (typeof navigator === 'undefined' || !navigator.geolocation) {
-      setDriverOrigin(null)
-      return
-    }
 
     let cancelled = false
 
-    navigator.geolocation.getCurrentPosition(
-      (position) => {
-        if (cancelled) return
-        setDriverOrigin({
-          latitude: position.coords.latitude,
-          longitude: position.coords.longitude,
-          label: 'Your current location',
-        })
-      },
-      () => {
-        if (cancelled) return
+    void getCurrentLocation({
+      reason: 'drive-ride-offer-route-planning',
+      highAccuracy: true,
+      timeoutMs: 10000,
+      maximumAgeMs: 60000,
+      minIntervalMs: 10000,
+    }).then((locationResult) => {
+      if (cancelled) return
+      if (!locationResult.ok || !locationResult.location) {
         setDriverOrigin(null)
-      },
-      {
-        enableHighAccuracy: true,
-        timeout: 10000,
-        maximumAge: 60000,
-      },
-    )
+        return
+      }
+
+      setDriverOrigin({
+        latitude: locationResult.location.latitude,
+        longitude: locationResult.location.longitude,
+        label: 'Your current location',
+      })
+    })
 
     return () => {
       cancelled = true
@@ -328,6 +326,23 @@ export default function DriveRideOfferModal({
                       <span className="text-slate-600">Total distance</span>
                       <span className="font-semibold text-slate-950">{routeLoading ? 'Loading route…' : formatDistanceLabel(totalTripDistanceKm)}</span>
                     </div>
+                    {!routeLoading && !driverOrigin ? (
+                      <div className="border-t border-amber-200 pt-3">
+                        <p className="text-xs text-amber-800">Enable location to estimate your drive to the pickup point.</p>
+                        <EnableLocationServicesButton
+                          reason="drive-ride-offer-enable-location"
+                          successMessage="Live route planning enabled."
+                          onEnabled={(location) => {
+                            setDriverOrigin({
+                              latitude: location.latitude,
+                              longitude: location.longitude,
+                              label: 'Your current location',
+                            })
+                          }}
+                          className="mt-3 inline-flex items-center rounded-full border border-amber-300 bg-white px-4 py-2 text-sm font-semibold text-amber-900 shadow-sm transition hover:border-amber-400 hover:bg-amber-100"
+                        />
+                      </div>
+                    ) : null}
                   </div>
                 </div>
               </div>
