@@ -481,6 +481,7 @@ export default function AddressSearchPageClient() {
     if (abortRef.current) abortRef.current.abort()
     const controller = new AbortController()
     abortRef.current = controller
+    setResults([])
     setLoading(true)
     setError(null)
 
@@ -517,6 +518,32 @@ export default function AddressSearchPageClient() {
     [matchedSavedDestinationAddress],
   )
 
+  const explicitDestinationFromParams = useMemo(() => {
+    if (initialLatitude === null || initialLongitude === null || !(initialLabel || initialAddress || initialQuery)) {
+      return null
+    }
+
+    return {
+      placeId: null,
+      osmType: null,
+      osmId: null,
+      kind: 'address',
+      name: initialLabel || initialQuery || initialAddress.split(',')[0] || 'Selected destination',
+      category: null,
+      distanceKm: null,
+      displayName: initialAddress || initialLabel || initialQuery,
+      latitude: initialLatitude,
+      longitude: initialLongitude,
+      className: null,
+      typeName: null,
+      importance: null,
+      address: {},
+      originalPostalCode: null,
+      postalCodeVerified: false,
+      nominatimRaw: {},
+    } satisfies CivilPlaceSearchResult
+  }, [initialAddress, initialLabel, initialLatitude, initialLongitude, initialQuery])
+
   const selectedDestination = useMemo(() => {
     const matchedByCoordinates =
       initialLatitude !== null && initialLongitude !== null
@@ -536,33 +563,13 @@ export default function AddressSearchPageClient() {
           }) ?? null
         : null
 
-    if (matchedSavedDestination) return matchedSavedDestination
     if (matchedByCoordinates) return matchedByCoordinates
+    if (explicitDestinationFromParams) return explicitDestinationFromParams
+    if (matchedSavedDestination) return matchedSavedDestination
     if (matchedBySavedAddress) return matchedBySavedAddress
     if (results[0]) return results[0]
-    if (initialLatitude !== null && initialLongitude !== null && (initialLabel || initialAddress || initialQuery)) {
-      return {
-        placeId: null,
-        osmType: null,
-        osmId: null,
-        kind: 'address',
-        name: initialLabel || initialQuery || initialAddress.split(',')[0] || 'Selected destination',
-        category: null,
-        distanceKm: null,
-        displayName: initialAddress || initialLabel || initialQuery,
-        latitude: initialLatitude,
-        longitude: initialLongitude,
-        className: null,
-        typeName: null,
-        importance: null,
-        address: {},
-        originalPostalCode: null,
-        postalCodeVerified: false,
-        nominatimRaw: {},
-      } satisfies CivilPlaceSearchResult
-    }
     return null
-  }, [initialAddress, initialLabel, initialLatitude, initialLongitude, initialQuery, matchedSavedDestination, results])
+  }, [explicitDestinationFromParams, initialAddress, initialLabel, initialLatitude, initialLongitude, initialQuery, matchedSavedDestination, results])
 
   const destinationLabel = selectedDestination ? formatPlaceSearchPrimaryLabel(selectedDestination) : initialLabel || initialQuery || 'Address'
   const destinationDetail = selectedDestination ? formatPlaceSearchSecondaryLabel(selectedDestination) : initialAddress || null
