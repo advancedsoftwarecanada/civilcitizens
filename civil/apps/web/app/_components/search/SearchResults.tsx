@@ -22,6 +22,8 @@ import {
 import { buildApiUrl, parseApiResponse } from '../../_lib/api'
 import {
   calculateDistanceKm,
+  buildAddressSearchQueries,
+  buildAddressesHref,
   buildAddressesHrefFromPlaceResult,
   fetchPlaceSearchResults,
   isAddressPostalVerified,
@@ -34,12 +36,20 @@ import {
 } from '../../_lib/addressSearch'
 import { redirectToAuthModal } from '../../_lib/authModal'
 import {
+  isCanadianAddressPostalVerified,
   normalizeCanadianAddress,
+  normalizeSavedShippingAddress,
   readStoredMarketShippingAddress,
   type CanadianAddress,
   type SavedShippingAddress,
 } from '../../_lib/canadianAddresses'
 import { getCurrentLocation } from '../../_lib/locationService'
+import {
+  formatSavedShippingAddressDetail,
+  formatSavedShippingAddressTitle,
+  searchSavedShippingAddresses,
+  type SavedAddressSearchResult,
+} from '../../_lib/savedAddressSearch'
 import { formatUserDisplayName } from '../../_lib/text'
 import { getStoredToken } from '../../_lib/tokenStorage'
 import VerifiedAvatar from '../VerifiedAvatar'
@@ -85,6 +95,10 @@ type VisibleMapSearchResult = {
   distanceKm: number | null
 }
 
+type ShippingAddressListResponse = {
+  items?: SavedShippingAddress[]
+}
+
 function CompactSection({ title, href, children, onResultSelect }: { title: string; href: string; children: ReactNode; onResultSelect?: () => void }) {
   return (
     <section>
@@ -124,6 +138,8 @@ export function SearchResults({ query, open, onResultSelect, onLoadingStateChang
   const [eventResults, setEventResults] = useState<EventSearchResult[]>([])
   const [marketResults, setMarketResults] = useState<MarketSearchResult[]>([])
   const [postResults, setPostResults] = useState<PostSearchResult[]>([])
+  const [savedAddresses, setSavedAddresses] = useState<SavedShippingAddress[]>([])
+  const [savedAddressesLoaded, setSavedAddressesLoaded] = useState(false)
   const [placeResults, setPlaceResults] = useState<CivilPlaceSearchResults>({ places: [], addresses: [] })
   const [addressSearchAnchor, setAddressSearchAnchor] = useState<SearchAnchor | null>(null)
   const [loading, setLoading] = useState(false)
@@ -156,7 +172,50 @@ export function SearchResults({ query, open, onResultSelect, onLoadingStateChang
   }, [open, trimmedQuery])
 
   useEffect(() => {
+    if (!open) return
+
+    const token = getStoredToken()
+    if (!token) {
+      setSavedAddresses([])
+      setSavedAddressesLoaded(true)
+      return
+    }
+
+    let cancelled = false
+    setSavedAddressesLoaded(false)
+
+    void (async () => {
+      try {
+        const response = await fetch(buildApiUrl('/market/account/shipping-addresses'), {
+          headers: { authorization: `Bearer ${token}` },
+          cache: 'no-store',
+        })
+        const { json } = await parseApiResponse<ShippingAddressListResponse>(response)
+        if (cancelled || !response.ok) {
+          if (!cancelled) setSavedAddresses([])
+          return
+        }
+
+        const items = Array.isArray(json?.items)
+          ? json.items.map((item) => normalizeSavedShippingAddress(item)).filter((item): item is SavedShippingAddress => Boolean(item))
+          : []
+        setSavedAddresses(items)
+      } catch {
+        if (!cancelled) setSavedAddresses([])
+      } finally {
+        if (!cancelled) setSavedAddressesLoaded(true)
+      }
+    })()
+
+    return () => {
+      cancelled = true
+    }
+  }, [open])
+
+  useEffect(() => {
+    const token = getStoredToken()
     if (!open || !isUsableAddressQuery(trimmedQuery) || addressAnchorAttemptedRef.current) return
+    if (token && !savedAddressesLoaded) return
 
     addressAnchorAttemptedRef.current = true
     let cancelled = false
@@ -191,28 +250,13 @@ export function SearchResults({ query, open, onResultSelect, onLoadingStateChang
         return
       }
 
-      const token = getStoredToken()
-      if (!token) return
-
-      try {
-        const response = await fetch(buildApiUrl('/market/account/shipping-addresses'), {
-          headers: { authorization: `Bearer ${token}` },
-          cache: 'no-store',
+      const fallbackAddress = savedAddresses.find((entry) => entry.isDefault) ?? savedAddresses[0] ?? null
+      const normalizedFallback = fallbackAddress ? normalizeCanadianAddress(fallbackAddress) : null
+      if (hasCoordinates(normalizedFallback) && !cancelled) {
+        setAddressSearchAnchor({
+          latitude: normalizedFallback.latitude,
+          longitude: normalizedFallback.longitude,
         })
-        const { json } = await parseApiResponse<{ items?: SavedShippingAddress[] }>(response)
-        if (!response.ok || cancelled) return
-
-        const items = Array.isArray(json?.items) ? json.items : []
-        const fallbackAddress = items.find((entry) => entry.isDefault) ?? items[0] ?? null
-        const normalizedFallback = fallbackAddress ? normalizeCanadianAddress(fallbackAddress) : null
-        if (hasCoordinates(normalizedFallback) && !cancelled) {
-          setAddressSearchAnchor({
-            latitude: normalizedFallback.latitude,
-            longitude: normalizedFallback.longitude,
-          })
-        }
-      } catch {
-        // leave anchor unset if fallback lookup fails
       }
     }
 
@@ -221,7 +265,7 @@ export function SearchResults({ query, open, onResultSelect, onLoadingStateChang
     return () => {
       cancelled = true
     }
-  }, [open, trimmedQuery])
+  }, [open, savedAddresses, savedAddressesLoaded, trimmedQuery])
 
   useEffect(() => {
     if (!open || !isUsableAddressQuery(debouncedPlaceQuery)) {
@@ -381,6 +425,15 @@ export function SearchResults({ query, open, onResultSelect, onLoadingStateChang
       .slice(0, 4)
   }, [addressSearchAnchor, placeResults.addresses]) satisfies VisibleMapSearchResult[]
 
+  const visibleSavedAddressResults = useMemo(
+    () =>
+      searchSavedShippingAddresses(savedAddresses, trimmedQuery, {
+        anchor: hasCoordinates(addressSearchAnchor) ? addressSearchAnchor : null,
+        limit: 4,
+      }),
+    [addressSearchAnchor, savedAddresses, trimmedQuery],
+  ) satisfies SavedAddressSearchResult[]
+
   const anyLoading = loading || placeLoading
   const loadingSteps = useMemo(() => {
     const steps = isUsableAddressQuery(trimmedQuery)
@@ -397,11 +450,13 @@ export function SearchResults({ query, open, onResultSelect, onLoadingStateChang
     eventResults.length > 0 ||
     marketResults.length > 0 ||
     postResults.length > 0 ||
+    visibleSavedAddressResults.length > 0 ||
     visiblePlaceResults.length > 0 ||
     visibleAddressResults.length > 0
 
   const sectionHref = useMemo(
     () => ({
+      savedAddresses: '/settings/addresses',
       people: `/search?q=${encodeURIComponent(trimmedQuery)}&type=people`,
       communities: `/search?q=${encodeURIComponent(trimmedQuery)}&type=communities`,
       organizations: `/search?q=${encodeURIComponent(trimmedQuery)}&type=organizations`,
@@ -471,6 +526,67 @@ export function SearchResults({ query, open, onResultSelect, onLoadingStateChang
         <div className="rounded-2xl border border-slate-100 bg-slate-50 px-4 py-3 text-sm text-slate-500">No Civil or map matches yet.</div>
       ) : (
         <div className="space-y-4">
+          {visibleSavedAddressResults.length > 0 ? (
+            <CompactSection title="My Addresses" href={sectionHref.savedAddresses} onResultSelect={onResultSelect}>
+              <ul className="divide-y divide-slate-100">
+                {visibleSavedAddressResults.map(({ address, distanceKm, isHome }) => {
+                  const title = formatSavedShippingAddressTitle(address)
+                  const detail = formatSavedShippingAddressDetail(address, { includeName: false })
+                  const geocodeQuery = buildAddressSearchQueries(address)[0] ?? detail ?? title
+                  return (
+                    <li key={address.id}>
+                      <Link
+                        href={buildAddressesHref({
+                          query: geocodeQuery,
+                          label: title,
+                          address: detail || null,
+                          latitude: typeof address.latitude === 'number' ? address.latitude : null,
+                          longitude: typeof address.longitude === 'number' ? address.longitude : null,
+                        })}
+                        onClick={onResultSelect}
+                        className="flex items-start gap-3 rounded-2xl px-3 py-2.5 text-sm text-slate-600 transition hover:bg-slate-50"
+                      >
+                        <div className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-full ${isHome ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-slate-500'}`}>
+                          <HiOutlineMapPin className="h-5 w-5" />
+                        </div>
+                        <div className="min-w-0 flex-1">
+                          <p className="break-words text-sm font-semibold leading-5 text-slate-900">{title}</p>
+                          <div className="mt-1 flex flex-wrap items-center gap-1.5">
+                            {isHome ? (
+                              <span className="inline-flex shrink-0 items-center rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.18em] text-emerald-700">
+                                Home
+                              </span>
+                            ) : address.isDefault ? (
+                              <span className="inline-flex shrink-0 items-center rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-600">
+                                Default
+                              </span>
+                            ) : (
+                              <span className="inline-flex shrink-0 items-center rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-600">
+                                Saved Address
+                              </span>
+                            )}
+                            {distanceKm !== null ? (
+                              <span className="inline-flex shrink-0 items-center rounded-full bg-sky-50 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.18em] text-sky-700">
+                                {formatDistanceBadge(distanceKm)}
+                              </span>
+                            ) : null}
+                            {isCanadianAddressPostalVerified(address) ? (
+                              <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.18em] text-emerald-700">
+                                <HiOutlineCheckBadge className="h-3.5 w-3.5" />
+                                Verified Address
+                              </span>
+                            ) : null}
+                          </div>
+                          <p className="mt-1 break-words text-xs leading-5 text-slate-500">{detail || 'Saved in Settings > Addresses'}</p>
+                        </div>
+                      </Link>
+                    </li>
+                  )
+                })}
+              </ul>
+            </CompactSection>
+          ) : null}
+
           {visiblePlaceResults.length > 0 ? (
             <CompactSection title="Places" href={sectionHref.addresses} onResultSelect={onResultSelect}>
               <ul className="divide-y divide-slate-100">

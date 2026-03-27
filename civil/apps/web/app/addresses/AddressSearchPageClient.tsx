@@ -32,6 +32,12 @@ import {
   type SavedShippingAddress,
 } from '../_lib/canadianAddresses'
 import { getCurrentLocation } from '../_lib/locationService'
+import {
+  formatSavedShippingAddressDetail as formatSavedAddressSearchDetail,
+  formatSavedShippingAddressTitle as formatSavedAddressSearchTitle,
+  isHomeSavedShippingAddress,
+  searchSavedShippingAddresses,
+} from '../_lib/savedAddressSearch'
 import { getStoredToken } from '../_lib/tokenStorage'
 
 type ShippingAddressListResponse = {
@@ -167,8 +173,7 @@ function normalizeFavoriteId(label: string, latitude: number | null, longitude: 
 }
 
 function isHomeAddress(address: SavedShippingAddress) {
-  const label = `${address.label ?? ''} ${address.name ?? ''}`.trim().toLowerCase()
-  return address.isDefault || label.includes('home')
+  return isHomeSavedShippingAddress(address)
 }
 
 function formatSavedAddressTitle(address: SavedShippingAddress, fallback: string) {
@@ -196,6 +201,35 @@ function formatSavedAddressDetail(address: SavedShippingAddress, options?: { inc
 function formatHomeAddressTitle(address: SavedShippingAddress) {
   const nickname = address.name?.trim()
   return nickname ? `Home, ${nickname}` : 'Home'
+}
+
+function buildSavedAddressDestination(address: SavedShippingAddress): CivilPlaceSearchResult | null {
+  if (typeof address.latitude !== 'number' || !Number.isFinite(address.latitude) || typeof address.longitude !== 'number' || !Number.isFinite(address.longitude)) {
+    return null
+  }
+
+  const title = formatSavedAddressSearchTitle(address)
+  const detail = formatSavedAddressSearchDetail(address, { includeName: false }) || title
+
+  return {
+    placeId: null,
+    osmType: null,
+    osmId: null,
+    kind: 'address',
+    name: title,
+    category: null,
+    distanceKm: null,
+    displayName: detail,
+    latitude: address.latitude,
+    longitude: address.longitude,
+    className: 'saved_address',
+    typeName: 'saved_address',
+    importance: null,
+    address: {},
+    originalPostalCode: address.originalPostalCode ?? null,
+    postalCodeVerified: isCanadianAddressPostalVerified(address),
+    nominatimRaw: {},
+  } satisfies CivilPlaceSearchResult
 }
 
 function AddressPageRightRail({
@@ -465,6 +499,24 @@ export default function AddressSearchPageClient() {
     return () => controller.abort()
   }, [query])
 
+  const matchedSavedDestinationAddress = useMemo(() => {
+    const candidates = [initialLabel, initialQuery, initialAddress, query]
+      .map((value) => value.trim())
+      .filter((value, index, values) => value.length >= 2 && values.indexOf(value) === index)
+
+    for (const candidate of candidates) {
+      const match = searchSavedShippingAddresses(savedAddresses, candidate, { limit: 1 })[0]
+      if (match) return match.address
+    }
+
+    return null
+  }, [initialAddress, initialLabel, initialQuery, query, savedAddresses])
+
+  const matchedSavedDestination = useMemo(
+    () => (matchedSavedDestinationAddress ? buildSavedAddressDestination(matchedSavedDestinationAddress) : null),
+    [matchedSavedDestinationAddress],
+  )
+
   const selectedDestination = useMemo(() => {
     const matchedByCoordinates =
       initialLatitude !== null && initialLongitude !== null
@@ -484,6 +536,7 @@ export default function AddressSearchPageClient() {
           }) ?? null
         : null
 
+    if (matchedSavedDestination) return matchedSavedDestination
     if (matchedByCoordinates) return matchedByCoordinates
     if (matchedBySavedAddress) return matchedBySavedAddress
     if (results[0]) return results[0]
@@ -509,7 +562,7 @@ export default function AddressSearchPageClient() {
       } satisfies CivilPlaceSearchResult
     }
     return null
-  }, [initialAddress, initialLabel, initialLatitude, initialLongitude, initialQuery, results])
+  }, [initialAddress, initialLabel, initialLatitude, initialLongitude, initialQuery, matchedSavedDestination, results])
 
   const destinationLabel = selectedDestination ? formatPlaceSearchPrimaryLabel(selectedDestination) : initialLabel || initialQuery || 'Address'
   const destinationDetail = selectedDestination ? formatPlaceSearchSecondaryLabel(selectedDestination) : initialAddress || null
