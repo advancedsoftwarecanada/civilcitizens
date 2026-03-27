@@ -8,15 +8,19 @@ import DashboardShell from '../../_components/DashboardShell'
 import Modal from '../../_components/Modal'
 import { CanadianAddressEditor } from '../../_components/address/CanadianAddressEditor'
 import { pushToast } from '../../_components/useToasts'
-import { buildAddressSearchQueries, buildAddressesHref, buildAddressesHrefFromAddress } from '../../_lib/addressSearch'
-import { fetchAddressSearchResults, formatAddressPrimaryLabel, pickAddressLocalityRecord } from '../../_lib/addressSearch'
+import {
+  buildAddressSearchQueries,
+  buildAddressesHref,
+  buildAddressesHrefFromAddress,
+  buildCanadianAddressFromSearchResult,
+  resolveBestAddressSearchResult,
+} from '../../_lib/addressSearch'
 import { buildApiUrl, parseApiResponse } from '../../_lib/api'
 import {
   createEmptyCanadianAddress,
   getCanadianAddressSystemDisplayName,
   isCanadianAddressPostalVerified,
   normalizeCanadianAddress,
-  normalizeCanadianProvince,
   type CanadianAddress,
   type SavedShippingAddress,
   writeStoredMarketShippingAddress,
@@ -289,21 +293,10 @@ export default function MarketShippingAddressEditorPageClient({
     if ((!normalized.line1 || !normalized.city || !normalized.province) && candidateQueries.length) {
       try {
         for (const candidateQuery of candidateQueries) {
-          const geocoded = await fetchAddressSearchResults(candidateQuery, undefined, 1)
-          const resolved = geocoded[0]
+          const resolved = await resolveBestAddressSearchResult(candidateQuery, undefined, 1)
           if (!resolved) continue
 
-          normalized = {
-            ...normalized,
-            line1: normalized.line1 || formatAddressPrimaryLabel(resolved),
-            city: normalized.city || pickAddressLocalityRecord(resolved.address),
-            province: normalized.province || normalizeCanadianProvince(resolved.address.state || resolved.address.province || resolved.address.region || ''),
-            country: normalized.country || (resolved.address.country_code || resolved.address.country || 'CA').toUpperCase(),
-            latitude: normalized.latitude ?? resolved.latitude,
-            longitude: normalized.longitude ?? resolved.longitude,
-            nominatimDisplayName: normalized.nominatimDisplayName || resolved.displayName,
-            nominatimRaw: normalized.nominatimRaw ?? resolved.nominatimRaw,
-          }
+          normalized = buildCanadianAddressFromSearchResult(resolved, normalized)
           setValue(normalized)
           break
         }

@@ -19,11 +19,11 @@ import {
   fetchPlaceSearchResults,
   estimateTravelMinutes,
   fetchDrivingRoute,
-  fetchAddressSearchResults,
   formatPlaceSearchPrimaryLabel,
   formatPlaceSearchSecondaryLabel,
   isAddressPostalVerified,
   isUsableAddressQuery,
+  resolveBestAddressSearchResult,
   type CivilPlaceSearchResult,
 } from '../_lib/addressSearch'
 import {
@@ -662,14 +662,14 @@ export default function AddressSearchPageClient() {
       }
 
       for (const geocodeQuery of geocodeQueries) {
-        const geocoded = await fetchAddressSearchResults(geocodeQuery, undefined, 1)
-        if (!geocoded[0]) continue
+        const geocoded = await resolveBestAddressSearchResult(geocodeQuery, undefined, 1)
+        if (!geocoded) continue
 
         setResolvedOrigin({
           id: option.id,
           label: option.label,
-          latitude: geocoded[0].latitude,
-          longitude: geocoded[0].longitude,
+          latitude: geocoded.latitude,
+          longitude: geocoded.longitude,
           detail: option.detail,
         })
         return

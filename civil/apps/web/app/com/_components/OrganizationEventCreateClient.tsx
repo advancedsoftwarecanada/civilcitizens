@@ -13,11 +13,9 @@ import {
   formatCanadianPhysicalAddressInline,
   hasCanadianAddressValue,
   normalizeCanadianAddress,
-  normalizeCanadianPostalCode,
-  normalizeCanadianProvince,
   type CanadianAddress,
 } from '../../_lib/canadianAddresses'
-import { fetchAddressSearchResults, formatAddressPrimaryLabel, pickAddressLocalityRecord, type NominatimAddress } from '../../_lib/addressSearch'
+import { buildCanadianAddressFromSearchResult, resolveBestAddressSearchResult } from '../../_lib/addressSearch'
 import { DEFAULT_EVENT_CATEGORY, EVENT_CATEGORIES, type EventCategory } from '../_lib/eventCategories'
 
 type EventType = 'MEETING_ROOM' | 'LOCATION'
@@ -389,25 +387,6 @@ function hasLocationAddressCore(address: CanadianAddress | null | undefined) {
   return Boolean(normalized.line1 && normalized.city && normalized.province && normalized.postalCode)
 }
 
-function buildCanadianAddressFromSearchResult(result: NominatimAddress, current: CanadianAddress): CanadianAddress {
-  const nextPostal = normalizeCanadianPostalCode(result.address.postcode || result.originalPostalCode)
-  const originalPostal = normalizeCanadianPostalCode(result.originalPostalCode || result.address.postcode)
-  return {
-    ...current,
-    line1: formatAddressPrimaryLabel(result),
-    line2: current.line2 ?? '',
-    city: pickAddressLocalityRecord(result.address),
-    province: normalizeCanadianProvince(result.address.state || result.address.province || result.address.region || ''),
-    postalCode: nextPostal,
-    originalPostalCode: originalPostal,
-    country: (result.address.country_code || result.address.country || 'CA').toUpperCase(),
-    latitude: result.latitude,
-    longitude: result.longitude,
-    nominatimDisplayName: result.displayName,
-    nominatimRaw: result.nominatimRaw,
-  }
-}
-
 function serializeEventLocationAddress(address: CanadianAddress | null | undefined) {
   const normalized = normalizeCanadianAddress(address)
   return {
@@ -682,8 +661,7 @@ export default function OrganizationEventCreateClient({
     if (!query) return normalized
 
     try {
-      const results = await fetchAddressSearchResults(query, undefined, 5)
-      const resolved = results[0]
+      const resolved = await resolveBestAddressSearchResult(query, undefined, 5)
       if (!resolved) return normalized
       const next = buildCanadianAddressFromSearchResult(resolved, normalized)
       setLocationAddress(next)

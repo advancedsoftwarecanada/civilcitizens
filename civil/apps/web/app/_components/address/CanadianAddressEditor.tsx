@@ -2,7 +2,7 @@
 
 import type { ElectoralDistrictContextResponse } from '@civil/shared'
 import { useEffect, useRef, useState } from 'react'
-import { HiOutlineCheckBadge, HiOutlineMagnifyingGlass, HiOutlineMapPin } from 'react-icons/hi2'
+import { HiOutlineBuildingOffice2, HiOutlineCheckBadge, HiOutlineMagnifyingGlass, HiOutlineMapPin } from 'react-icons/hi2'
 import Modal from '../Modal'
 import { buildApiUrl, parseApiResponse } from '../../_lib/api'
 import {
@@ -13,18 +13,26 @@ import {
   isCanadianAddressPostalVerified,
   normalizeCanadianAddress,
   normalizeCanadianPostalCode,
-  normalizeCanadianProvince,
   type CanadianAddress,
+  type SavedShippingAddress,
+  normalizeSavedShippingAddress,
 } from '../../_lib/canadianAddresses'
 import {
-  fetchAddressSearchResults,
-  formatAddressPrimaryLabel,
-  formatAddressSecondaryLabel,
+  buildCanadianAddressFromSearchResult,
+  fetchPlaceSearchResults,
+  formatPlaceSearchCategoryLabel,
+  formatPlaceSearchPrimaryLabel,
+  formatPlaceSearchSecondaryLabel,
   isAddressPostalVerified,
   isUsableAddressQuery,
-  pickAddressLocalityRecord,
-  type NominatimAddress,
+  type CivilPlaceSearchResults,
 } from '../../_lib/addressSearch'
+import {
+  formatSavedShippingAddressDetail,
+  formatSavedShippingAddressTitle,
+  searchSavedShippingAddresses,
+  type SavedAddressSearchResult,
+} from '../../_lib/savedAddressSearch'
 import { CivilDistrictMap } from '../map/CivilDistrictMap'
 import CivilMapLoadingState from '../map/CivilMapLoadingState'
 import { pushToast } from '../useToasts'
@@ -45,8 +53,21 @@ type CanadianAddressEditorProps = {
   required?: boolean
 }
 
+type ShippingAddressListResponse = {
+  items?: SavedShippingAddress[]
+}
+
 function readToken() {
   return typeof window !== 'undefined' ? window.localStorage.getItem('token') : null
+}
+
+function normalizeText(value: unknown) {
+  return typeof value === 'string' ? value.trim() : ''
+}
+
+function readNominatimMetadata(address: CanadianAddress) {
+  if (!address.nominatimRaw || typeof address.nominatimRaw !== 'object' || Array.isArray(address.nominatimRaw)) return null
+  return address.nominatimRaw as Record<string, unknown>
 }
 
 function formatAddressSeedLine(address: CanadianAddress) {
@@ -60,37 +81,17 @@ function hasStructuredAddressCore(address: CanadianAddress) {
 }
 
 function formatSearchSeed(address: CanadianAddress) {
+  const nominatimMetadata = readNominatimMetadata(address)
+  const rawKind = normalizeText(nominatimMetadata?.kind)
+  const rawName = normalizeText(nominatimMetadata?.name)
+  const systemDisplayName = normalizeText(getCanadianAddressSystemDisplayName(address))
+  if (rawKind === 'place') {
+    return rawName || systemDisplayName.split(',')[0]?.trim() || systemDisplayName
+  }
   if (hasStructuredAddressCore(address)) {
     return formatAddressSeedLine(address) || formatCanadianPhysicalAddressInline(address) || address.line1 || ''
   }
-  return getCanadianAddressSystemDisplayName(address) || formatAddressSeedLine(address) || formatCanadianPhysicalAddressInline(address) || address.line1 || ''
-}
-
-function pickAddressLocality(address: Record<string, string>) {
-  return pickAddressLocalityRecord(address)
-}
-
-function pickAddressProvince(address: Record<string, string>) {
-  return normalizeCanadianProvince(address.state || address.province || address.region || '')
-}
-
-function buildAddressFromResult(result: NominatimAddress, current: CanadianAddress): CanadianAddress {
-  const nextPostal = normalizeCanadianPostalCode(result.address.postcode || result.originalPostalCode)
-  const originalPostal = normalizeCanadianPostalCode(result.originalPostalCode || result.address.postcode)
-  return {
-    ...current,
-    line1: formatAddressPrimaryLabel(result),
-    line2: current.line2 ?? '',
-    city: pickAddressLocality(result.address),
-    province: pickAddressProvince(result.address),
-    postalCode: nextPostal,
-    originalPostalCode: originalPostal,
-    country: (result.address.country_code || result.address.country || 'CA').toUpperCase(),
-    latitude: result.latitude,
-    longitude: result.longitude,
-    nominatimDisplayName: result.displayName,
-    nominatimRaw: result.nominatimRaw,
-  }
+  return systemDisplayName || formatAddressSeedLine(address) || formatCanadianPhysicalAddressInline(address) || address.line1 || ''
 }
 
 function clearResolvedAddressFields(address: CanadianAddress): CanadianAddress {
@@ -133,7 +134,9 @@ export function CanadianAddressEditor({
   const [previewError, setPreviewError] = useState<string | null>(null)
   const [previewLoading, setPreviewLoading] = useState(false)
   const [searchQuery, setSearchQuery] = useState(() => formatSearchSeed(normalizedValue))
-  const [searchResults, setSearchResults] = useState<NominatimAddress[]>([])
+  const [savedAddresses, setSavedAddresses] = useState<SavedShippingAddress[]>([])
+  const [savedAddressesLoaded, setSavedAddressesLoaded] = useState(false)
+  const [searchResults, setSearchResults] = useState<CivilPlaceSearchResults>({ places: [], addresses: [] })
   const [searchLoading, setSearchLoading] = useState(false)
   const [searchError, setSearchError] = useState<string | null>(null)
   const [searchFocused, setSearchFocused] = useState(false)
@@ -161,13 +164,52 @@ export function CanadianAddressEditor({
     onSearchQueryChange?.(searchQuery)
   }, [onSearchQueryChange, searchQuery])
 
+  useEffect(() => {
+    const token = readToken()
+    if (!token) {
+      setSavedAddresses([])
+      setSavedAddressesLoaded(true)
+      return
+    }
+
+    let cancelled = false
+    setSavedAddressesLoaded(false)
+
+    void (async () => {
+      try {
+        const response = await fetch(buildApiUrl('/market/account/shipping-addresses'), {
+          headers: { authorization: `Bearer ${token}` },
+          cache: 'no-store',
+        })
+        const { json } = await parseApiResponse<ShippingAddressListResponse>(response)
+        if (cancelled || !response.ok) {
+          if (!cancelled) setSavedAddresses([])
+          return
+        }
+
+        const items = Array.isArray(json?.items)
+          ? json.items.map((item) => normalizeSavedShippingAddress(item)).filter((item): item is SavedShippingAddress => Boolean(item))
+          : []
+        setSavedAddresses(items)
+      } catch {
+        if (!cancelled) setSavedAddresses([])
+      } finally {
+        if (!cancelled) setSavedAddressesLoaded(true)
+      }
+    })()
+
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
   useEffect(() => () => {
     if (blurTimeoutRef.current) window.clearTimeout(blurTimeoutRef.current)
   }, [])
 
   useEffect(() => {
     if (!searchFocused) {
-      setSearchResults([])
+      setSearchResults({ places: [], addresses: [] })
       setSearchLoading(false)
       setSearchError(null)
       return
@@ -175,7 +217,7 @@ export function CanadianAddressEditor({
 
     const trimmedQuery = searchQuery.trim()
     if (!isUsableAddressQuery(trimmedQuery)) {
-      setSearchResults([])
+      setSearchResults({ places: [], addresses: [] })
       setSearchLoading(false)
       setSearchError(null)
       return
@@ -185,7 +227,7 @@ export function CanadianAddressEditor({
     setSearchLoading(true)
     setSearchError(null)
 
-    void fetchAddressSearchResults(trimmedQuery, controller.signal, {
+    void fetchPlaceSearchResults(trimmedQuery, controller.signal, {
       limit: 5,
       latitude: searchLatitude,
       longitude: searchLongitude,
@@ -196,7 +238,7 @@ export function CanadianAddressEditor({
       })
       .catch((error) => {
         if ((error as Error).name === 'AbortError') return
-        setSearchError('Unable to search addresses right now.')
+        setSearchError('Unable to search places right now.')
       })
       .finally(() => {
         setSearchLoading(false)
@@ -344,6 +386,42 @@ export function CanadianAddressEditor({
   const hasCivilPostalVerification = isCanadianAddressPostalVerified(normalizedValue)
   const postalActionLabel = hasCivilPostalVerification ? 'Update Verification' : 'Verify Postal'
   const isStackedLayout = layout === 'stacked'
+  const searchAnchor =
+    typeof searchLatitude === 'number' &&
+    Number.isFinite(searchLatitude) &&
+    typeof searchLongitude === 'number' &&
+    Number.isFinite(searchLongitude)
+      ? { latitude: searchLatitude, longitude: searchLongitude }
+      : null
+  const savedSearchResults = searchSavedShippingAddresses(savedAddresses, searchQuery, {
+    anchor: searchAnchor,
+    limit: 4,
+  }) satisfies SavedAddressSearchResult[]
+  const hasSearchResults = savedSearchResults.length > 0 || searchResults.places.length > 0 || searchResults.addresses.length > 0
+
+  function handleSavedAddressSelect(address: SavedShippingAddress) {
+    const nextValue = normalizeCanadianAddress(address)
+    const nextSeed = formatSearchSeed(nextValue)
+    onChange(nextValue)
+    lastResolvedSearchSeedRef.current = nextSeed
+    setSearchQuery(nextSeed)
+    setSearchResults({ places: [], addresses: [] })
+    setSearchFocused(false)
+    setPostalVerifyModalOpen(false)
+    setPostalInput(nextValue.postalCode ?? '')
+  }
+
+  function handleSearchResultSelect(result: CivilPlaceSearchResults['places'][number] | CivilPlaceSearchResults['addresses'][number]) {
+    const nextValue = buildCanadianAddressFromSearchResult(result, displayValue)
+    const nextSeed = formatSearchSeed(nextValue)
+    onChange(nextValue)
+    lastResolvedSearchSeedRef.current = nextSeed
+    setSearchQuery(nextSeed)
+    setSearchResults({ places: [], addresses: [] })
+    setSearchFocused(false)
+    setPostalVerifyModalOpen(false)
+    setPostalInput(nextValue.postalCode ?? '')
+  }
 
   return (
     <div className="space-y-4">
@@ -389,7 +467,7 @@ export function CanadianAddressEditor({
       <div className="space-y-4">
         <div className="relative">
           <label className="grid gap-1 text-sm font-medium text-slate-700">
-            Search address{required ? ' *' : ''}
+            Search place or address{required ? ' *' : ''}
             <div className="relative">
               <HiOutlineMagnifyingGlass className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
               <input
@@ -404,56 +482,141 @@ export function CanadianAddressEditor({
                 }}
                 disabled={disabled}
                 className="w-full rounded-lg border border-slate-200 px-3 py-2 pl-10 text-sm focus:border-[var(--cc-primary)] focus:outline-none disabled:opacity-60"
-                placeholder="Search for an address"
+                placeholder="Search for a place or address"
               />
             </div>
           </label>
 
-          {searchFocused && (searchLoading || searchError || searchResults.length || canSearch) ? (
-            <div className="absolute left-0 right-0 top-[calc(100%+0.5rem)] z-20 rounded-2xl border border-slate-200 bg-white p-2 shadow-xl shadow-slate-900/10">
-              {searchLoading ? <p className="px-3 py-2 text-sm text-slate-500">Searching addresses…</p> : null}
+          {searchFocused && (searchLoading || searchError || hasSearchResults || canSearch) ? (
+            <div className="absolute left-0 right-0 top-[calc(100%+0.5rem)] z-20 max-h-[min(70vh,28rem)] overflow-y-auto rounded-2xl border border-slate-200 bg-white p-2 shadow-xl shadow-slate-900/10">
+              {searchLoading ? <p className="px-3 py-2 text-sm text-slate-500">Searching places and addresses…</p> : null}
               {!searchLoading && searchError ? <p className="px-3 py-2 text-sm text-rose-700">{searchError}</p> : null}
               {!searchLoading && !searchError && !canSearch ? <p className="px-3 py-2 text-sm text-slate-500">Enter at least three characters.</p> : null}
-              {!searchLoading && !searchError && canSearch && !searchResults.length ? <p className="px-3 py-2 text-sm text-slate-500">No address matches found yet.</p> : null}
-              {!searchLoading && !searchError && searchResults.length ? (
-                <div className="space-y-1">
-                  {searchResults.map((result) => (
-                    <button
-                      key={`${result.placeId ?? 'addr'}-${result.latitude}-${result.longitude}`}
-                      type="button"
-                      onMouseDown={(event) => event.preventDefault()}
-                      onClick={() => {
-                        const nextValue = buildAddressFromResult(result, displayValue)
-                        onChange(nextValue)
-                        const nextSeed = formatAddressSeedLine(nextValue) || formatAddressPrimaryLabel(result)
-                        lastResolvedSearchSeedRef.current = nextSeed
-                        setSearchQuery(nextSeed)
-                        setSearchResults([])
-                        setSearchFocused(false)
-                        setPostalVerifyModalOpen(false)
-                        setPostalInput(nextValue.postalCode ?? '')
-                      }}
-                      className="flex w-full items-start gap-3 rounded-xl px-3 py-2 text-left transition hover:bg-slate-50"
-                    >
-                      <span className="mt-0.5 inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-slate-100 text-slate-500">
-                        <HiOutlineMapPin className="h-4 w-4" />
-                      </span>
-                      <span className="min-w-0">
-                        <span className="flex items-center gap-2 text-sm font-semibold text-slate-900">
-                          <span className="truncate">{formatAddressPrimaryLabel(result)}</span>
-                          {isAddressPostalVerified(result) ? (
-                            <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.18em] text-emerald-700">
-                              <HiOutlineCheckBadge className="h-3.5 w-3.5" />
-                              Verified Address
+              {!searchLoading && !searchError && canSearch && !hasSearchResults ? <p className="px-3 py-2 text-sm text-slate-500">No place or address matches found yet.</p> : null}
+              {!searchLoading && !searchError && hasSearchResults ? (
+                <div className="space-y-3">
+                  {savedSearchResults.length ? (
+                    <section>
+                      <p className="px-3 pb-1 text-[11px] font-semibold uppercase tracking-[0.28em] text-slate-400">
+                        My Addresses
+                      </p>
+                      <div className="space-y-1">
+                        {savedSearchResults.map(({ address, distanceKm, isHome }) => (
+                          <button
+                            key={address.id}
+                            type="button"
+                            onMouseDown={(event) => event.preventDefault()}
+                            onClick={() => handleSavedAddressSelect(address)}
+                            className="flex w-full items-start gap-3 rounded-xl px-3 py-2 text-left transition hover:bg-slate-50"
+                          >
+                            <span className={`mt-0.5 inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full ${isHome ? 'bg-emerald-50 text-emerald-700' : 'bg-slate-100 text-slate-500'}`}>
+                              <HiOutlineMapPin className="h-4 w-4" />
                             </span>
-                          ) : null}
-                        </span>
-                        <span className="block text-xs text-slate-500">{formatAddressSecondaryLabel(result)}</span>
-                      </span>
-                    </button>
-                  ))}
+                            <span className="min-w-0">
+                              <span className="flex flex-wrap items-center gap-2 text-sm font-semibold text-slate-900">
+                                <span className="truncate">{formatSavedShippingAddressTitle(address)}</span>
+                                {isHome ? (
+                                  <span className="inline-flex shrink-0 items-center rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.18em] text-emerald-700">
+                                    Home
+                                  </span>
+                                ) : address.isDefault ? (
+                                  <span className="inline-flex shrink-0 items-center rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-600">
+                                    Default
+                                  </span>
+                                ) : null}
+                                {distanceKm !== null ? (
+                                  <span className="inline-flex shrink-0 items-center rounded-full bg-sky-50 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.18em] text-sky-700">
+                                    {distanceKm < 10 ? `${distanceKm.toFixed(1)} km` : `${Math.round(distanceKm)} km`}
+                                  </span>
+                                ) : null}
+                                {isCanadianAddressPostalVerified(address) ? (
+                                  <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.18em] text-emerald-700">
+                                    <HiOutlineCheckBadge className="h-3.5 w-3.5" />
+                                    Verified Address
+                                  </span>
+                                ) : null}
+                              </span>
+                              <span className="block text-xs text-slate-500">
+                                {formatSavedShippingAddressDetail(address, { includeName: false }) || 'Saved in Settings > Addresses'}
+                              </span>
+                            </span>
+                          </button>
+                        ))}
+                      </div>
+                    </section>
+                  ) : null}
+
+                  {searchResults.places.length ? (
+                    <section>
+                      <p className="px-3 pb-1 text-[11px] font-semibold uppercase tracking-[0.28em] text-slate-400">
+                        Places
+                      </p>
+                      <div className="space-y-1">
+                        {searchResults.places.map((result) => (
+                          <button
+                            key={`${result.placeId ?? 'place'}-${result.latitude}-${result.longitude}`}
+                            type="button"
+                            onMouseDown={(event) => event.preventDefault()}
+                            onClick={() => handleSearchResultSelect(result)}
+                            className="flex w-full items-start gap-3 rounded-xl px-3 py-2 text-left transition hover:bg-slate-50"
+                          >
+                            <span className="mt-0.5 inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-emerald-50 text-emerald-700">
+                              <HiOutlineBuildingOffice2 className="h-4 w-4" />
+                            </span>
+                            <span className="min-w-0">
+                              <span className="flex flex-wrap items-center gap-2 text-sm font-semibold text-slate-900">
+                                <span className="truncate">{formatPlaceSearchPrimaryLabel(result)}</span>
+                                {formatPlaceSearchCategoryLabel(result) ? (
+                                  <span className="inline-flex shrink-0 items-center rounded-full bg-slate-100 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.18em] text-slate-600">
+                                    {formatPlaceSearchCategoryLabel(result)}
+                                  </span>
+                                ) : null}
+                              </span>
+                              <span className="block text-xs text-slate-500">{formatPlaceSearchSecondaryLabel(result)}</span>
+                            </span>
+                          </button>
+                        ))}
+                      </div>
+                    </section>
+                  ) : null}
+
+                  {searchResults.addresses.length ? (
+                    <section>
+                      <p className="px-3 pb-1 text-[11px] font-semibold uppercase tracking-[0.28em] text-slate-400">
+                        Addresses
+                      </p>
+                      <div className="space-y-1">
+                        {searchResults.addresses.map((result) => (
+                          <button
+                            key={`${result.placeId ?? 'addr'}-${result.latitude}-${result.longitude}`}
+                            type="button"
+                            onMouseDown={(event) => event.preventDefault()}
+                            onClick={() => handleSearchResultSelect(result)}
+                            className="flex w-full items-start gap-3 rounded-xl px-3 py-2 text-left transition hover:bg-slate-50"
+                          >
+                            <span className="mt-0.5 inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-slate-100 text-slate-500">
+                              <HiOutlineMapPin className="h-4 w-4" />
+                            </span>
+                            <span className="min-w-0">
+                              <span className="flex flex-wrap items-center gap-2 text-sm font-semibold text-slate-900">
+                                <span className="truncate">{formatPlaceSearchPrimaryLabel(result)}</span>
+                                {isAddressPostalVerified(result) ? (
+                                  <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-emerald-50 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-[0.18em] text-emerald-700">
+                                    <HiOutlineCheckBadge className="h-3.5 w-3.5" />
+                                    Verified Address
+                                  </span>
+                                ) : null}
+                              </span>
+                              <span className="block text-xs text-slate-500">{formatPlaceSearchSecondaryLabel(result)}</span>
+                            </span>
+                          </button>
+                        ))}
+                      </div>
+                    </section>
+                  ) : null}
                 </div>
               ) : null}
+              {!savedAddressesLoaded && !searchLoading ? <p className="px-3 py-1 text-xs text-slate-400">Loading saved addresses…</p> : null}
             </div>
           ) : null}
         </div>

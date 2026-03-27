@@ -1,12 +1,15 @@
 'use client'
 
+import { calculateCivilFeeCents } from '@civil/shared'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { FaCarSide } from 'react-icons/fa'
 import {
   HiChevronDown,
   HiOutlineCalendarDays,
   HiOutlineClock,
+  HiOutlineInformationCircle,
   HiOutlineMapPin,
   HiOutlineMap,
 } from 'react-icons/hi2'
@@ -16,12 +19,10 @@ import { CanadianAddressEditor } from '../_components/address/CanadianAddressEdi
 import { AddressDirectionsMap } from '../_components/map/AddressDirectionsMap'
 import { pushToast } from '../_components/useToasts'
 import {
+  buildCanadianAddressFromSearchResult,
   calculateDistanceKm,
   fetchDrivingRoute,
   fetchReverseGeocodeResult,
-  formatAddressPrimaryLabel,
-  pickAddressLocalityRecord,
-  type NominatimAddress,
 } from '../_lib/addressSearch'
 import { buildApiUrl } from '../_lib/api'
 import { redirectToAuthModal } from '../_lib/authModal'
@@ -29,8 +30,6 @@ import {
   createEmptyCanadianAddress,
   formatCanadianPhysicalAddressInline,
   normalizeCanadianAddress,
-  normalizeCanadianPostalCode,
-  normalizeCanadianProvince,
   normalizeSavedShippingAddress,
   type CanadianAddress,
   type SavedShippingAddress,
@@ -60,7 +59,7 @@ type DriveRideRequestPageClientProps = {
 }
 
 type RideTiming = 'now' | 'later_today'
-type PickupSource = 'saved' | 'current' | 'manual'
+type PickupSource = 'saved' | 'current' | 'search'
 
 type RidePreview = {
   distanceKm: number
@@ -152,12 +151,32 @@ function matchesSavedAddress(current: CanadianAddress, candidate: SavedShippingA
 function estimateRidePricing(distanceKm: number) {
   const safeDistanceKm = Number.isFinite(distanceKm) && distanceKm > 0 ? distanceKm : 0
   const fuelChargeCents = Math.max(RIDE_MIN_FUEL_CHARGE_CENTS, Math.round(safeDistanceKm * RIDE_FUEL_RATE_CENTS_PER_KM))
+  const subtotalCents = fuelChargeCents + RIDE_DRIVER_FLAT_FEE_CENTS
+  const civilFeeCents = calculateCivilFeeCents(subtotalCents)
   return {
     routeDistanceKm: Number(safeDistanceKm.toFixed(1)),
     fuelChargeCents,
     driverFeeCents: RIDE_DRIVER_FLAT_FEE_CENTS,
-    totalCostCents: fuelChargeCents + RIDE_DRIVER_FLAT_FEE_CENTS,
+    civilFeeCents,
+    totalCostCents: subtotalCents + civilFeeCents,
   }
+}
+
+function formatRideTravelTime(minutes: number | null) {
+  if (minutes === null || !Number.isFinite(minutes)) return 'Waiting'
+
+  const roundedMinutes = Math.max(1, Math.round(minutes))
+  if (roundedMinutes < 60) {
+    return `${roundedMinutes} min`
+  }
+
+  const hours = Math.floor(roundedMinutes / 60)
+  const remainingMinutes = roundedMinutes % 60
+  if (remainingMinutes === 0) {
+    return `${hours} hr`
+  }
+
+  return `${hours} hr ${remainingMinutes} min`
 }
 
 function estimateDropoffAt(pickupDate: Date, preview: RidePreview | null) {
@@ -172,49 +191,24 @@ function sortSavedAddresses(items: SavedShippingAddress[]) {
   )
 }
 
-function buildAddressFromSearchResult(result: NominatimAddress, current?: CanadianAddress | null): CanadianAddress {
-  const existing = normalizeCanadianAddress(current ?? createEmptyCanadianAddress())
-  const nextPostal = normalizeCanadianPostalCode(result.address.postcode || result.originalPostalCode)
-  const originalPostal = normalizeCanadianPostalCode(result.originalPostalCode || result.address.postcode)
-
-  return {
-    ...existing,
-    line1: formatAddressPrimaryLabel(result),
-    line2: existing.line2 ?? '',
-    city: pickAddressLocalityRecord(result.address),
-    province: normalizeCanadianProvince(result.address.state || result.address.province || result.address.region || ''),
-    postalCode: nextPostal,
-    originalPostalCode: originalPostal,
-    country: (result.address.country_code || result.address.country || 'CA').toUpperCase(),
-    latitude: result.latitude,
-    longitude: result.longitude,
-    nominatimDisplayName: result.displayName,
-    nominatimRaw: result.nominatimRaw,
-  }
-}
-
 function SavedAddressesDropdown({
   items,
   selectedId,
-  manualActive,
   selectedTitle,
   selectedDetail,
   open,
   disabled,
   onToggle,
   onSelect,
-  onManual,
 }: {
   items: SavedShippingAddress[]
   selectedId: string | null
-  manualActive: boolean
   selectedTitle: string
   selectedDetail: string
   open: boolean
   disabled?: boolean
   onToggle: () => void
   onSelect: (address: SavedShippingAddress) => void
-  onManual: () => void
 }) {
   return (
     <div className="relative">
@@ -257,17 +251,6 @@ function SavedAddressesDropdown({
                 </button>
               )
             })}
-
-            <button
-              type="button"
-              onClick={onManual}
-              className={`mt-1 flex w-full items-start rounded-[1rem] px-3 py-3 text-left transition ${manualActive ? 'bg-slate-100 text-slate-900' : 'hover:bg-slate-50 text-slate-700'}`}
-            >
-              <div>
-                <p className="text-sm font-semibold">Enter new address</p>
-                <p className="mt-1 text-xs text-slate-500">Search for another pickup location</p>
-              </div>
-            </button>
           </div>
         </div>
       ) : null}
@@ -286,7 +269,7 @@ export default function DriveRideRequestPageClient({ mode = 'create', rideId }: 
   const [savedAddresses, setSavedAddresses] = useState<SavedShippingAddress[]>([])
   const [pickupAddress, setPickupAddress] = useState<CanadianAddress>(() => createEmptyCanadianAddress())
   const [destinationAddress, setDestinationAddress] = useState<CanadianAddress>(() => createEmptyCanadianAddress())
-  const [pickupSource, setPickupSource] = useState<PickupSource>('manual')
+  const [pickupSource, setPickupSource] = useState<PickupSource>('search')
   const [selectedPickupAddressId, setSelectedPickupAddressId] = useState<string | null>(null)
   const [pickupMenuOpen, setPickupMenuOpen] = useState(false)
   const [locatingPickup, setLocatingPickup] = useState(false)
@@ -425,7 +408,7 @@ export default function DriveRideRequestPageClient({ mode = 'create', rideId }: 
         setExistingRide(nextRide)
         setPickupAddress(nextPickupAddress)
         setDestinationAddress(nextDestinationAddress)
-        setPickupSource('manual')
+        setPickupSource('search')
         setSelectedPickupAddressId(null)
         setPickupMenuOpen(false)
         setTiming(shouldUseLaterToday ? 'later_today' : 'now')
@@ -460,7 +443,7 @@ export default function DriveRideRequestPageClient({ mode = 'create', rideId }: 
       return
     }
 
-    setPickupSource('manual')
+    setPickupSource('search')
     setSelectedPickupAddressId(null)
     setPickupAddress(ridePickupAddress)
   }, [existingRide, isEditMode, savedAddresses, savedLoading])
@@ -526,7 +509,9 @@ export default function DriveRideRequestPageClient({ mode = 'create', rideId }: 
       return formatSavedAddressTitle(selectedPickupAddress, 'Saved address')
     }
     if (pickupSource === 'current') return 'Current location'
-    if (hasMappedAddress(normalizedPickupAddress)) return 'Custom pickup address'
+    if (hasMappedAddress(normalizedPickupAddress)) {
+      return normalizedPickupAddress.line1?.trim() || normalizedPickupAddress.nominatimDisplayName?.split(',')[0]?.trim() || 'Pickup address'
+    }
     return savedAddresses.length ? 'Select a saved address' : 'No saved addresses yet'
   }, [normalizedPickupAddress, pickupSource, savedAddresses.length, selectedPickupAddress])
 
@@ -538,14 +523,14 @@ export default function DriveRideRequestPageClient({ mode = 'create', rideId }: 
       return locatingPickup ? 'Finding your location…' : formatSavedAddressDetail(normalizedPickupAddress)
     }
     if (hasMappedAddress(normalizedPickupAddress)) return formatSavedAddressDetail(normalizedPickupAddress)
-    return savedAddresses.length ? 'Choose a saved address or enter a new one' : 'Save one in Settings > Addresses or enter a new one'
+    return savedAddresses.length ? 'Choose a saved address or search for pickup' : 'Save one in Settings > Addresses or search for pickup'
   }, [locatingPickup, normalizedPickupAddress, pickupSource, savedAddresses.length, selectedPickupAddress])
 
   const destinationAlreadySaved = useMemo(
     () => savedAddresses.some((address) => matchesSavedAddress(normalizedDestinationAddress, address)),
     [normalizedDestinationAddress, savedAddresses],
   )
-  const destinationSearchAnchor = useMemo(() => {
+  const pickupSearchAnchor = useMemo(() => {
     if (
       typeof normalizedPickupAddress.latitude === 'number' &&
       Number.isFinite(normalizedPickupAddress.latitude) &&
@@ -573,12 +558,13 @@ export default function DriveRideRequestPageClient({ mode = 'create', rideId }: 
         }
       : null
   }, [normalizedPickupAddress, savedAddresses])
+  const destinationSearchAnchor = pickupSearchAnchor
 
   const canSaveDestinationAddress = hasMappedAddress(normalizedDestinationAddress) && !destinationAlreadySaved && !savingDestinationAddress
   const rideCanBeEdited = !isEditMode || (existingRide ? canEditDriveRideStatus(existingRide.status) : false)
   const submitDisabled = submitting || (isEditMode && (rideLoading || !existingRide || !rideCanBeEdited))
   const pageTitle = isEditMode ? 'Edit Ride Request' : 'Request Ride'
-  const submitLabel = submitting ? (isEditMode ? 'Saving…' : 'Posting…') : isEditMode ? 'Save Changes' : 'Post Request'
+  const submitLabel = submitting ? (isEditMode ? 'Saving…' : 'Requesting…') : isEditMode ? 'Save Changes' : 'Request Ride!'
 
   const applySavedPickupAddress = useCallback((address: SavedShippingAddress) => {
     setPickupSource('saved')
@@ -587,11 +573,25 @@ export default function DriveRideRequestPageClient({ mode = 'create', rideId }: 
     setPickupMenuOpen(false)
   }, [])
 
-  const selectManualPickupAddress = useCallback(() => {
-    setPickupSource('manual')
-    setSelectedPickupAddressId(null)
-    setPickupMenuOpen(false)
-  }, [])
+  const handlePickupAddressChange = useCallback(
+    (nextAddress: CanadianAddress) => {
+      const normalized = normalizeCanadianAddress(nextAddress)
+      const matchingSavedAddress = savedAddresses.find((address) => matchesSavedAddress(normalized, address)) ?? null
+
+      setPickupAddress(normalized)
+      setPickupMenuOpen(false)
+
+      if (matchingSavedAddress) {
+        setPickupSource('saved')
+        setSelectedPickupAddressId(matchingSavedAddress.id)
+        return
+      }
+
+      setPickupSource('search')
+      setSelectedPickupAddressId(null)
+    },
+    [savedAddresses],
+  )
 
   const handleUseCurrentLocation = useCallback(async () => {
     setLocatingPickup(true)
@@ -613,7 +613,7 @@ export default function DriveRideRequestPageClient({ mode = 'create', rideId }: 
         return
       }
 
-      setPickupAddress(buildAddressFromSearchResult(resolved))
+      setPickupAddress(buildCanadianAddressFromSearchResult(resolved))
       setPickupSource('current')
       setSelectedPickupAddressId(null)
       setPickupMenuOpen(false)
@@ -777,7 +777,7 @@ export default function DriveRideRequestPageClient({ mode = 'create', rideId }: 
             onEnterDriverMode={enterDriverMode}
             onExitDriverMode={exitDriverMode}
           />
-          <DriveDriverEarningsRail enabled={isDriverActive} />
+          <DriveDriverEarningsRail enabled={isDriverMode} />
           <RightRail mode="drive" organizationLinkTarget="chat" showDriveCallout={false} />
         </div>
       }
@@ -789,15 +789,6 @@ export default function DriveRideRequestPageClient({ mode = 'create', rideId }: 
 
       <section className="flex flex-wrap items-center justify-between gap-3">
         <h1 className="text-2xl font-semibold text-slate-950">{pageTitle}</h1>
-
-        <button
-          type="button"
-          onClick={() => void handleSubmit()}
-          disabled={submitDisabled}
-          className="inline-flex rounded-full bg-[var(--cc-primary)] px-5 py-2.5 text-sm font-semibold text-white transition hover:brightness-95 disabled:cursor-not-allowed disabled:opacity-60"
-        >
-          {submitLabel}
-        </button>
       </section>
 
       {isEditMode && rideLoadError ? (
@@ -843,18 +834,26 @@ export default function DriveRideRequestPageClient({ mode = 'create', rideId }: 
               <SavedAddressesDropdown
                 items={savedAddresses}
                 selectedId={pickupSource === 'saved' ? selectedPickupAddressId : null}
-                manualActive={pickupSource === 'manual'}
                 selectedTitle={pickupSelectionTitle}
                 selectedDetail={pickupSelectionDetail}
                 open={pickupMenuOpen}
                 disabled={savedLoading || locatingPickup}
                 onToggle={() => setPickupMenuOpen((current) => !current)}
                 onSelect={applySavedPickupAddress}
-                onManual={selectManualPickupAddress}
               />
             </div>
 
-            {pickupSource === 'manual' ? <CanadianAddressEditor value={pickupAddress} onChange={setPickupAddress} mode="shipping" layout="stacked" required /> : null}
+            <CanadianAddressEditor
+              value={pickupAddress}
+              onChange={handlePickupAddressChange}
+              mode="organization"
+              layout="stacked"
+              display="search-only"
+              searchLatitude={pickupSearchAnchor?.latitude ?? null}
+              searchLongitude={pickupSearchAnchor?.longitude ?? null}
+              searchRadiusKm={500}
+              required
+            />
           </div>
           </article>
 
@@ -969,7 +968,7 @@ export default function DriveRideRequestPageClient({ mode = 'create', rideId }: 
                 <p className="text-xs font-semibold uppercase tracking-[0.18em] text-slate-400">Estimate</p>
                 <p className="mt-2 inline-flex items-center gap-2 text-lg font-semibold text-slate-950">
                   <HiOutlineClock className="h-4 w-4 text-slate-500" />
-                  {preview?.travelMinutes ? `${preview.travelMinutes} min` : 'Waiting'}
+                  {formatRideTravelTime(preview?.travelMinutes ?? null)}
                 </p>
               </div>
             </div>
@@ -996,8 +995,27 @@ export default function DriveRideRequestPageClient({ mode = 'create', rideId }: 
                   <span>Driver fee</span>
                   <span className="font-semibold">{formatDriveMoney(estimate.driverFeeCents)}</span>
                 </div>
+                <div className="flex items-center justify-between gap-3">
+                  <span>Civil Fee</span>
+                  <span className="font-semibold">{formatDriveMoney(estimate.civilFeeCents)}</span>
+                </div>
               </div>
             </div>
+
+            <p className="flex items-start gap-2 rounded-[1.25rem] border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
+              <HiOutlineInformationCircle className="mt-0.5 h-5 w-5 shrink-0 text-slate-500" />
+              <span>Estimate only. Drivers will make their offer for you to accept.</span>
+            </p>
+
+            <button
+              type="button"
+              onClick={() => void handleSubmit()}
+              disabled={submitDisabled}
+              className="inline-flex w-full items-center justify-center gap-2 rounded-full bg-[var(--cc-primary)] px-5 py-3.5 text-base font-semibold text-white transition hover:brightness-95 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              <FaCarSide className="h-5 w-5" />
+              {submitLabel}
+            </button>
           </div>
           </article>
         </section>

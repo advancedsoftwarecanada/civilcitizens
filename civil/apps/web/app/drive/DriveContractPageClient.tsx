@@ -258,6 +258,7 @@ export default function DriveContractPageClient({ rideId }: { rideId: string }) 
   const directionsMapRef = useRef<AddressDirectionsMapHandle | null>(null)
   const {
     isDriverActive,
+    isDriverMode,
     loading: viewerLoading,
     rideRequestCount,
     deliveryRequestCount,
@@ -936,7 +937,7 @@ export default function DriveContractPageClient({ rideId }: { rideId: string }) 
               deliveryRequestCount={deliveryRequestCount}
               onExitDriverMode={handleExitDriverMode}
             />
-            <DriveDriverEarningsRail enabled={isDriverActive} />
+            <DriveDriverEarningsRail enabled={isDriverMode} />
             <DriveNextContractsRail currentRideId={rideId} />
             <RightRail mode="drive" organizationLinkTarget="chat" showDriveCallout={false} />
           </div>
