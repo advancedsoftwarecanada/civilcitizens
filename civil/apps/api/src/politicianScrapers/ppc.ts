@@ -202,7 +202,7 @@ function buildDistrictMaps(rows: ElectoralDistrictRecord[]) {
   })
 
   const databaseCodes = new Set(rows.map((row) => row.code))
-  COMMUNITIES.forEach((community) => {
+  COMMUNITIES.forEach((community: (typeof COMMUNITIES)[number]) => {
     const keyByName = `${community.province}:${normalizeMatchText(community.name)}`
     const keyBySlug = `${community.province}:${community.slug}`
     if (byName.has(keyByName) || bySlug.has(keyBySlug)) return
@@ -254,7 +254,7 @@ export async function listPpcRidingAliases(): Promise<PpcRidingAlias[]> {
     },
   })
   const maps = buildDistrictMaps(
-    districts.map((district) => ({
+    districts.map((district: (typeof districts)[number]) => ({
       ...district,
       databaseBacked: true,
     })),
@@ -350,7 +350,7 @@ export async function scrapeAndSyncPpcCandidates(): Promise<PpcCandidateImportSu
     },
   })
   const districtMaps = buildDistrictMaps(
-    districts.map((district) => ({
+    districts.map((district: (typeof districts)[number]) => ({
       ...district,
       databaseBacked: true,
     })),

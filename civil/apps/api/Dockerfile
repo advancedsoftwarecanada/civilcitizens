@@ -19,6 +19,7 @@ RUN pnpm install --filter @civil/api... --prod=false --prefer-offline \
 
 FROM base AS runtime
 ENV NODE_ENV=production
+ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 WORKDIR /app/apps/api
 RUN apt-get update -y \
 	&& apt-get install -y --no-install-recommends libssl1.1 \
@@ -30,6 +31,8 @@ COPY --from=build /app/apps/api/node_modules ./node_modules
 COPY --from=build /app/packages ../../packages
 COPY --from=build /app/apps/api/package.json ./package.json
 COPY apps/web/public/datasets ../../apps/web/public/datasets
+RUN ./node_modules/.bin/playwright install --with-deps chromium \
+	&& rm -rf /var/lib/apt/lists/*
 EXPOSE 3000
 # Add a resilient entrypoint that tries dist/index.js then dist/src/index.js
 COPY apps/api/entrypoint.sh ./entrypoint.sh
