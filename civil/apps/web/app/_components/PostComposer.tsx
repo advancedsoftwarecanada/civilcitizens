@@ -30,6 +30,7 @@ const POST_TYPE_CHOICES: Array<{ type: PostType; label: string; icon: string }> 
   { type: 'poll', label: 'Poll', icon: '📊' },
   { type: 'cause', label: 'Cause', icon: '🎯' },
 ]
+const DEFAULT_ALLOWED_POST_TYPES: PostType[] = ['post', 'article', 'poll']
 
 export type ApiPost = {
   id: string
@@ -189,6 +190,7 @@ type PostComposerProps = {
   } | null
   className?: string
   defaultPostType?: PostType
+  allowedPostTypes?: PostType[]
   communityTarget?: CommunityTarget | null
   communityOptions?: CommunityTarget[]
   organizationOptions?: Array<{ id: string; name: string }>
@@ -294,6 +296,16 @@ const DEFAULT_CAUSE_GOAL_DOLLARS = '2500'
 
 function normalizeComposerPostType(postType: PostType): PostType {
   return postType === 'photo' ? 'post' : postType
+}
+
+function resolveAllowedPostTypes(input: PostType[] | undefined): PostType[] {
+  const normalized = Array.from(new Set((input ?? DEFAULT_ALLOWED_POST_TYPES).map((value) => normalizeComposerPostType(value))))
+  return normalized.length ? normalized : DEFAULT_ALLOWED_POST_TYPES
+}
+
+function resolveComposerPostType(defaultPostType: PostType, allowedPostTypes: PostType[]): PostType {
+  const normalizedDefault = normalizeComposerPostType(defaultPostType)
+  return allowedPostTypes.includes(normalizedDefault) ? normalizedDefault : allowedPostTypes[0] ?? 'post'
 }
 
 function readCauseGoalAmountCents(value: string) {
@@ -515,6 +527,7 @@ export default function PostComposer({
   me = null,
   className,
   defaultPostType = 'post',
+  allowedPostTypes,
   communityTarget = null,
   communityOptions = [],
   organizationOptions = [],
@@ -526,7 +539,11 @@ export default function PostComposer({
   hideAudience = false,
 }: PostComposerProps) {
   const containerRef = useRef<HTMLDivElement | null>(null)
-  const [postType, setPostType] = useState<PostType>(() => normalizeComposerPostType(defaultPostType))
+  const composerChoices = useMemo(() => {
+    const allowed = resolveAllowedPostTypes(allowedPostTypes)
+    return POST_TYPE_CHOICES.filter((choice) => allowed.includes(choice.type))
+  }, [allowedPostTypes])
+  const [postType, setPostType] = useState<PostType>(() => resolveComposerPostType(defaultPostType, composerChoices.map((choice) => choice.type)))
   const [draft, setDraft] = useState('')
   const draftTextareaRef = useRef<HTMLTextAreaElement | null>(null)
   const pollQuestionTextareaRef = useRef<HTMLTextAreaElement | null>(null)
@@ -558,6 +575,11 @@ export default function PostComposer({
       provinceName: option.provinceName ?? option.provinceCode?.toUpperCase(),
     }))
   }, [communityOptions])
+
+  useEffect(() => {
+    const nextPostType = resolveComposerPostType(defaultPostType, composerChoices.map((choice) => choice.type))
+    setPostType((current) => (current === nextPostType ? current : nextPostType))
+  }, [composerChoices, defaultPostType])
   const selectableCommunityOptions = useMemo(() => {
     if (!communityTarget) return normalizedCommunityOptions
     const targetKey = buildCommunityKey(communityTarget)
@@ -1070,7 +1092,7 @@ export default function PostComposer({
     setPollOptions(createInitialPollOptions())
     setPollResultsVisibility('after_vote')
     setCauseGoalInput(DEFAULT_CAUSE_GOAL_DOLLARS)
-    setPostType(normalizeComposerPostType(defaultPostType))
+    setPostType(resolveComposerPostType(defaultPostType, composerChoices.map((choice) => choice.type)))
     setAudienceSelection(deriveInitialAudienceSelection(communityTarget, defaultAudience, selectableCommunityOptions, businessTarget))
     setVisibility('public')
     setShowBusinessAuthor(false)
@@ -1084,7 +1106,7 @@ export default function PostComposer({
     setPollQuestionScrollTop(0)
     photos.forEach((p) => URL.revokeObjectURL(p.previewUrl))
     setPhotos([])
-  }, [businessTarget, communityTarget, defaultAudience, defaultPostType, photos, selectableCommunityOptions])
+  }, [businessTarget, communityTarget, composerChoices, defaultAudience, defaultPostType, photos, selectableCommunityOptions])
 
   const submitPost = useCallback(async () => {
     const token = typeof window !== 'undefined' ? localStorage.getItem('token') : null
@@ -1546,7 +1568,7 @@ export default function PostComposer({
                 : 'overflow-x-auto [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden',
             )}
           >
-            {POST_TYPE_CHOICES.map((choice) => {
+            {composerChoices.map((choice) => {
               const isActive = postType === choice.type
               return (
                 <button
