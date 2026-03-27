@@ -1,9 +1,10 @@
 import { prisma } from '@civil/db'
 import { PoliticalJurisdiction, PoliticalOfficeType, Prisma } from '@prisma/client'
-import { PROVINCES, slugifyCommunityName } from '@civil/shared'
+import { COMMUNITIES, PROVINCES, slugifyCommunityName } from '@civil/shared'
 import { chromium } from 'playwright'
 
 const PPC_CANDIDATES_URL = 'https://www.peoplespartyofcanada.ca/candidates'
+const PPC_FIRST_PAGE_URL = `${PPC_CANDIDATES_URL}?79dc58ab_page=1`
 const PPC_PARTY_SLUG = 'peoples-party-of-canada'
 const PPC_PARTY_NAME = "People's Party of Canada"
 const PPC_PARTY_SHORT_NAME = "People's Party"
@@ -41,11 +42,11 @@ const PPC_LISTING_EVAL = String.raw`(() => {
     })
     .filter((card) => card.candidateSlug && card.candidateUrl && card.displayName && card.ridingName && card.provinceName)
 
-  const nextHref = Array.from(document.querySelectorAll('a[href]'))
-    .map((anchor) => ({ href: anchor.href, text: normalize(anchor.textContent) }))
-    .find((anchor) => /^next page$/i.test(anchor.text))?.href || null
+  const paginationHrefs = Array.from(document.querySelectorAll('a[href]'))
+    .map((anchor) => anchor.href ? new URL(anchor.href, window.location.href).toString() : '')
+    .filter((href) => /[?&]79dc58ab_page=\d+\b/i.test(href))
 
-  return { cards, nextHref }
+  return { cards, paginationHrefs }
 })()`
 
 type PpcCandidateCard = {
@@ -63,6 +64,7 @@ type ElectoralDistrictRecord = {
   name: string
   slug: string
   provinceCode: string
+  databaseBacked: boolean
 }
 
 type ScrapeSummaryItem = {
@@ -82,6 +84,51 @@ export type PpcCandidateImportSummary = {
   unmatchedCards: number
   unmatchedSample: ScrapeSummaryItem[]
 }
+
+type PpcRidingAliasDefinition = {
+  provinceCode: string
+  sourceRidingName: string
+  targetRidingName: string
+  note?: string
+}
+
+export type PpcRidingAlias = {
+  provinceCode: string
+  provinceName: string
+  sourceRidingName: string
+  targetRidingName: string
+  targetCommunitySlug: string
+  targetElectoralDistrictCode: number | null
+  databaseBacked: boolean
+  note: string | null
+}
+
+const PPC_RIDING_ALIAS_DEFINITIONS: PpcRidingAliasDefinition[] = [
+  {
+    provinceCode: 'qc',
+    sourceRidingName: 'Gaspésie—Les Îles-de-la-Madeleine—Listuguj',
+    targetRidingName: 'Gaspésie—Les Îles-de-la-Madeleine—Listuguj',
+    note: 'Shared chamber exists, but the electoral district row is missing from the database.',
+  },
+  {
+    provinceCode: 'qc',
+    sourceRidingName: 'Rivière-des-Mille-Îles',
+    targetRidingName: 'Rivière-des-Mille-Îles',
+    note: 'Shared chamber exists, but the electoral district row is missing from the database.',
+  },
+  {
+    provinceCode: 'qc',
+    sourceRidingName: 'LaSalle—Émard—Verdun',
+    targetRidingName: 'LaSalle—Émard—Verdun',
+    note: 'Shared chamber exists, but the electoral district row is missing from the database.',
+  },
+  {
+    provinceCode: 'qc',
+    sourceRidingName: 'Mégantic—L’Érable—Lotbinière',
+    targetRidingName: "Mégantic—L'Érable—Lotbinière",
+    note: 'Normalizes the PPC apostrophe variant and falls back to the shared chamber until the district row exists in the database.',
+  },
+]
 
 function jsonObject(value: Prisma.JsonValue | null | undefined) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return {}
@@ -145,37 +192,119 @@ function splitName(displayName: string) {
 function buildDistrictMaps(rows: ElectoralDistrictRecord[]) {
   const byName = new Map<string, ElectoralDistrictRecord>()
   const bySlug = new Map<string, ElectoralDistrictRecord>()
-
-  rows.forEach((row) => {
+  const insertRecord = (row: ElectoralDistrictRecord) => {
     byName.set(`${row.provinceCode}:${normalizeMatchText(row.name)}`, row)
     bySlug.set(`${row.provinceCode}:${row.slug}`, row)
+  }
+
+  rows.forEach((row) => {
+    insertRecord(row)
+  })
+
+  const databaseCodes = new Set(rows.map((row) => row.code))
+  COMMUNITIES.forEach((community) => {
+    const keyByName = `${community.province}:${normalizeMatchText(community.name)}`
+    const keyBySlug = `${community.province}:${community.slug}`
+    if (byName.has(keyByName) || bySlug.has(keyBySlug)) return
+
+    insertRecord({
+      code: community.code,
+      name: community.name,
+      slug: community.slug,
+      provinceCode: community.province,
+      databaseBacked: databaseCodes.has(community.code),
+    })
   })
 
   return { byName, bySlug }
+}
+
+function lookupPpcRidingAlias(provinceCode: string, ridingName: string) {
+  const normalizedProvinceCode = provinceCode.trim().toLowerCase()
+  const normalizedRidingName = normalizeMatchText(ridingName)
+  return PPC_RIDING_ALIAS_DEFINITIONS.find(
+    (alias) => alias.provinceCode === normalizedProvinceCode && normalizeMatchText(alias.sourceRidingName) === normalizedRidingName,
+  ) ?? null
+}
+
+function resolveDistrictRecord(
+  provinceCode: string,
+  ridingName: string,
+  maps: ReturnType<typeof buildDistrictMaps>,
+) {
+  const alias = lookupPpcRidingAlias(provinceCode, ridingName)
+  const resolvedRidingName = alias?.targetRidingName ?? ridingName
+  const district = maps.byName.get(`${provinceCode}:${normalizeMatchText(resolvedRidingName)}`)
+    ?? maps.bySlug.get(`${provinceCode}:${slugifyCommunityName(resolvedRidingName)}`)
+
+  return {
+    alias,
+    district,
+    resolvedRidingName,
+  }
+}
+
+export async function listPpcRidingAliases(): Promise<PpcRidingAlias[]> {
+  const districts = await prisma.electoralDistrict.findMany({
+    select: {
+      code: true,
+      name: true,
+      slug: true,
+      provinceCode: true,
+    },
+  })
+  const maps = buildDistrictMaps(
+    districts.map((district) => ({
+      ...district,
+      databaseBacked: true,
+    })),
+  )
+
+  return PPC_RIDING_ALIAS_DEFINITIONS.map((alias) => {
+    const resolved = resolveDistrictRecord(alias.provinceCode, alias.sourceRidingName, maps)
+    const provinceName = PROVINCES.find((entry: (typeof PROVINCES)[number]) => entry.code === alias.provinceCode)?.name ?? alias.provinceCode.toUpperCase()
+
+    return {
+      provinceCode: alias.provinceCode,
+      provinceName,
+      sourceRidingName: alias.sourceRidingName,
+      targetRidingName: alias.targetRidingName,
+      targetCommunitySlug: resolved.district?.slug ?? slugifyCommunityName(alias.targetRidingName),
+      targetElectoralDistrictCode: resolved.district?.code ?? null,
+      databaseBacked: resolved.district?.databaseBacked ?? false,
+      note: alias.note ?? null,
+    }
+  })
 }
 
 async function scrapePpcCandidateCards() {
   const browser = await chromium.launch({ headless: true })
   const page = await browser.newPage()
   const visitedPages = new Set<string>()
+  const pendingPages = [PPC_FIRST_PAGE_URL]
   const cardsByUrl = new Map<string, PpcCandidateCard>()
 
   try {
-    let nextUrl: string | null = PPC_CANDIDATES_URL
+    while (pendingPages.length) {
+      const nextUrl = pendingPages.shift() ?? null
+      if (!nextUrl || visitedPages.has(nextUrl)) continue
 
-    while (nextUrl && !visitedPages.has(nextUrl)) {
       visitedPages.add(nextUrl)
       await page.goto(nextUrl, { waitUntil: 'domcontentloaded', timeout: PPC_TIMEOUT_MS })
       await page.waitForSelector('a[href*="/candidate/"] h3', { timeout: PPC_TIMEOUT_MS })
 
-      const payload = await page.evaluate(PPC_LISTING_EVAL) as { cards: PpcCandidateCard[]; nextHref: string | null }
+      const payload = await page.evaluate(PPC_LISTING_EVAL) as { cards: PpcCandidateCard[]; paginationHrefs: string[] }
 
       payload.cards.forEach((card) => {
         if (!cardsByUrl.has(card.candidateUrl)) {
           cardsByUrl.set(card.candidateUrl, card)
         }
       })
-      nextUrl = payload.nextHref
+
+      payload.paginationHrefs.forEach((href) => {
+        if (!href || visitedPages.has(href) || pendingPages.includes(href)) return
+        pendingPages.push(href)
+      })
     }
   } finally {
     await page.close().catch(() => null)
@@ -220,7 +349,12 @@ export async function scrapeAndSyncPpcCandidates(): Promise<PpcCandidateImportSu
       provinceCode: true,
     },
   })
-  const { byName, bySlug } = buildDistrictMaps(districts)
+  const districtMaps = buildDistrictMaps(
+    districts.map((district) => ({
+      ...district,
+      databaseBacked: true,
+    })),
+  )
 
   let matchedDistricts = 0
   let politiciansCreated = 0
@@ -241,8 +375,8 @@ export async function scrapeAndSyncPpcCandidates(): Promise<PpcCandidateImportSu
       continue
     }
 
-    const district = byName.get(`${provinceCode}:${normalizeMatchText(card.ridingName)}`)
-      ?? bySlug.get(`${provinceCode}:${slugifyCommunityName(card.ridingName)}`)
+    const resolvedDistrict = resolveDistrictRecord(provinceCode, card.ridingName, districtMaps)
+    const district = resolvedDistrict.district
 
     if (!district) {
       if (unmatchedSample.length < 25) {
@@ -268,6 +402,7 @@ export async function scrapeAndSyncPpcCandidates(): Promise<PpcCandidateImportSu
       },
       select: {
         id: true,
+        electoralDistrictCode: true,
         metadata: true,
       },
     })
@@ -284,6 +419,9 @@ export async function scrapeAndSyncPpcCandidates(): Promise<PpcCandidateImportSu
         sourceUrl: PPC_CANDIDATES_URL,
         candidateUrl: card.candidateUrl,
         ridingName: card.ridingName,
+        resolvedRidingName: resolvedDistrict.resolvedRidingName,
+        matchedByAlias: Boolean(resolvedDistrict.alias),
+        electoralDistrictDatabaseBacked: district.databaseBacked,
         provinceName: card.provinceName,
         photoUrl: card.photoUrl,
         backgroundImageUrl: card.backgroundImageUrl,
@@ -307,7 +445,7 @@ export async function scrapeAndSyncPpcCandidates(): Promise<PpcCandidateImportSu
         officeType: PoliticalOfficeType.MP,
         provinceCode: district.provinceCode,
         communitySlug: district.slug,
-        electoralDistrictCode: district.code,
+        electoralDistrictCode: district.databaseBacked ? district.code : existing?.electoralDistrictCode ?? null,
         partyId: party.id,
         sourceSystem: 'ppc',
         sourcePersonId: card.candidateSlug,
@@ -321,7 +459,7 @@ export async function scrapeAndSyncPpcCandidates(): Promise<PpcCandidateImportSu
         officeType: PoliticalOfficeType.MP,
         provinceCode: district.provinceCode,
         communitySlug: district.slug,
-        electoralDistrictCode: district.code,
+        electoralDistrictCode: district.databaseBacked ? district.code : existing?.electoralDistrictCode ?? null,
         partyId: party.id,
         metadata: metadata as Prisma.InputJsonValue,
       },

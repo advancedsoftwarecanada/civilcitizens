@@ -49,11 +49,23 @@ type CommonsCoverageStat = {
   status: 'up_to_date' | 'in_progress' | 'attention' | 'needs_refresh'
 }
 
+type PpcRidingAlias = {
+  provinceCode: string
+  provinceName: string
+  sourceRidingName: string
+  targetRidingName: string
+  targetCommunitySlug: string
+  targetElectoralDistrictCode: number | null
+  databaseBacked: boolean
+  note: string | null
+}
+
 type AdminEdaResponse = {
   generatedAt: string
   databaseReady: boolean
   sources: DatasetSource[]
   byElections: AdminByElectionEntry[]
+  ppcRidingAliases: PpcRidingAlias[]
   stats: {
     parties: DatasetStat
     associations: DatasetStat
@@ -233,6 +245,7 @@ export default function AdminEdaPage() {
   const [commonsSummary, setCommonsSummary] = useState<FederalMemberFetchSummary | null>(null)
   const [memberDetailSummary, setMemberDetailSummary] = useState<FederalMemberDetailFetchSummary | null>(null)
   const [ppcCandidateSummary, setPpcCandidateSummary] = useState<PpcCandidateFetchSummary | null>(null)
+  const [ppcRidingAliases, setPpcRidingAliases] = useState<PpcRidingAlias[]>([])
 
   const numberFormatter = useMemo(() => new Intl.NumberFormat('en-CA'), [])
   const byElectionStatusLabel = useCallback((value: ByElectionStatusValue) => {
@@ -306,6 +319,7 @@ export default function AdminEdaPage() {
       setDatabaseReady(payload.databaseReady !== false)
       setSources(payload.sources ?? [])
       setByElections(Array.isArray(payload.byElections) ? payload.byElections : [])
+      setPpcRidingAliases(Array.isArray(payload.ppcRidingAliases) ? payload.ppcRidingAliases : [])
       setStats(payload.stats ?? null)
       setSelectedSource((current) => current || payload.sources.find((source) => source.available)?.key || '')
       setStatus('ready')
@@ -1245,6 +1259,49 @@ export default function AdminEdaPage() {
                 </ul>
               </div>
             ) : null}
+          </section>
+        ) : null}
+
+        {ppcRidingAliases.length ? (
+          <section className="surface-card space-y-4 px-6 py-5 shadow-subtle">
+            <div>
+              <p className="text-xs font-semibold uppercase tracking-[0.3em] text-slate-400">PPC Aliases</p>
+              <h2 className="mt-2 text-lg font-semibold text-slate-900">Riding alias table</h2>
+              <p className="mt-1 text-sm text-slate-600">These overrides are applied during PPC imports and also show when the importer is falling back to shared chamber metadata because the district row is not present in the database yet.</p>
+            </div>
+
+            <div className="overflow-x-auto rounded-2xl border border-slate-200 bg-white">
+              <table className="min-w-full divide-y divide-slate-200 text-left text-sm text-slate-700">
+                <thead className="bg-slate-50 text-xs font-semibold uppercase tracking-[0.2em] text-slate-500">
+                  <tr>
+                    <th className="px-4 py-3">PPC riding</th>
+                    <th className="px-4 py-3">Civil riding</th>
+                    <th className="px-4 py-3">Province</th>
+                    <th className="px-4 py-3">Community slug</th>
+                    <th className="px-4 py-3">District code</th>
+                    <th className="px-4 py-3">Database row</th>
+                    <th className="px-4 py-3">Note</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {ppcRidingAliases.map((alias) => (
+                    <tr key={`${alias.provinceCode}-${alias.sourceRidingName}`}>
+                      <td className="px-4 py-3 font-medium text-slate-900">{alias.sourceRidingName}</td>
+                      <td className="px-4 py-3">{alias.targetRidingName}</td>
+                      <td className="px-4 py-3">{alias.provinceName}</td>
+                      <td className="px-4 py-3 font-mono text-xs text-slate-600">{alias.targetCommunitySlug}</td>
+                      <td className="px-4 py-3">{alias.targetElectoralDistrictCode ? numberFormatter.format(alias.targetElectoralDistrictCode) : 'Not set'}</td>
+                      <td className="px-4 py-3">
+                        <span className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-semibold ${alias.databaseBacked ? 'border-emerald-200 bg-emerald-50 text-emerald-700' : 'border-amber-200 bg-amber-50 text-amber-700'}`}>
+                          {alias.databaseBacked ? 'Present' : 'Shared fallback'}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3 text-slate-600">{alias.note ?? 'None'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           </section>
         ) : null}
       </>
