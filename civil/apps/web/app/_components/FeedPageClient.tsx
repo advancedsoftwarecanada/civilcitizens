@@ -347,6 +347,15 @@ export default function FeedPageClient(props: FeedPageClientProps) {
   const [activityJobs, setActivityJobs] = useState<CommunityJobFeedItem[]>([])
   const [activityItems, setActivityItems] = useState<SupplementalActivityItem[]>([])
   const [loading, setLoading] = useState(false)
+  const isPublicCommunityFeed = Boolean(province && community)
+
+  const resetViewerContext = useCallback(() => {
+    setMe(null)
+    setCommunityOptions([])
+    setOwnedOrganizations([])
+    setMemberOrganizations([])
+    setSelectedOrganizationId('')
+  }, [])
 
   const postableOrganizations = useMemo(() => {
     const ownedIds = new Set(ownedOrganizations.map((org) => org.id))
@@ -384,7 +393,7 @@ export default function FeedPageClient(props: FeedPageClientProps) {
   const loadPosts = useCallback(async (cursor?: string) => {
     const shouldShuffleSmartFeed = (scope === 'all' || scope === 'communities') && sortMode === 'hot' && !province && !community
     const token = typeof window !== 'undefined' ? localStorage.getItem('token') : null
-    if (!token) {
+    if (!token && !isPublicCommunityFeed) {
       redirectToAuthModal('login')
       return
     }
@@ -402,19 +411,30 @@ export default function FeedPageClient(props: FeedPageClientProps) {
       const query = new URLSearchParams(filterQuery)
       if (cursor) query.set('cursor', cursor)
 
-      const response = await fetch(buildApiUrl(`/posts?${query.toString()}`), {
-        headers: {
-          authorization: `Bearer ${token}`,
-        },
-        cache: 'no-store',
-      })
+      const requestFeed = async (authToken: string | null): Promise<Response> => {
+        const headers = authToken ? { authorization: `Bearer ${authToken}` } : undefined
+        const response = await fetch(buildApiUrl(`/posts?${query.toString()}`), {
+          headers,
+          cache: 'no-store',
+        })
+        if (response.status === 401 && isPublicCommunityFeed && authToken) {
+          clearAuthSession()
+          resetViewerContext()
+          return requestFeed(null)
+        }
+        return response
+      }
+
+      const response = await requestFeed(token)
       if (response.status === 401) {
         setPosts([])
         setNextCursor(undefined)
         setHasMore(false)
         setLastViewedAt(null)
-        clearAuthSession()
-        redirectToAuthModal('login')
+        if (!isPublicCommunityFeed) {
+          clearAuthSession()
+          redirectToAuthModal('login')
+        }
         return
       }
       if (!response.ok) {
@@ -453,7 +473,7 @@ export default function FeedPageClient(props: FeedPageClientProps) {
     } finally {
       setLoading(false)
     }
-  }, [filterQuery, scope, sortMode])
+  }, [filterQuery, isPublicCommunityFeed, province, community, resetViewerContext, scope, sortMode])
 
   const flushPostImpressions = useCallback(async () => {
     if (flushImpressionsTimerRef.current) {
@@ -677,6 +697,10 @@ export default function FeedPageClient(props: FeedPageClientProps) {
 
     const token = typeof window !== 'undefined' ? localStorage.getItem('token') : null
     if (!token) {
+      if (isPublicCommunityFeed) {
+        resetViewerContext()
+        return
+      }
       redirectToAuthModal('login')
       return
     }
@@ -685,11 +709,11 @@ export default function FeedPageClient(props: FeedPageClientProps) {
       if (cachedMe.accountType === 'family_member') {
         setMe(cachedMe)
       } else {
-        if (!hasHomeCommunity(cachedMe)) {
+        if (!isPublicCommunityFeed && !hasHomeCommunity(cachedMe)) {
           router.replace('/welcome')
           return
         }
-        if (scope === 'all' && !province && !community && !hasDeclaredCivilStatus(cachedMe)) {
+        if (!isPublicCommunityFeed && scope === 'all' && !province && !community && !hasDeclaredCivilStatus(cachedMe)) {
           router.replace('/verify')
           return
         }
@@ -701,6 +725,13 @@ export default function FeedPageClient(props: FeedPageClientProps) {
       try {
         const resolvedMe = cachedMe ?? (await ensureViewerMe({ token }))
         if (!resolvedMe) {
+          if (isPublicCommunityFeed) {
+            if (window.localStorage.getItem('token')) {
+              clearAuthSession()
+            }
+            resetViewerContext()
+            return
+          }
           if (!window.localStorage.getItem('token')) {
             redirectToAuthModal('login')
             return
@@ -712,12 +743,12 @@ export default function FeedPageClient(props: FeedPageClientProps) {
 
         const isFamilyLockedSession = resolvedMe.accountType === 'family_member' || Boolean(familyView)
 
-        if (!isFamilyLockedSession && !hasHomeCommunity(resolvedMe)) {
+        if (!isFamilyLockedSession && !hasHomeCommunity(resolvedMe) && !isPublicCommunityFeed) {
           router.replace('/welcome')
           return
         }
 
-        if (!isFamilyLockedSession && scope === 'all' && !province && !community && !hasDeclaredCivilStatus(resolvedMe)) {
+        if (!isFamilyLockedSession && !isPublicCommunityFeed && scope === 'all' && !province && !community && !hasDeclaredCivilStatus(resolvedMe)) {
           router.replace('/verify')
           return
         }
@@ -762,6 +793,10 @@ export default function FeedPageClient(props: FeedPageClientProps) {
             return
           }
           clearAuthSession()
+          if (isPublicCommunityFeed) {
+            resetViewerContext()
+            return
+          }
           redirectToAuthModal('login')
           return
         }
@@ -771,6 +806,10 @@ export default function FeedPageClient(props: FeedPageClientProps) {
             return
           }
           clearAuthSession()
+          if (isPublicCommunityFeed) {
+            resetViewerContext()
+            return
+          }
           redirectToAuthModal('login')
           return
         }
@@ -828,12 +867,16 @@ export default function FeedPageClient(props: FeedPageClientProps) {
           return
         }
         clearAuthSession()
+        if (isPublicCommunityFeed) {
+          resetViewerContext()
+          return
+        }
         redirectToAuthModal('login')
       }
     }
 
     void bootstrap()
-  }, [cachedMe, familyView, router, scope, province, community])
+  }, [cachedMe, community, familyView, isPublicCommunityFeed, province, resetViewerContext, router, scope])
 
   const handlePostCreated = useCallback(
     (post: ApiPost) => {
@@ -1087,6 +1130,12 @@ export default function FeedPageClient(props: FeedPageClientProps) {
   }, [scope, selectedOrganization?.name])
 
   const openComposer = (type: PostType = 'post') => {
+    const token = typeof window !== 'undefined' ? localStorage.getItem('token') : null
+    if (!token) {
+      redirectToAuthModal('login')
+      return
+    }
+
     setComposerDefaultType(type)
 
     if (scope === 'organizations') {

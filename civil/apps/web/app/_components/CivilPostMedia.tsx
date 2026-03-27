@@ -1,6 +1,8 @@
 'use client'
 
 import Link from 'next/link'
+import { useCallback, useEffect, useMemo, useState } from 'react'
+import { createPortal } from 'react-dom'
 
 type CivilPostMediaProps = {
   images?: string[] | null
@@ -9,8 +11,51 @@ type CivilPostMediaProps = {
 }
 
 export default function CivilPostMedia({ images, mediaUrl, postUrl }: CivilPostMediaProps) {
-  const allImages = images && images.length > 0 ? images : mediaUrl ? [mediaUrl] : []
+  const allImages = useMemo(() => (images && images.length > 0 ? images : mediaUrl ? [mediaUrl] : []), [images, mediaUrl])
+  const [activeImageIndex, setActiveImageIndex] = useState<number | null>(null)
+
   if (allImages.length === 0) return null
+
+  const activeImageSrc = typeof activeImageIndex === 'number' ? allImages[activeImageIndex] ?? null : null
+
+  const moveActiveImage = useCallback(
+    (direction: 'prev' | 'next') => {
+      if (allImages.length <= 1) return
+      setActiveImageIndex((current) => {
+        if (typeof current !== 'number') return current
+        if (direction === 'prev') {
+          return current === 0 ? allImages.length - 1 : current - 1
+        }
+        return current === allImages.length - 1 ? 0 : current + 1
+      })
+    },
+    [allImages.length],
+  )
+
+  useEffect(() => {
+    if (activeImageIndex === null) return
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        setActiveImageIndex(null)
+      } else if (event.key === 'ArrowLeft') {
+        event.preventDefault()
+        moveActiveImage('prev')
+      } else if (event.key === 'ArrowRight') {
+        event.preventDefault()
+        moveActiveImage('next')
+      }
+    }
+
+    const previousOverflow = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    window.addEventListener('keydown', handleKeyDown)
+
+    return () => {
+      document.body.style.overflow = previousOverflow
+      window.removeEventListener('keydown', handleKeyDown)
+    }
+  }, [activeImageIndex, moveActiveImage])
 
   if (allImages.length === 1) {
     const imageSrc = allImages[0]
@@ -49,7 +94,42 @@ export default function CivilPostMedia({ images, mediaUrl, postUrl }: CivilPostM
       )
     }
 
-    return <div className="group relative block overflow-hidden rounded-2xl border border-slate-200 bg-slate-950">{content}</div>
+    return (
+      <>
+        <button
+          type="button"
+          onClick={() => setActiveImageIndex(0)}
+          className="group relative block w-full overflow-hidden rounded-2xl border border-slate-200 bg-slate-950 text-left"
+          aria-label="Open image"
+        >
+          {content}
+        </button>
+        {activeImageSrc && typeof document !== 'undefined'
+          ? createPortal(
+              <div
+                className="fixed inset-0 z-[100] flex items-center justify-center bg-black/90 p-3 backdrop-blur-sm"
+                onClick={() => setActiveImageIndex(null)}
+              >
+                <button
+                  type="button"
+                  onClick={() => setActiveImageIndex(null)}
+                  className="absolute right-3 top-3 rounded-full bg-white/15 px-3 py-1.5 text-sm font-semibold text-white hover:bg-white/25"
+                >
+                  Close
+                </button>
+                <div className="max-h-full max-w-full" onClick={(event) => event.stopPropagation()}>
+                  <img
+                    src={activeImageSrc}
+                    alt="Post image full view"
+                    className="max-h-[90vh] max-w-[95vw] rounded-xl object-contain shadow-2xl"
+                  />
+                </div>
+              </div>,
+              document.body,
+            )
+          : null}
+      </>
+    )
   }
 
   const displayImages = allImages.slice(0, 5)
@@ -94,11 +174,68 @@ export default function CivilPostMedia({ images, mediaUrl, postUrl }: CivilPostM
         }
 
         return (
-          <div key={src} className={className}>
+          <button
+            key={`${src}-${index}`}
+            type="button"
+            onClick={() => setActiveImageIndex(index)}
+            className={`${className} cursor-zoom-in text-left`}
+            aria-label={`Open image ${index + 1}`}
+          >
             {image}
-          </div>
+          </button>
         )
       })}
+      {activeImageSrc && typeof document !== 'undefined'
+        ? createPortal(
+            <div
+              className="fixed inset-0 z-[100] flex items-center justify-center bg-black/90 p-3 backdrop-blur-sm"
+              onClick={() => setActiveImageIndex(null)}
+            >
+              <button
+                type="button"
+                onClick={() => setActiveImageIndex(null)}
+                className="absolute right-3 top-3 rounded-full bg-white/15 px-3 py-1.5 text-sm font-semibold text-white hover:bg-white/25"
+              >
+                Close
+              </button>
+              {allImages.length > 1 ? (
+                <>
+                  <button
+                    type="button"
+                    onClick={(event) => {
+                      event.stopPropagation()
+                      moveActiveImage('prev')
+                    }}
+                    className="absolute left-3 top-1/2 -translate-y-1/2 rounded-full bg-white/15 px-3 py-1.5 text-sm font-semibold text-white hover:bg-white/25"
+                  >
+                    ←
+                  </button>
+                  <button
+                    type="button"
+                    onClick={(event) => {
+                      event.stopPropagation()
+                      moveActiveImage('next')
+                    }}
+                    className="absolute right-3 top-1/2 -translate-y-1/2 rounded-full bg-white/15 px-3 py-1.5 text-sm font-semibold text-white hover:bg-white/25"
+                  >
+                    →
+                  </button>
+                </>
+              ) : null}
+              <div className="max-h-full max-w-full" onClick={(event) => event.stopPropagation()}>
+                <img
+                  src={activeImageSrc}
+                  alt={`Post image ${activeImageIndex !== null ? activeImageIndex + 1 : 1} full view`}
+                  className="max-h-[90vh] max-w-[95vw] rounded-xl object-contain shadow-2xl"
+                />
+              </div>
+              <div className="absolute bottom-3 rounded-full bg-white/15 px-3 py-1 text-xs font-semibold text-white">
+                {(activeImageIndex ?? 0) + 1} / {allImages.length}
+              </div>
+            </div>,
+            document.body,
+          )
+        : null}
     </div>
   )
 }
