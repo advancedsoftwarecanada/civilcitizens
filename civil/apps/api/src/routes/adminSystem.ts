@@ -44,6 +44,40 @@ const AdminWalletSubscriptionsQuery = z.object({
   limit: z.coerce.number().int().min(1).max(250).default(100),
 })
 
+type AdminWalletSubscriptionSummaryRow = {
+  active_count: number
+  paused_count: number
+  canceled_count: number
+  active_amount_cents: number
+  due_count: number
+}
+
+type AdminWalletSubscriptionItemRow = {
+  id: string
+  amount_cents: number
+  interval_unit: string
+  status: string
+  next_charge_at: Date | null
+  last_charge_at: Date | null
+  paused_at: Date | null
+  canceled_at: Date | null
+  created_at: Date
+  updated_at: Date
+  post_id: string
+  post_title: string | null
+  post_slug: string | null
+  province_code: string | null
+  community_slug: string | null
+  subscriber_id: string
+  subscriber_handle: string | null
+  subscriber_name: string | null
+  subscriber_email: string | null
+  recipient_id: string
+  recipient_handle: string | null
+  recipient_name: string | null
+  recipient_email: string | null
+}
+
 const DEFAULT_JOB_TAXONOMY: Array<{
   name: string
   slug: string
@@ -267,13 +301,7 @@ export function registerAdminSystemRoutes(app: FastifyInstance, deps: AdminSyste
 
     const statusFilter = query.data.status === 'all' ? Prisma.empty : Prisma.sql`AND sub.status = ${query.data.status}`
     const [summaryRows, itemRows] = await Promise.all([
-      prisma.$queryRaw<Array<{
-        active_count: number
-        paused_count: number
-        canceled_count: number
-        active_amount_cents: number
-        due_count: number
-      }>>`
+      prisma.$queryRaw`
         SELECT
           COUNT(*) FILTER (WHERE status = 'active')::int AS active_count,
           COUNT(*) FILTER (WHERE status = 'paused')::int AS paused_count,
@@ -281,32 +309,8 @@ export function registerAdminSystemRoutes(app: FastifyInstance, deps: AdminSyste
           COALESCE(SUM(amount_cents) FILTER (WHERE status = 'active'), 0)::int AS active_amount_cents,
           COUNT(*) FILTER (WHERE status = 'active' AND next_charge_at IS NOT NULL AND next_charge_at <= NOW())::int AS due_count
         FROM civil_cause_subscription
-      `,
-      prisma.$queryRaw<Array<{
-        id: string
-        amount_cents: number
-        interval_unit: string
-        status: string
-        next_charge_at: Date | null
-        last_charge_at: Date | null
-        paused_at: Date | null
-        canceled_at: Date | null
-        created_at: Date
-        updated_at: Date
-        post_id: string
-        post_title: string | null
-        post_slug: string | null
-        province_code: string | null
-        community_slug: string | null
-        subscriber_id: string
-        subscriber_handle: string | null
-        subscriber_name: string | null
-        subscriber_email: string | null
-        recipient_id: string
-        recipient_handle: string | null
-        recipient_name: string | null
-        recipient_email: string | null
-      }>>(
+      ` as Promise<AdminWalletSubscriptionSummaryRow[]>,
+      prisma.$queryRaw(
         Prisma.sql`
           SELECT
             sub.id,
@@ -344,7 +348,7 @@ export function registerAdminSystemRoutes(app: FastifyInstance, deps: AdminSyste
             sub.updated_at DESC
           LIMIT ${query.data.limit}
         `,
-      ),
+      ) as Promise<AdminWalletSubscriptionItemRow[]>,
     ])
 
     const summary = summaryRows[0] ?? {
@@ -363,7 +367,7 @@ export function registerAdminSystemRoutes(app: FastifyInstance, deps: AdminSyste
         activeAmountCents: Math.max(0, Number(summary.active_amount_cents) || 0),
         dueCount: Math.max(0, Number(summary.due_count) || 0),
       },
-      items: itemRows.map((row) => ({
+      items: itemRows.map((row: AdminWalletSubscriptionItemRow) => ({
         id: row.id,
         amountCents: Math.max(0, Number(row.amount_cents) || 0),
         intervalUnit: row.interval_unit === 'monthly' ? 'monthly' : row.interval_unit,

@@ -89,6 +89,8 @@ export type CauseDraft = {
   updatedAt: Date
 }
 
+type CauseSubscriptionId = string
+
 type CauseRow = {
   post_id: string
   goal_amount_cents: number
@@ -288,7 +290,7 @@ export async function backfillCauseRecordsFromDrafts(postIds: string[]) {
 
   const repairedPostIds: string[] = []
   await Promise.allSettled(
-    fallbackDraftRows.map(async (row) => {
+    fallbackDraftRows.map(async (row: CauseDraftRow) => {
       if (!row.published_post_id) return
       await createCauseRecord(prisma, {
         postId: row.published_post_id,
@@ -1277,7 +1279,7 @@ export async function createCauseSubscriptionWithInitialCharge(input: {
   const now = new Date()
   const nextChargeAt = addMonths(now, 1)
 
-  let subscriptionId = randomUUID()
+  let subscriptionId: CauseSubscriptionId = randomUUID()
   await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
     const existingRows = await tx.$queryRaw<Array<{ id: string }>>`
       SELECT id
