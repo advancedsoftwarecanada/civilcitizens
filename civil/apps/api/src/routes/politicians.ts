@@ -14,7 +14,7 @@ import {
 import { XMLParser } from 'fast-xml-parser'
 import { COMMUNITIES, PROVINCES, findCommunity, normalizeProvinceCode, slugifyCommunityName } from '@civil/shared'
 import { z } from 'zod'
-import { browseFederalPartyDistricts, resolveCommunityElectoralDistrictContext } from '../geospatial.js'
+import { browseCurrentFederalDistricts, browseFederalPartyDistricts, resolveCommunityElectoralDistrictContext } from '../geospatial.js'
 import {
   listPpcRidingAliases,
   scrapeAndSyncPpcCandidates,
@@ -2526,6 +2526,142 @@ export function registerPoliticianRoutes(app: FastifyInstance, deps: Politicians
           : null,
       })),
     })
+  })
+
+  app.get('/politicians/federal/current', async (req: FastifyRequest, reply: FastifyReply) => {
+    const query = FEDERAL_PARTY_DISTRICTS_QUERY.safeParse(req.query)
+    if (!query.success) return reply.code(400).send({ error: 'invalid_params' })
+
+    const rawProvinceCode = query.data.provinceCode?.trim().toLowerCase() || null
+    const provinceCode = !rawProvinceCode || rawProvinceCode === 'all' || rawProvinceCode === 'ca'
+      ? null
+      : normalizeProvinceCode(rawProvinceCode)
+    if (rawProvinceCode && rawProvinceCode !== 'all' && rawProvinceCode !== 'ca' && !provinceCode) {
+      return reply.code(400).send({ error: 'invalid_params' })
+    }
+
+    let seats: Awaited<ReturnType<typeof prisma.politicalSeat.findMany>> = []
+    try {
+      seats = await prisma.politicalSeat.findMany({
+        where: {
+          jurisdiction: PoliticalJurisdiction.FEDERAL,
+          officeType: PoliticalOfficeType.MP,
+          currentPoliticianId: { not: null },
+          ...(provinceCode ? { provinceCode } : {}),
+        },
+        orderBy: [
+          { provinceCode: 'asc' },
+          { electoralDistrict: { name: 'asc' } },
+          { communitySlug: 'asc' },
+        ],
+        include: {
+          currentParty: {
+            select: {
+              id: true,
+              slug: true,
+              name: true,
+              shortName: true,
+            },
+          },
+          currentPolitician: {
+            select: {
+              id: true,
+              slug: true,
+              displayName: true,
+              officeType: true,
+              provinceCode: true,
+              communitySlug: true,
+              metadata: true,
+              electoralDistrict: {
+                select: {
+                  name: true,
+                  slug: true,
+                  provinceCode: true,
+                },
+              },
+            },
+          },
+          electoralDistrict: {
+            select: {
+              name: true,
+              slug: true,
+              provinceCode: true,
+            },
+          },
+        },
+      })
+    } catch (error) {
+      if (isPoliticalStorageUnavailableError(error)) {
+        return reply.send({ members: [] })
+      }
+      throw error
+    }
+
+    return reply.send({
+      members: seats.map((seat: (typeof seats)[number]) => {
+        const politician = seat.currentPolitician
+        const ourCommons = readOurCommonsProfile(politician?.metadata ?? null)
+        const ppcCandidate = readPpcCandidateProfile(politician?.metadata ?? null)
+
+        return {
+          id: politician?.id ?? seat.id,
+          slug: politician?.slug ?? null,
+          displayName: politician?.displayName ?? seat.title,
+          officeType: politician?.officeType ?? seat.officeType,
+          provinceCode: politician?.provinceCode ?? seat.provinceCode,
+          communitySlug: politician?.communitySlug ?? seat.communitySlug,
+          lastScrapeAt: readLastScrapeAt(politician?.metadata ?? seat.metadata),
+          profileUrl: ourCommons.profileUrl,
+          xmlUrl: ourCommons.xmlUrl,
+          photoUrl: ourCommons.photoUrl ?? ppcCandidate.photoUrl,
+          candidateWebsite: ppcCandidate.candidateWebsite,
+          lastXmlSyncAt: ourCommons.lastXmlSyncAt,
+          lastHtmlSyncAt: ourCommons.lastHtmlSyncAt,
+          contact: {
+            email: ourCommons.contact.email,
+            website: ourCommons.contact.website,
+          },
+          party: seat.currentParty
+            ? {
+                id: seat.currentParty.id,
+                slug: seat.currentParty.slug,
+                name: seat.currentParty.name,
+                shortName: seat.currentParty.shortName,
+              }
+            : null,
+          district: politician?.electoralDistrict ?? seat.electoralDistrict
+            ? {
+                name: (politician?.electoralDistrict ?? seat.electoralDistrict)!.name,
+                slug: (politician?.electoralDistrict ?? seat.electoralDistrict)!.slug,
+                provinceCode: (politician?.electoralDistrict ?? seat.electoralDistrict)!.provinceCode,
+              }
+            : null,
+        }
+      }),
+    })
+  })
+
+  app.get('/politicians/federal/current/districts', async (req: FastifyRequest, reply: FastifyReply) => {
+    const query = FEDERAL_PARTY_DISTRICTS_QUERY.safeParse(req.query)
+    if (!query.success) return reply.code(400).send({ error: 'invalid_params' })
+
+    const rawProvinceCode = query.data.provinceCode?.trim().toLowerCase() || null
+    const provinceCode = !rawProvinceCode || rawProvinceCode === 'all' || rawProvinceCode === 'ca'
+      ? null
+      : normalizeProvinceCode(rawProvinceCode)
+    if (rawProvinceCode && rawProvinceCode !== 'all' && rawProvinceCode !== 'ca' && !provinceCode) {
+      return reply.code(400).send({ error: 'invalid_params' })
+    }
+
+    try {
+      const payload = await browseCurrentFederalDistricts({ provinceCode })
+      return reply.send(payload)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'current_federal_districts_failed'
+      if (message === 'postgis_not_enabled') return reply.code(503).send({ error: message })
+      req.log.error({ err: error }, 'current_federal_districts_failed')
+      return reply.code(500).send({ error: 'current_federal_districts_failed' })
+    }
   })
 
   app.get('/politicians/federal/:partySlug', async (req: FastifyRequest, reply: FastifyReply) => {

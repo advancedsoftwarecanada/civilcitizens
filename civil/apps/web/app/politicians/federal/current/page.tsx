@@ -1,39 +1,23 @@
 'use client'
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import Link from 'next/link'
 import type { ElectoralDistrictBrowserResponse } from '@civil/shared'
 import { PROVINCES } from '@civil/shared'
 import DashboardShell from '../../../_components/DashboardShell'
 import PoliticianContactCard from '../../../_components/PoliticianContactCard'
 import { CivilDistrictBrowserMap } from '../../../_components/map/CivilDistrictBrowserMap'
 import CivilMapLoadingState from '../../../_components/map/CivilMapLoadingState'
-import PartyChip from '../../../_components/politics/PartyChip'
 import { buildApiUrl } from '../../../_lib/api'
-import { resolvePartyVisual } from '../../../_lib/politics'
 import {
   FederalExplorerRightRail,
   type FederalExplorerPartyListItem,
   type FederalExplorerProvinceOption,
 } from '../_components/FederalExplorerRightRail'
 
-type PageProps = {
-  params: {
-    partySlug: string
-  }
-}
-
-type FederalPartyDetailResponse = {
-  party?: {
+type CurrentFederalMemberResponse = {
+  members?: Array<{
     id: string
-    slug: string
-    name: string
-    shortName: string | null
-    updatedAt: string
-  }
-  politicians?: Array<{
-    id: string
-    slug: string
+    slug: string | null
     displayName: string
     officeType: string | null
     provinceCode: string | null
@@ -49,20 +33,17 @@ type FederalPartyDetailResponse = {
       email: string | null
       website: string | null
     }
+    party: {
+      id: string
+      slug: string
+      name: string
+      shortName: string | null
+    } | null
     district: {
       name: string
       slug: string
       provinceCode: string
     } | null
-  }>
-  associations?: Array<{
-    id: string
-    associationName: string
-    registrationStatus: string | null
-    provinceCode: string
-    communitySlug: string
-    registeredAt: string | null
-    deregisteredAt: string | null
   }>
 }
 
@@ -72,16 +53,6 @@ type FederalPartyListResponse = {
 
 const ALL_CANADA_CODE = 'all'
 const provinceNameByCode = new Map<string, string>(PROVINCES.map((province) => [province.code, province.name]))
-
-function isAssociationActive(association: {
-  registrationStatus: string | null
-  deregisteredAt: string | null
-}) {
-  if (association.deregisteredAt) return false
-  const normalizedStatus = association.registrationStatus?.trim().toLowerCase() ?? ''
-  if (!normalizedStatus) return true
-  return !normalizedStatus.includes('deregister')
-}
 
 function canUseMapStyle(styleUrl: string | null | undefined) {
   if (!styleUrl) return false
@@ -101,8 +72,8 @@ function canUseMapStyle(styleUrl: string | null | undefined) {
   return true
 }
 
-export default function FederalPartyPage({ params }: PageProps) {
-  const [payload, setPayload] = useState<FederalPartyDetailResponse | null>(null)
+export default function CurrentFederalMembersPage() {
+  const [payload, setPayload] = useState<CurrentFederalMemberResponse | null>(null)
   const [status, setStatus] = useState<'loading' | 'ready' | 'error'>('loading')
   const [memberQuery, setMemberQuery] = useState('')
   const [selectedProvince, setSelectedProvince] = useState(ALL_CANADA_CODE)
@@ -111,18 +82,19 @@ export default function FederalPartyPage({ params }: PageProps) {
   const [selectedDistrictCode, setSelectedDistrictCode] = useState<number | null>(null)
   const [mapFocusRequestToken, setMapFocusRequestToken] = useState(0)
   const [pendingMapFocus, setPendingMapFocus] = useState<{ provinceCode: string; districtSlug: string } | null>(null)
-  const [otherParties, setOtherParties] = useState<FederalPartyListItem[]>([])
+  const [otherParties, setOtherParties] = useState<FederalExplorerPartyListItem[]>([])
   const [otherPartiesStatus, setOtherPartiesStatus] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle')
   const mapSectionRef = useRef<HTMLElement | null>(null)
 
   useEffect(() => {
     let cancelled = false
+
     const load = async () => {
       setStatus('loading')
       try {
-        const res = await fetch(buildApiUrl(`/politicians/federal/${encodeURIComponent(params.partySlug)}`), { cache: 'no-store' })
+        const res = await fetch(buildApiUrl('/politicians/federal/current'), { cache: 'no-store' })
         if (!res.ok) throw new Error('request_failed')
-        const data = (await res.json().catch(() => null)) as FederalPartyDetailResponse | null
+        const data = (await res.json().catch(() => null)) as CurrentFederalMemberResponse | null
         if (!cancelled) {
           setPayload(data)
           setStatus('ready')
@@ -139,7 +111,7 @@ export default function FederalPartyPage({ params }: PageProps) {
     return () => {
       cancelled = true
     }
-  }, [params.partySlug])
+  }, [])
 
   useEffect(() => {
     let cancelled = false
@@ -176,30 +148,18 @@ export default function FederalPartyPage({ params }: PageProps) {
     return () => {
       cancelled = true
     }
-  }, [params.partySlug])
+  }, [])
 
   const provinceOptions = useMemo<FederalExplorerProvinceOption[]>(() => {
     const seenDistrictKeys = new Set<string>()
     const provinceCounts = new Map<string, number>()
 
-    for (const politician of payload?.politicians ?? []) {
-      const provinceCode = politician.district?.provinceCode?.trim().toLowerCase() || politician.provinceCode?.trim().toLowerCase() || null
-      const districtSlug = politician.district?.slug?.trim().toLowerCase() || politician.communitySlug?.trim().toLowerCase() || null
+    for (const member of payload?.members ?? []) {
+      const provinceCode = member.district?.provinceCode?.trim().toLowerCase() || member.provinceCode?.trim().toLowerCase() || null
+      const districtSlug = member.district?.slug?.trim().toLowerCase() || member.communitySlug?.trim().toLowerCase() || null
       if (!provinceCode || !districtSlug) continue
 
       const districtKey = `${provinceCode}:${districtSlug}`
-      if (seenDistrictKeys.has(districtKey)) continue
-      seenDistrictKeys.add(districtKey)
-      provinceCounts.set(provinceCode, (provinceCounts.get(provinceCode) ?? 0) + 1)
-    }
-
-    for (const association of payload?.associations ?? []) {
-      if (!isAssociationActive(association)) continue
-      const provinceCode = association.provinceCode.trim().toLowerCase()
-      const communitySlug = association.communitySlug.trim().toLowerCase()
-      if (!provinceCode || !communitySlug) continue
-
-      const districtKey = `${provinceCode}:${communitySlug}`
       if (seenDistrictKeys.has(districtKey)) continue
       seenDistrictKeys.add(districtKey)
       provinceCounts.set(provinceCode, (provinceCounts.get(provinceCode) ?? 0) + 1)
@@ -216,7 +176,7 @@ export default function FederalPartyPage({ params }: PageProps) {
         count: provinceCounts.get(province.code) ?? 0,
       })),
     ]
-  }, [payload?.associations, payload?.politicians])
+  }, [payload?.members])
 
   useEffect(() => {
     if (provinceOptions.length === 0) {
@@ -234,12 +194,9 @@ export default function FederalPartyPage({ params }: PageProps) {
       setDistrictBrowserStatus('loading')
       try {
         const districtUrl = selectedProvince === ALL_CANADA_CODE
-          ? buildApiUrl(`/politicians/federal/${encodeURIComponent(params.partySlug)}/districts?provinceCode=all`)
-          : buildApiUrl(`/politicians/federal/${encodeURIComponent(params.partySlug)}/districts?provinceCode=${encodeURIComponent(selectedProvince)}`)
-        const res = await fetch(
-          districtUrl,
-          { cache: 'no-store' },
-        )
+          ? buildApiUrl('/politicians/federal/current/districts?provinceCode=all')
+          : buildApiUrl(`/politicians/federal/current/districts?provinceCode=${encodeURIComponent(selectedProvince)}`)
+        const res = await fetch(districtUrl, { cache: 'no-store' })
         if (!res.ok) throw new Error('request_failed')
         const data = (await res.json().catch(() => null)) as ElectoralDistrictBrowserResponse | null
         if (!cancelled) {
@@ -260,20 +217,26 @@ export default function FederalPartyPage({ params }: PageProps) {
     return () => {
       cancelled = true
     }
-  }, [params.partySlug, selectedProvince])
+  }, [selectedProvince])
 
-  const filteredPoliticians = useMemo(() => {
-    const politicians = payload?.politicians ?? []
+  const filteredMembers = useMemo(() => {
     const normalizedQuery = memberQuery.trim().toLowerCase()
-    if (!normalizedQuery) return politicians
 
-    return politicians.filter((politician) => {
+    return (payload?.members ?? []).filter((member) => {
+      const provinceMatches = selectedProvince === ALL_CANADA_CODE
+        || member.district?.provinceCode?.trim().toLowerCase() === selectedProvince
+        || member.provinceCode?.trim().toLowerCase() === selectedProvince
+      if (!provinceMatches) return false
+      if (!normalizedQuery) return true
+
       const haystack = [
-        politician.displayName,
-        politician.officeType,
-        politician.district?.name,
-        politician.communitySlug,
-        politician.provinceCode,
+        member.displayName,
+        member.officeType,
+        member.party?.name,
+        member.party?.shortName,
+        member.district?.name,
+        member.communitySlug,
+        member.provinceCode,
       ]
         .filter(Boolean)
         .join(' ')
@@ -281,53 +244,16 @@ export default function FederalPartyPage({ params }: PageProps) {
 
       return haystack.includes(normalizedQuery)
     })
-  }, [memberQuery, payload?.politicians])
-
-  const filteredAssociations = useMemo(() => {
-    const associations = payload?.associations ?? []
-    if (!selectedProvince || selectedProvince === ALL_CANADA_CODE) return associations
-    return associations.filter((association) => association.provinceCode.trim().toLowerCase() === selectedProvince)
-  }, [payload?.associations, selectedProvince])
-  const currentParty = useMemo(
-    () =>
-      payload?.party
-        ? {
-            slug: payload.party.slug,
-            name: payload.party.name,
-            shortName: payload.party.shortName,
-          }
-        : null,
-    [payload?.party],
-  )
-  const currentPartyVisual = useMemo(() => resolvePartyVisual(currentParty), [currentParty])
-  const activeAssociations = useMemo(
-    () =>
-      filteredAssociations
-        .filter((association) => isAssociationActive(association))
-        .slice()
-        .sort((left, right) => left.associationName.localeCompare(right.associationName)),
-    [filteredAssociations],
-  )
-  const inactiveAssociations = useMemo(
-    () =>
-      filteredAssociations
-        .filter((association) => !isAssociationActive(association))
-        .slice()
-        .sort((left, right) => left.associationName.localeCompare(right.associationName)),
-    [filteredAssociations],
-  )
+  }, [memberQuery, payload?.members, selectedProvince])
 
   const selectedProvinceName = selectedProvince === ALL_CANADA_CODE
     ? 'All of Canada'
     : provinceOptions.find((province) => province.code === selectedProvince)?.name ?? null
-  const selectedDistrict = useMemo(
-    () => {
-      if (!districtBrowser) return null
-      if (selectedDistrictCode == null) return selectedProvince === ALL_CANADA_CODE ? null : districtBrowser.districts[0] ?? null
-      return districtBrowser.districts.find((district) => district.code === selectedDistrictCode) ?? null
-    },
-    [districtBrowser, selectedDistrictCode, selectedProvince],
-  )
+  const selectedDistrict = useMemo(() => {
+    if (!districtBrowser) return null
+    if (selectedDistrictCode == null) return selectedProvince === ALL_CANADA_CODE ? null : districtBrowser.districts[0] ?? null
+    return districtBrowser.districts.find((district) => district.code === selectedDistrictCode) ?? null
+  }, [districtBrowser, selectedDistrictCode, selectedProvince])
   const districtStatusByCode = useMemo(
     () =>
       (districtBrowser?.districts ?? []).reduce<Record<number, 'default'>>((acc, district) => {
@@ -336,6 +262,7 @@ export default function FederalPartyPage({ params }: PageProps) {
       }, {}),
     [districtBrowser],
   )
+
   const handleShowOnMap = useCallback((district: { provinceCode: string; slug: string }) => {
     const provinceCode = district.provinceCode.trim().toLowerCase()
     const districtSlug = district.slug.trim().toLowerCase()
@@ -374,17 +301,17 @@ export default function FederalPartyPage({ params }: PageProps) {
           onProvinceChange={setSelectedProvince}
           otherParties={otherParties}
           otherPartiesStatus={otherPartiesStatus}
-          selectedPartySlug={params.partySlug}
+          selectedPartySlug={null}
+          showCurrentLinkAsSelected
         />
       }
       showMobileRightRail
       mainClassName="space-y-6"
     >
       <section className="space-y-2">
-        <p className="text-xs font-semibold uppercase tracking-[0.3em] text-slate-400">Federal Party</p>
-        {currentParty ? <PartyChip party={currentParty} jurisdiction="federal" /> : null}
-        <h1 className="text-2xl font-semibold text-slate-900">{payload?.party?.shortName ?? payload?.party?.name ?? params.partySlug}</h1>
-        <p className="text-sm text-slate-600">Federal party directory and imported riding associations.</p>
+        <p className="text-xs font-semibold uppercase tracking-[0.3em] text-slate-400">Federal Members</p>
+        <h1 className="text-2xl font-semibold text-slate-900">Current Members of Parliament</h1>
+        <p className="text-sm text-slate-600">All current federal members, organized by electoral district and highlighted on the national map.</p>
       </section>
 
       <section ref={mapSectionRef} className="surface-card space-y-4 px-6 py-5">
@@ -393,37 +320,12 @@ export default function FederalPartyPage({ params }: PageProps) {
             <h2 className="text-lg font-semibold text-slate-900">Federal riding map</h2>
             {selectedProvinceName ? <p className="mt-1 text-sm text-slate-600">{selectedProvinceName}</p> : null}
           </div>
-          <div className="flex flex-wrap items-center justify-end gap-4">
-            {currentPartyVisual ? (
-              <div className="flex flex-wrap items-center gap-4 text-xs font-medium text-slate-600">
-                <div className="flex items-center gap-2">
-                  <span
-                    aria-hidden="true"
-                    className="h-4 w-4 rounded-sm border border-transparent"
-                    style={{ backgroundColor: currentPartyVisual.mapFillColor }}
-                  />
-                  <span>Active Seats</span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <span
-                    aria-hidden="true"
-                    className="h-4 w-4 rounded-sm border"
-                    style={{
-                      borderColor: currentPartyVisual.mapLineColor,
-                      backgroundColor: '#e2e8f0',
-                      backgroundImage: `repeating-linear-gradient(135deg, ${currentPartyVisual.mapFillColor} 0 2px, transparent 2px 6px)`,
-                    }}
-                  />
-                  <span>Registered Seats</span>
-                </div>
-              </div>
-            ) : null}
-          </div>
+          <p className="max-w-xl text-sm text-slate-600">Occupied ridings are highlighted using the current party colour for each seat.</p>
         </div>
 
         {provinceOptions.length === 0 ? (
           <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-4 py-5 text-sm text-slate-600">
-            No district associations are available for this party yet.
+            No current federal members are available yet.
           </div>
         ) : districtBrowser?.districts.length && canUseMapStyle(districtBrowser.styleUrl) ? (
           <CivilDistrictBrowserMap
@@ -452,15 +354,15 @@ export default function FederalPartyPage({ params }: PageProps) {
           <div className="rounded-2xl border border-red-200 bg-red-50 px-4 py-4 text-sm text-red-700">Unable to load the riding map right now.</div>
         ) : (
           <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-4 py-5 text-sm text-slate-600">
-            No district associations are available in {selectedProvinceName ?? 'this province'}.
+            No current federal members are available in {selectedProvinceName ?? 'this province'}.
           </div>
         )}
       </section>
 
       <section className="surface-card space-y-4 px-6 py-5">
         <div>
-          <h2 className="text-lg font-semibold text-slate-900">Politicians</h2>
-          <p className="mt-1 text-sm text-slate-600">Member cards with direct links back to Commons and public contact details.</p>
+          <h2 className="text-lg font-semibold text-slate-900">Members of Parliament</h2>
+          <p className="mt-1 text-sm text-slate-600">Search the full current House roster and jump any member back to their riding on the map.</p>
         </div>
 
         <label className="grid gap-2 text-sm font-medium text-slate-700">
@@ -469,34 +371,34 @@ export default function FederalPartyPage({ params }: PageProps) {
             value={memberQuery}
             onChange={(event) => setMemberQuery(event.target.value)}
             className="rounded-xl border border-slate-200 px-3 py-2 text-sm focus:border-[var(--cc-primary)] focus:outline-none"
-            placeholder="Search by name or community"
+            placeholder="Search by name, party, or community"
           />
         </label>
 
-        {status === 'loading' ? <p className="text-sm text-slate-500">Loading party data…</p> : null}
-        {status === 'error' ? <p className="text-sm text-rose-600">Unable to load this party.</p> : null}
+        {status === 'loading' ? <p className="text-sm text-slate-500">Loading federal members…</p> : null}
+        {status === 'error' ? <p className="text-sm text-rose-600">Unable to load current federal members.</p> : null}
 
-        {payload?.politicians?.length ? (
+        {payload?.members?.length ? (
           <ul className="space-y-3">
-            {filteredPoliticians.map((politician) => (
-              <li key={politician.id} className="space-y-4">
+            {filteredMembers.map((member) => (
+              <li key={member.id} className="space-y-4">
                 <PoliticianContactCard
-                  displayName={politician.displayName}
-                  partyName={payload?.party?.shortName ?? payload?.party?.name ?? null}
-                  officeType={politician.candidateWebsite && !politician.profileUrl ? 'Candidate' : politician.officeType}
-                  districtName={politician.district?.name ?? (politician.provinceCode && politician.communitySlug ? `${politician.provinceCode.toUpperCase()} · ${politician.communitySlug}` : null)}
-                  photoUrl={politician.photoUrl}
-                  profileUrl={politician.profileUrl}
-                  xmlUrl={politician.xmlUrl}
-                  candidateWebsite={politician.candidateWebsite}
-                  communityHref={politician.district ? `/${encodeURIComponent(politician.district.provinceCode.toLowerCase())}/${encodeURIComponent(politician.district.slug)}` : null}
-                  email={politician.contact.email}
-                  website={politician.contact.website}
+                  displayName={member.displayName}
+                  partyName={member.party?.shortName ?? member.party?.name ?? null}
+                  officeType={member.officeType}
+                  districtName={member.district?.name ?? (member.provinceCode && member.communitySlug ? `${member.provinceCode.toUpperCase()} · ${member.communitySlug}` : null)}
+                  photoUrl={member.photoUrl}
+                  profileUrl={member.profileUrl}
+                  xmlUrl={member.xmlUrl}
+                  candidateWebsite={member.candidateWebsite}
+                  communityHref={member.district ? `/${encodeURIComponent(member.district.provinceCode.toLowerCase())}/${encodeURIComponent(member.district.slug)}` : null}
+                  email={member.contact.email}
+                  website={member.contact.website}
                   extraActions={
-                    politician.district ? (
+                    member.district ? (
                       <button
                         type="button"
-                        onClick={() => handleShowOnMap(politician.district!)}
+                        onClick={() => handleShowOnMap(member.district!)}
                         className="inline-flex items-center rounded-full border border-slate-200 bg-white px-3 py-1.5 font-semibold text-[var(--cc-primary)] hover:border-red-200 hover:bg-rose-50"
                       >
                         Show on Map
@@ -509,65 +411,8 @@ export default function FederalPartyPage({ params }: PageProps) {
           </ul>
         ) : null}
 
-        {status === 'ready' && payload?.politicians?.length && filteredPoliticians.length === 0 ? (
-          <p className="text-sm text-slate-500">No members match that search.</p>
-        ) : null}
-      </section>
-
-      <section className="surface-card space-y-4 px-6 py-5">
-        <div>
-          <h2 className="text-lg font-semibold text-slate-900">District associations</h2>
-          {selectedProvinceName ? <p className="mt-1 text-sm text-slate-600">{selectedProvinceName}</p> : null}
-        </div>
-
-        {filteredAssociations.length ? (
-          <div className="space-y-5">
-            <div className="space-y-3">
-              <h3 className="text-sm font-semibold uppercase tracking-[0.24em] text-slate-500">Active District Associations</h3>
-              {activeAssociations.length ? (
-                <ul className="space-y-3">
-                  {activeAssociations.map((association) => (
-                    <li key={association.id} className="rounded-2xl border border-slate-200 bg-white px-4 py-4">
-                      <p className="text-base font-semibold text-slate-900">{association.associationName}</p>
-                      <p className="mt-1 text-sm text-slate-600">
-                        <Link href={`/${encodeURIComponent(association.provinceCode.toLowerCase())}/${encodeURIComponent(association.communitySlug)}/politicians`} className="font-semibold text-[var(--cc-primary)] hover:underline">
-                          {association.provinceCode.toUpperCase()} / {association.communitySlug}
-                        </Link>
-                        {association.registrationStatus ? ` · ${association.registrationStatus}` : ''}
-                      </p>
-                    </li>
-                  ))}
-                </ul>
-              ) : (
-                <p className="text-sm text-slate-500">No active district associations{selectedProvinceName ? ` in ${selectedProvinceName}` : ''}.</p>
-              )}
-            </div>
-
-            <div className="space-y-3">
-              <h3 className="text-sm font-semibold uppercase tracking-[0.24em] text-slate-500">Inactive District Associations</h3>
-              {inactiveAssociations.length ? (
-                <ul className="space-y-3">
-                  {inactiveAssociations.map((association) => (
-                    <li key={association.id} className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-4 opacity-80">
-                      <p className="text-base font-semibold text-slate-800">{association.associationName}</p>
-                      <p className="mt-1 text-sm text-slate-500">
-                        <Link href={`/${encodeURIComponent(association.provinceCode.toLowerCase())}/${encodeURIComponent(association.communitySlug)}/politicians`} className="font-semibold text-slate-500 hover:text-slate-700 hover:underline">
-                          {association.provinceCode.toUpperCase()} / {association.communitySlug}
-                        </Link>
-                        {association.registrationStatus ? ` · ${association.registrationStatus}` : ''}
-                      </p>
-                    </li>
-                  ))}
-                </ul>
-              ) : (
-                <p className="text-sm text-slate-500">No inactive district associations{selectedProvinceName ? ` in ${selectedProvinceName}` : ''}.</p>
-              )}
-            </div>
-          </div>
-        ) : status === 'ready' ? (
-          <p className="text-sm text-slate-500">
-            No district associations found{selectedProvinceName ? ` in ${selectedProvinceName}` : ''}.
-          </p>
+        {status === 'ready' && payload?.members?.length && filteredMembers.length === 0 ? (
+          <p className="text-sm text-slate-500">No current members match that search.</p>
         ) : null}
       </section>
     </DashboardShell>
