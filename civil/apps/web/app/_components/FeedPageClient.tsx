@@ -1151,6 +1151,7 @@ export default function FeedPageClient(props: FeedPageClientProps) {
   const emptyLabel = emptyState ?? "No updates yet. Once the community starts posting, you'll see them here."
   const composerDefaultAudience: 'friends' | 'network' | 'community' =
     scope === 'communities' || scope === 'causes' ? 'community' : scope === 'network' ? 'network' : 'friends'
+  const composerAllowedPostTypes = scope === 'causes' ? (['cause'] satisfies PostType[]) : undefined
 
   const resolvedRightRail = rightRail ?? <RightRail />
   const composerActions: Array<{ type: PostType; label: string; icon: string }> =
@@ -1445,6 +1446,7 @@ export default function FeedPageClient(props: FeedPageClientProps) {
           <PostComposer
             me={me}
             defaultPostType={composerDefaultType}
+            allowedPostTypes={composerAllowedPostTypes}
             onPostCreated={(post) => {
               handlePostCreated(post)
               setComposerOpen(false)
