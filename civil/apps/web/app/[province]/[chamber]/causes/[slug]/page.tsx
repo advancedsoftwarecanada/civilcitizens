@@ -1,6 +1,4 @@
-import type { Metadata } from 'next'
-import ChamberPostPageClient from '../../../../c/[province]/[chamber]/posts/[slug]/ChamberPostPageClient'
-import { generateCauseMetadata } from '../../../../_lib/causeMetadata'
+import ChamberPostPageClient from '../../../../_components/ChamberPostPageClient'
 
 type PageProps = {
   params: {
@@ -8,14 +6,6 @@ type PageProps = {
     chamber: string
     slug: string
   }
-}
-
-export async function generateMetadata({ params }: PageProps): Promise<Metadata> {
-  return generateCauseMetadata({
-    province: decodeURIComponent(params.province),
-    chamber: decodeURIComponent(params.chamber),
-    slug: decodeURIComponent(params.slug),
-  })
 }
 
 export default function ProvinceChamberCausePage({ params }: PageProps) {
