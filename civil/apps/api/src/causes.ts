@@ -1016,7 +1016,13 @@ export async function loadCauseSummariesByPostIds(postIds: string[]) {
   const uniquePostIds = Array.from(new Set(postIds)).filter(Boolean)
   if (!uniquePostIds.length) return {} as Record<string, CauseSummary>
 
-  await ensureCivilCauseTables()
+  try {
+    await ensureCivilCauseTables()
+  } catch (error) {
+    console.error('cause_tables_ensure_failed', error)
+    return {} as Record<string, CauseSummary>
+  }
+
   let rows: CauseRow[] = []
   try {
     rows = await prisma.$queryRaw<CauseRow[]>`
