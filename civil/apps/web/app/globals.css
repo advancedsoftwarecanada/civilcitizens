@@ -37,6 +37,7 @@
   --mobile-dock-height: calc(var(--mobile-bottom-bar-top-pad) + var(--mobile-bottom-bar-row-height) + var(--mobile-dock-bottom-pad));
   --mobile-thread-composer-height: var(--mobile-dock-height);
   --mobile-dock-clearance: calc(var(--mobile-dock-height) + var(--mobile-dock-bottom-offset));
+  --mobile-dock-active-clearance: var(--mobile-dock-clearance);
 }
 
 @supports (height: 100dvh) {
@@ -66,6 +67,17 @@ html.cc-native-android {
   --mobile-dock-height: calc(var(--mobile-bottom-bar-top-pad) + var(--mobile-bottom-bar-row-height) + var(--mobile-dock-bottom-pad));
   --mobile-thread-composer-height: var(--mobile-dock-height);
   --mobile-dock-clearance: calc(var(--mobile-dock-height) + var(--mobile-dock-bottom-offset));
+  --mobile-dock-active-clearance: var(--mobile-dock-clearance);
+}
+
+html.cc-keyboard-open {
+  --mobile-dock-active-clearance: 0px;
+}
+
+html.cc-mobile-scroll-lock,
+body.cc-mobile-scroll-lock {
+  height: 100%;
+  overflow: hidden;
 }
 
 :root {
@@ -96,6 +108,12 @@ html.cc-native-android {
     top: 100%;
     height: var(--mobile-dock-bottom-offset);
     background: #000;
+    pointer-events: none;
+  }
+
+  html.cc-keyboard-open [data-mobile-dock='true'] {
+    transform: translateY(calc(100% + var(--mobile-dock-bottom-offset) + 1rem));
+    opacity: 0;
     pointer-events: none;
   }
 }
@@ -598,4 +616,3 @@ html.cc-launch-pending #cc-app-root {
     grid-template-columns: repeat(2, 1fr);
   }
 }
-

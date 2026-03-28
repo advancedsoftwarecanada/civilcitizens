@@ -36,6 +36,7 @@ import MessagesNavBlock from './MessagesNavBlock'
 import { hasFamilyProfilesAvailable } from '../_lib/me'
 import OrganizationRailCard from '../com/_components/OrganizationRailCard'
 import { clearFamilyView } from '../_lib/familyView'
+import { useMobileKeyboardState } from '../_lib/mobileKeyboard'
 
 const DEFAULT_NAV_BUTTONS: Array<{
   key: 'home' | 'cart' | 'messages' | 'notifications' | 'ai' | 'more' | 'friends'
@@ -156,6 +157,7 @@ export default function MobileDock() {
   const { activeRightRail } = useRightRailRegistry()
   const pathname = usePathname()
   const router = useRouter()
+  const keyboardState = useMobileKeyboardState()
   const cachedViewer = useViewerStore((s) => s.me)
   const familyView = useViewerStore((s) => s.familyView)
   const [resolvedViewer, setResolvedViewer] = useState<MeResponse | null>(null)
@@ -608,12 +610,20 @@ export default function MobileDock() {
     return null
   }
 
+  const hideForKeyboard = keyboardState.keyboardOpen
+
   return (
     <>
       <nav
         data-mobile-dock="true"
         className="fixed inset-x-0 bottom-0 z-40 min-h-[var(--mobile-dock-height)] border-t border-slate-200 bg-white/95 px-3 pb-[var(--mobile-dock-bottom-pad)] pt-[var(--mobile-bottom-bar-top-pad)] text-[var(--cc-primary)] shadow-[0_-10px_24px_rgba(0,0,0,0.08)] transition-[transform,opacity] duration-200 xl:hidden"
-        style={{ bottom: 'var(--mobile-dock-bottom-offset)' }}
+        style={{
+          bottom: 'var(--mobile-dock-bottom-offset)',
+          transform: hideForKeyboard ? 'translateY(calc(100% + var(--mobile-dock-bottom-offset) + 1rem))' : undefined,
+          opacity: hideForKeyboard ? 0 : 1,
+          pointerEvents: hideForKeyboard ? 'none' : 'auto',
+          visibility: hideForKeyboard ? 'hidden' : 'visible',
+        }}
         role="navigation"
         aria-label="Mobile navigation"
       >

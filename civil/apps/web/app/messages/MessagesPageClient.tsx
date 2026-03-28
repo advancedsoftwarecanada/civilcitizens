@@ -26,6 +26,7 @@ import { ensureViewerMe } from '../_lib/viewerMe'
 import { useViewerStore } from '../_lib/viewerStore'
 import { formatUserDisplayName } from '../_lib/text'
 import { getStoredToken } from '../_lib/tokenStorage'
+import { useMobileKeyboardState } from '../_lib/mobileKeyboard'
 import {
   HiOutlineArrowPath,
   HiOutlinePaperAirplane,
@@ -510,9 +511,9 @@ function isMobileMessagesViewport() {
   return window.matchMedia('(max-width: 1023px)').matches
 }
 
-const MOBILE_KEYBOARD_OPEN_MIN_INSET = 90
-const MOBILE_KEYBOARD_OPEN_MIN_DELTA = 140
 const MOBILE_THREAD_MESSAGE_CLEARANCE_PX = 20
+const MOBILE_THREAD_COMPOSER_SHELL_HEIGHT_PX = 60
+const MOBILE_THREAD_LAYOUT_SETTLE_DELAYS_MS = [90, 180, 320]
 
 const threadHasUnreadFallback = (thread: ThreadSummary) => {
   const viewer = thread.participants.find((participant) => participant.isViewer)
@@ -1239,6 +1240,7 @@ function StandardMessagesPageClient({ initialThreadId, initialInboxSection, view
   const messagesViewportRef = useRef<HTMLDivElement | null>(null)
   const messagesEndRef = useRef<HTMLDivElement | null>(null)
   const bottomSettleTimeoutsRef = useRef<number[]>([])
+  const mobileLayoutSettleTimeoutsRef = useRef<number[]>([])
   const smoothScrollPendingRef = useRef(false)
   const preserveScrollRef = useRef<{
     threadId: string
@@ -1331,6 +1333,10 @@ function StandardMessagesPageClient({ initialThreadId, initialInboxSection, view
         window.clearTimeout(timeoutId)
       }
       bottomSettleTimeoutsRef.current = []
+      for (const timeoutId of mobileLayoutSettleTimeoutsRef.current) {
+        window.clearTimeout(timeoutId)
+      }
+      mobileLayoutSettleTimeoutsRef.current = []
     }
   }, [])
   const [me, setMe] = useState<MeResponse | null>(null)
@@ -1390,15 +1396,12 @@ function StandardMessagesPageClient({ initialThreadId, initialInboxSection, view
   const composerTextareaRef = useRef<HTMLInputElement | null>(null)
   const composerInputRef = useRef<HTMLInputElement | null>(null)
   const [isMobileViewport, setIsMobileViewport] = useState(false)
-  const [composerFocused, setComposerFocused] = useState(false)
-  const [mobileKeyboardInset, setMobileKeyboardInset] = useState(0)
   const [mobileThreadPanelHeight, setMobileThreadPanelHeight] = useState<string | null>(null)
   const [mobileMessagesViewportHeight, setMobileMessagesViewportHeight] = useState<string | null>(null)
-  const isNativeIosRef = useRef(false)
+  const mobileKeyboard = useMobileKeyboardState()
 
   useEffect(() => {
     if (typeof window === 'undefined') return
-    isNativeIosRef.current = document.documentElement.classList.contains('cc-native-ios')
     const mediaQuery = window.matchMedia('(max-width: 1023px)')
     const syncMobileViewport = () => setIsMobileViewport(mediaQuery.matches)
     syncMobileViewport()
@@ -1422,45 +1425,19 @@ function StandardMessagesPageClient({ initialThreadId, initialInboxSection, view
     }
   }, [])
 
-  const syncMobileKeyboardState = useCallback(() => {
-    if (typeof window === 'undefined') return
-    if (!isMobileViewport || !composerFocused) {
-      setMobileKeyboardInset(0)
-      return
-    }
-
-    const viewport = window.visualViewport
-    const viewportHeight = viewport?.height ?? window.innerHeight
-    const viewportOffsetTop = viewport?.offsetTop ?? 0
-    const keyboardInset = Math.max(0, window.innerHeight - viewportHeight - viewportOffsetTop)
-    const heightDelta = Math.max(0, window.innerHeight - viewportHeight)
-    const keyboardOpen = keyboardInset > MOBILE_KEYBOARD_OPEN_MIN_INSET || heightDelta > MOBILE_KEYBOARD_OPEN_MIN_DELTA
-
-    setMobileKeyboardInset(keyboardOpen ? keyboardInset : 0)
-  }, [composerFocused, isMobileViewport])
-
   useEffect(() => {
-    syncMobileKeyboardState()
-  }, [syncMobileKeyboardState])
+    if (typeof document === 'undefined') return undefined
+    if (!isMobileViewport) return undefined
 
-  useEffect(() => {
-    if (typeof window === 'undefined') return
-    const handleViewportChange = () => {
-      syncMobileKeyboardState()
-    }
-    const viewport = window.visualViewport
-    viewport?.addEventListener('resize', handleViewportChange)
-    viewport?.addEventListener('scroll', handleViewportChange)
-    window.addEventListener('resize', handleViewportChange)
-    window.addEventListener('orientationchange', handleViewportChange)
+    const { body, documentElement } = document
+    body.classList.add('cc-mobile-scroll-lock')
+    documentElement.classList.add('cc-mobile-scroll-lock')
 
     return () => {
-      viewport?.removeEventListener('resize', handleViewportChange)
-      viewport?.removeEventListener('scroll', handleViewportChange)
-      window.removeEventListener('resize', handleViewportChange)
-      window.removeEventListener('orientationchange', handleViewportChange)
+      body.classList.remove('cc-mobile-scroll-lock')
+      documentElement.classList.remove('cc-mobile-scroll-lock')
     }
-  }, [syncMobileKeyboardState])
+  }, [isMobileViewport])
 
   useEffect(() => {
     if (initialInboxSection && (initialInboxSection !== 'family' || showFamilyInbox)) {
@@ -2502,9 +2479,8 @@ function StandardMessagesPageClient({ initialThreadId, initialInboxSection, view
     const header = threadHeaderRef.current
     if (!panel || !header) return
 
-    const viewport = window.visualViewport
-    const viewportTop = viewport?.offsetTop ?? 0
-    const viewportHeight = viewport?.height ?? window.innerHeight
+    const viewportTop = mobileKeyboard.viewportOffsetTop
+    const viewportHeight = mobileKeyboard.viewportHeight || window.innerHeight
     const viewportBottom = viewportTop + viewportHeight
     const panelRect = panel.getBoundingClientRect()
     const headerRect = header.getBoundingClientRect()
@@ -2521,11 +2497,37 @@ function StandardMessagesPageClient({ initialThreadId, initialInboxSection, view
       const next = `${availableListHeight}px`
       return prev === next ? prev : next
     })
-  }, [activeThread, isMobileViewport])
+  }, [activeThread, isMobileViewport, mobileKeyboard.viewportHeight, mobileKeyboard.viewportOffsetTop])
+
+  const scheduleMobileThreadLayoutRefresh = useCallback(() => {
+    if (typeof window === 'undefined') return
+    for (const timeoutId of mobileLayoutSettleTimeoutsRef.current) {
+      window.clearTimeout(timeoutId)
+    }
+    mobileLayoutSettleTimeoutsRef.current = []
+
+    const runLayoutSync = () => {
+      syncMobileThreadLayout()
+    }
+
+    runLayoutSync()
+    requestAnimationFrame(runLayoutSync)
+
+    for (const delay of MOBILE_THREAD_LAYOUT_SETTLE_DELAYS_MS) {
+      const timeoutId = window.setTimeout(runLayoutSync, delay)
+      mobileLayoutSettleTimeoutsRef.current.push(timeoutId)
+    }
+  }, [syncMobileThreadLayout])
 
   useEffect(() => {
-    syncMobileThreadLayout()
-  }, [syncMobileThreadLayout])
+    scheduleMobileThreadLayoutRefresh()
+  }, [
+    mobileKeyboard.keyboardHeight,
+    mobileKeyboard.keyboardOpen,
+    mobileKeyboard.viewportHeight,
+    mobileKeyboard.viewportOffsetTop,
+    scheduleMobileThreadLayoutRefresh,
+  ])
 
   useEffect(() => {
     if (typeof window === 'undefined') return undefined
@@ -2533,15 +2535,6 @@ function StandardMessagesPageClient({ initialThreadId, initialInboxSection, view
     const handleLayoutChange = () => {
       syncMobileThreadLayout()
     }
-
-    const viewport = window.visualViewport
-    viewport?.addEventListener('resize', handleLayoutChange)
-    viewport?.addEventListener('scroll', handleLayoutChange)
-    window.addEventListener('resize', handleLayoutChange)
-    window.addEventListener('orientationchange', handleLayoutChange)
-    window.addEventListener('focusin', handleLayoutChange)
-    window.addEventListener('focusout', handleLayoutChange)
-
     const resizeObserver = typeof ResizeObserver !== 'undefined' ? new ResizeObserver(handleLayoutChange) : null
     if (resizeObserver) {
       if (threadPanelRef.current) resizeObserver.observe(threadPanelRef.current)
@@ -2550,12 +2543,6 @@ function StandardMessagesPageClient({ initialThreadId, initialInboxSection, view
     }
 
     return () => {
-      viewport?.removeEventListener('resize', handleLayoutChange)
-      viewport?.removeEventListener('scroll', handleLayoutChange)
-      window.removeEventListener('resize', handleLayoutChange)
-      window.removeEventListener('orientationchange', handleLayoutChange)
-      window.removeEventListener('focusin', handleLayoutChange)
-      window.removeEventListener('focusout', handleLayoutChange)
       resizeObserver?.disconnect()
     }
   }, [syncMobileThreadLayout])
@@ -2646,7 +2633,7 @@ function StandardMessagesPageClient({ initialThreadId, initialInboxSection, view
   useEffect(() => {
     if (!isMobileViewport || !selectedThreadId || !activeThread) return
     scheduleMessagesBottomSettle('auto')
-  }, [activeThread, isMobileViewport, mobileKeyboardInset, mobileMessagesViewportHeight, scheduleMessagesBottomSettle, selectedThreadId])
+  }, [activeThread, isMobileViewport, mobileKeyboard.keyboardHeight, mobileKeyboard.keyboardOpen, mobileMessagesViewportHeight, scheduleMessagesBottomSettle, selectedThreadId])
 
   useEffect(() => {
     if (!selectedThreadId || activePendingAttachmentMessages.length === 0) return
@@ -3917,8 +3904,23 @@ function StandardMessagesPageClient({ initialThreadId, initialInboxSection, view
     const threadProfileHref = otherUser?.handle ? `/u/${encodeURIComponent(otherUser.handle)}` : null
     const headerGroupParticipants = getOtherParticipants(activeThread, me?.id).slice(0, 5)
     const showMobileDockComposer = isMobileViewport
-    const composerKeyboardOffset = Math.max(0, Math.round(mobileKeyboardInset))
-    const mobileComposerBottomSpacer = showMobileDockComposer ? 'var(--mobile-thread-composer-height)' : undefined
+    const mobileComposerBottomSpacer = showMobileDockComposer ? `${MOBILE_THREAD_COMPOSER_SHELL_HEIGHT_PX}px` : undefined
+    const mobileComposerShellBottom = mobileKeyboard.keyboardOpen
+      ? 'var(--cc-keyboard-inset)'
+      : 'var(--mobile-dock-active-clearance)'
+
+    const handleComposerFocus = () => {
+      requestAnimationFrame(() => {
+        scheduleMobileThreadLayoutRefresh()
+        scheduleMessagesBottomSettle('auto')
+      })
+    }
+
+    const handleComposerBlur = () => {
+      requestAnimationFrame(() => {
+        scheduleMobileThreadLayoutRefresh()
+      })
+    }
 
     const sendActiveThreadMessage = () => {
       if (activeThread) {
@@ -3933,15 +3935,8 @@ function StandardMessagesPageClient({ initialThreadId, initialInboxSection, view
           type="text"
           value={composerText}
           onChange={(event) => setComposerText(event.target.value)}
-          onFocus={() => {
-            setComposerFocused(true)
-            requestAnimationFrame(() => syncMobileKeyboardState())
-            scheduleMessagesBottomSettle('auto')
-          }}
-          onBlur={() => {
-            setComposerFocused(false)
-            setTimeout(() => syncMobileKeyboardState(), 80)
-          }}
+          onFocus={handleComposerFocus}
+          onBlur={handleComposerBlur}
           onKeyDown={(event) => {
             if (event.key === 'Enter') {
               event.preventDefault()
@@ -4050,15 +4045,8 @@ function StandardMessagesPageClient({ initialThreadId, initialInboxSection, view
           type="text"
           value={composerText}
           onChange={(event) => setComposerText(event.target.value)}
-          onFocus={() => {
-            setComposerFocused(true)
-            requestAnimationFrame(() => syncMobileKeyboardState())
-            scheduleMessagesBottomSettle('auto')
-          }}
-          onBlur={() => {
-            setComposerFocused(false)
-            setTimeout(() => syncMobileKeyboardState(), 80)
-          }}
+          onFocus={handleComposerFocus}
+          onBlur={handleComposerBlur}
           onKeyDown={(event) => {
             if (event.key === 'Enter' && !event.shiftKey) {
               event.preventDefault()
@@ -4116,7 +4104,6 @@ function StandardMessagesPageClient({ initialThreadId, initialInboxSection, view
       <div
         ref={threadPanelRef}
         className="flex h-full min-h-0 flex-col rounded-[32px] border border-white/70 bg-white/90 px-4 pb-4 pt-5 shadow-[0_25px_70px_rgba(15,23,42,0.08)] sm:p-4"
-        style={isMobileViewport && mobileThreadPanelHeight ? { height: mobileThreadPanelHeight } : undefined}
       >
         <header ref={threadHeaderRef} className="border-b border-slate-100 pb-3">
           <div className="flex items-center gap-2 sm:gap-3">
@@ -4432,8 +4419,12 @@ function StandardMessagesPageClient({ initialThreadId, initialInboxSection, view
                 mobileComposerBottomSpacer || mobileMessagesViewportHeight
                   ? {
                       scrollPaddingBottom: mobileComposerBottomSpacer,
-                      height: mobileMessagesViewportHeight ?? undefined,
-                      maxHeight: mobileMessagesViewportHeight ?? undefined,
+                      ...(!showMobileDockComposer
+                        ? {
+                            height: mobileMessagesViewportHeight ?? undefined,
+                            maxHeight: mobileMessagesViewportHeight ?? undefined,
+                          }
+                        : {}),
                     }
                   : undefined
               }
@@ -4706,9 +4697,12 @@ function StandardMessagesPageClient({ initialThreadId, initialInboxSection, view
           ? createPortal(
               <div
                 ref={mobileComposerShellRef}
-                className="fixed inset-x-0 z-[85] min-h-[var(--mobile-thread-composer-height)] border-t border-slate-200 bg-white/95 px-3 pb-[var(--mobile-dock-bottom-pad)] pt-[var(--mobile-bottom-bar-top-pad)] shadow-[0_-8px_20px_rgba(15,23,42,0.08)] xl:hidden"
+                className="fixed inset-x-0 z-[85] border-t border-slate-200 bg-white/95 px-3 shadow-[0_-8px_20px_rgba(15,23,42,0.08)] xl:hidden"
                 style={{
-                  bottom: `calc(var(--mobile-dock-clearance) + ${composerKeyboardOffset}px)`,
+                  bottom: mobileComposerShellBottom,
+                  minHeight: `${MOBILE_THREAD_COMPOSER_SHELL_HEIGHT_PX}px`,
+                  paddingTop: '6px',
+                  paddingBottom: '6px',
                 }}
               >
                 {composerNode}
@@ -4799,7 +4793,7 @@ function StandardMessagesPageClient({ initialThreadId, initialInboxSection, view
   )
 
   const keyboardAwareViewportClass =
-    'min-h-0 h-[calc(var(--cc-viewport-height)-var(--cc-native-safe-top-offset)-var(--cc-native-shell-top-gap)-var(--mobile-dock-clearance))] pb-4 md:sticky md:top-0 md:h-[calc(var(--cc-viewport-height)-var(--cc-top-nav-height))] md:pb-8'
+    'min-h-0 h-[calc(var(--cc-viewport-height)-var(--cc-native-safe-top-offset)-var(--cc-native-shell-top-gap)-var(--mobile-dock-active-clearance))] pb-4 md:sticky md:top-0 md:h-[calc(var(--cc-viewport-height)-var(--cc-top-nav-height))] md:pb-8'
 
   return (
     <DashboardShell

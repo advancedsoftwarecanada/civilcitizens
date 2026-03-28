@@ -144,7 +144,7 @@ export default function IncomingFamilyCallOverlay() {
   const subtitle = viewerRole === 'parent' ? `${invite.member.relationshipLabel} • ${invite.member.modeLabel}` : '@' + invite.parent.handle
 
   return createPortal(
-    <div className="pointer-events-none fixed inset-0 z-[115] flex items-end justify-center px-3 pb-[calc(var(--mobile-dock-clearance)+1rem)] sm:items-start sm:justify-end sm:p-5">
+    <div className="pointer-events-none fixed inset-0 z-[115] flex items-end justify-center px-3 pb-[calc(var(--mobile-dock-active-clearance)+1rem)] sm:items-start sm:justify-end sm:p-5">
       <div className="pointer-events-auto w-full max-w-sm overflow-hidden rounded-[1.9rem] border border-slate-200 bg-white shadow-[0_28px_60px_rgba(15,23,42,0.22)]">
         <div className="relative overflow-hidden bg-[linear-gradient(135deg,#f5fff8_0%,#f4f8ff_48%,#ffffff_100%)] px-5 py-4">
           <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_right,rgba(22,163,74,0.10),transparent_46%),radial-gradient(circle_at_top_left,rgba(59,130,246,0.10),transparent_42%)]" />
