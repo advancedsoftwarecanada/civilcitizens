@@ -3937,6 +3937,38 @@ function StandardMessagesPageClient({ initialThreadId, initialInboxSection, view
     const showMobileDockComposer = isMobileViewport && !mobileOverlayOpen
     const mobileComposerBottomSpacer = showMobileDockComposer ? `${MOBILE_THREAD_COMPOSER_SHELL_HEIGHT_PX}px` : undefined
 
+    const focusMobileComposerInput = () => {
+      const target = composerInputRef.current
+      if (!target) return false
+      target.focus({ preventScroll: true })
+      const length = target.value.length
+      target.setSelectionRange(length, length)
+      return document.activeElement === target
+    }
+
+    const handleMobileComposerInputTouchStart = (event: React.TouchEvent<HTMLInputElement>) => {
+      if (!isMobileViewport) return
+      event.preventDefault()
+      event.stopPropagation()
+    }
+
+    const handleMobileComposerInputTouchEnd = (event: React.TouchEvent<HTMLInputElement>) => {
+      if (!isMobileViewport) return
+      event.preventDefault()
+      event.stopPropagation()
+      markMobileComposerTouch()
+
+      const focusAndSettle = () => {
+        focusMobileComposerInput()
+        scheduleMobileThreadLayoutRefresh()
+        scheduleMessagesBottomSettle('auto')
+      }
+
+      focusAndSettle()
+      requestAnimationFrame(focusAndSettle)
+      window.setTimeout(focusAndSettle, 90)
+    }
+
     const handleComposerFocus = () => {
       requestAnimationFrame(() => {
         scheduleMobileThreadLayoutRefresh()
@@ -3965,6 +3997,8 @@ function StandardMessagesPageClient({ initialThreadId, initialInboxSection, view
           type="text"
           value={composerText}
           onChange={(event) => setComposerText(event.target.value)}
+          onTouchStart={handleMobileComposerInputTouchStart}
+          onTouchEnd={handleMobileComposerInputTouchEnd}
           onFocus={handleComposerFocus}
           onBlur={handleComposerBlur}
           onKeyDown={(event) => {
@@ -4815,6 +4849,7 @@ function StandardMessagesPageClient({ initialThreadId, initialInboxSection, view
 
   const keyboardAwareViewportClass =
     'min-h-0 h-[calc(var(--cc-viewport-height)-var(--cc-native-safe-top-offset)-var(--cc-native-shell-top-gap)-var(--mobile-dock-active-clearance))] pb-4 md:sticky md:top-0 md:h-[calc(var(--cc-viewport-height)-var(--cc-top-nav-height))] md:pb-8'
+  const showMobileInboxPanel = isMobileViewport && !activeThread && !selectedThreadId && !isFamilyParentThreadSelected
 
   return (
     <DashboardShell
@@ -4825,7 +4860,9 @@ function StandardMessagesPageClient({ initialThreadId, initialInboxSection, view
       rightRailTopClassName="pt-0"
       mainClassName={keyboardAwareViewportClass}
     >
-      {activeInboxSection === 'market' ? (
+      {showMobileInboxPanel ? (
+        <div className="h-full min-h-0">{inboxPanel}</div>
+      ) : activeInboxSection === 'market' ? (
         selectedThreadId && activeThread ? (
           <div className="h-full min-h-0">{renderMessages()}</div>
         ) : (

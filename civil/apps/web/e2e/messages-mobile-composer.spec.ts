@@ -138,6 +138,20 @@ async function readComposerMetrics(page: Page) {
 }
 
 test.describe('Messages mobile composer', () => {
+  test('mobile no-thread inbox keeps the messages nav visible', async ({ page, request }) => {
+    const viewer = await createTestUser(request)
+    await authenticatePage(page, viewer.token)
+
+    await page.setViewportSize(MOBILE_VIEWPORT)
+    await page.goto('/messages?inbox=market')
+
+    await expect(page.getByRole('heading', { name: 'Messages' })).toBeVisible()
+    await expect(page.getByRole('link', { name: 'Friends' })).toBeVisible()
+    await expect(page.getByRole('link', { name: 'Market' })).toBeVisible()
+    await expect(page.getByText('Unread messages')).toHaveCount(0)
+    await expect(page.getByText('All caught up right now.')).toHaveCount(0)
+  })
+
   test('composer stays visible and dock toggles cleanly across repeated keyboard cycles', async ({ page, request }) => {
     await installVisualViewportMock(page)
     const { threadId } = await seedDirectThread(page, request)
