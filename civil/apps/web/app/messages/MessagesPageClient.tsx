@@ -27,7 +27,7 @@ import { ensureViewerMe } from '../_lib/viewerMe'
 import { useViewerStore } from '../_lib/viewerStore'
 import { formatUserDisplayName } from '../_lib/text'
 import { getStoredToken } from '../_lib/tokenStorage'
-import { useMobileKeyboardState } from '../_lib/mobileKeyboard'
+import { dismissMobileKeyboardTracking, useMobileKeyboardState } from '../_lib/mobileKeyboard'
 import {
   HiOutlineArrowPath,
   HiOutlinePaperAirplane,
@@ -506,6 +506,7 @@ function dismissMobileKeyboard() {
   if (!window.matchMedia('(max-width: 1023px)').matches) return
   const activeElement = document.activeElement as HTMLElement | null
   activeElement?.blur()
+  dismissMobileKeyboardTracking()
 }
 
 function isMobileMessagesViewport() {
@@ -3944,8 +3945,10 @@ function StandardMessagesPageClient({ initialThreadId, initialInboxSection, view
     }
 
     const handleComposerBlur = () => {
+      dismissMobileKeyboard()
       requestAnimationFrame(() => {
         scheduleMobileThreadLayoutRefresh()
+        scheduleMessagesBottomSettle('auto')
       })
     }
 
