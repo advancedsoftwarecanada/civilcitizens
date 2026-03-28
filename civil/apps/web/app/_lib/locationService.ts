@@ -54,14 +54,17 @@ type WatchSubscriber = {
 }
 
 const LOCATION_PERMISSION_STORAGE_KEY = 'cc:location-permission-decision:v1'
+const LOCATION_CACHE_STORAGE_KEY = 'cc:last-known-location:v1'
 const DEFAULT_MIN_INTERVAL_MS = 7_500
 const DEFAULT_MAXIMUM_AGE_MS = 60_000
+const STORED_LOCATION_REUSE_MAX_AGE_MS = 15 * 60_000
 
 let cachedLocation: CivilLocation | null = null
 let pendingLocationRequest: Promise<CivilLocationResult> | null = null
 let lastLocationFetchAt = 0
 let activeWatchId: number | null = null
 const watchSubscribers = new Set<WatchSubscriber>()
+let hydratedStoredLocation = false
 
 function logLocation(event: string, details: Record<string, unknown> = {}) {
   console.info(`[location] ${event}`, details)
@@ -126,6 +129,68 @@ function writeStoredPermissionDecision(state: Extract<CivilLocationPermissionSta
   }
 }
 
+function readStoredLocation(): CivilLocation | null {
+  if (typeof window === 'undefined') return null
+  try {
+    const raw = window.localStorage.getItem(LOCATION_CACHE_STORAGE_KEY)
+    if (!raw) return null
+    const parsed = JSON.parse(raw) as Partial<CivilLocation> | null
+    if (!parsed) return null
+    if (
+      typeof parsed.latitude !== 'number' ||
+      !Number.isFinite(parsed.latitude) ||
+      typeof parsed.longitude !== 'number' ||
+      !Number.isFinite(parsed.longitude) ||
+      typeof parsed.timestamp !== 'number' ||
+      !Number.isFinite(parsed.timestamp)
+    ) {
+      return null
+    }
+
+    return {
+      latitude: parsed.latitude,
+      longitude: parsed.longitude,
+      accuracy: typeof parsed.accuracy === 'number' && Number.isFinite(parsed.accuracy) ? parsed.accuracy : null,
+      heading: typeof parsed.heading === 'number' && Number.isFinite(parsed.heading) ? parsed.heading : null,
+      timestamp: parsed.timestamp,
+    }
+  } catch {
+    return null
+  }
+}
+
+function writeStoredLocation(location: CivilLocation) {
+  if (typeof window === 'undefined') return
+  try {
+    window.localStorage.setItem(LOCATION_CACHE_STORAGE_KEY, JSON.stringify(location))
+  } catch {
+    // ignore storage write failures
+  }
+}
+
+function clearStoredLocation() {
+  if (typeof window === 'undefined') return
+  try {
+    window.localStorage.removeItem(LOCATION_CACHE_STORAGE_KEY)
+  } catch {
+    // ignore storage write failures
+  }
+}
+
+function ensureHydratedStoredLocation() {
+  if (hydratedStoredLocation) return
+  hydratedStoredLocation = true
+  const storedLocation = readStoredLocation()
+  if (!storedLocation) return
+  cachedLocation = storedLocation
+  lastLocationFetchAt = storedLocation.timestamp
+  logLocation('cache_hydrated', {
+    latitude: roundCoordinate(storedLocation.latitude),
+    longitude: roundCoordinate(storedLocation.longitude),
+    ageMs: Date.now() - storedLocation.timestamp,
+  })
+}
+
 function mapErrorMessage(code: CivilLocationErrorCode) {
   switch (code) {
     case 'permission_denied':
@@ -165,6 +230,7 @@ function setCachedLocation(location: CivilLocation, reason?: string) {
   cachedLocation = location
   lastLocationFetchAt = Date.now()
   writeStoredPermissionDecision('granted')
+  writeStoredLocation(location)
   logLocation('position_fetched', {
     reason,
     latitude: roundCoordinate(location.latitude),
@@ -182,6 +248,7 @@ function mapGeolocationError(
   const code = error?.code
   if (code === 1) {
     writeStoredPermissionDecision('denied')
+    clearStoredLocation()
     return buildResult({
       ok: false,
       state: 'denied',
@@ -227,15 +294,22 @@ async function queryPermissionState(reason?: string): Promise<CivilLocationPermi
 }
 
 export async function getLocationPermissionState(reason?: string): Promise<CivilLocationPermissionState> {
+  ensureHydratedStoredLocation()
   if (!isLocationSupported()) {
     logLocation('permission_state', { reason, state: 'unsupported' })
     return 'unsupported'
   }
 
   const queried = await queryPermissionState(reason)
-  if (queried) return queried
+  const storedDecision = readStoredPermissionDecision() ?? (cachedLocation ? 'granted' : null)
 
-  const storedDecision = readStoredPermissionDecision()
+  if (queried === 'granted' || queried === 'denied') return queried
+  if (queried === 'prompt' && storedDecision === 'granted') {
+    logLocation('permission_state', { reason, state: 'granted', source: 'stored-granted-override' })
+    return 'granted'
+  }
+  if (queried === 'prompt') return queried
+
   const fallbackState = storedDecision ?? 'prompt'
   logLocation('permission_state', { reason, state: fallbackState, source: storedDecision ? 'local-storage' : 'fallback' })
   return fallbackState
@@ -301,10 +375,12 @@ function readBrowserLocation(options: Required<Pick<LocationRequestOptions, 'hig
 }
 
 export function getCachedLocation() {
+  ensureHydratedStoredLocation()
   return cachedLocation
 }
 
 export async function getCurrentLocation(options: LocationRequestOptions = {}): Promise<CivilLocationResult> {
+  ensureHydratedStoredLocation()
   const reason = options.reason ?? 'unspecified'
   const maximumAgeMs = options.maximumAgeMs ?? DEFAULT_MAXIMUM_AGE_MS
   const minIntervalMs = options.minIntervalMs ?? DEFAULT_MIN_INTERVAL_MS
@@ -322,6 +398,24 @@ export async function getCurrentLocation(options: LocationRequestOptions = {}): 
       location: cachedLocation,
       fromCache: true,
     })
+  }
+
+  if (!options.userInitiated && permissionState === 'granted' && cachedLocation) {
+    const ageMs = Date.now() - cachedLocation.timestamp
+    if (ageMs <= STORED_LOCATION_REUSE_MAX_AGE_MS) {
+      logLocation('cache_reused_after_reload', {
+        reason,
+        ageMs,
+        latitude: roundCoordinate(cachedLocation.latitude),
+        longitude: roundCoordinate(cachedLocation.longitude),
+      })
+      return buildResult({
+        ok: true,
+        state: 'granted',
+        location: cachedLocation,
+        fromCache: true,
+      })
+    }
   }
 
   if (permissionState === 'unsupported') {

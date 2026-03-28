@@ -18,6 +18,7 @@ import {
 import { calculateDistanceKm, fetchDrivingRoute, type DrivingRoute, type DrivingRouteStep } from '../../_lib/addressSearch'
 import { isLocationSupported, startLocationWatch } from '../../_lib/locationService'
 import { createNavigationEngine, type NavigationEngineSnapshot } from '../../_lib/navigationEngine'
+import { requestOrientationPermission } from '../../_lib/orientationService'
 import { useViewerStore } from '../../_lib/viewerStore'
 
 type MapPoint = {
@@ -496,17 +497,14 @@ export const AddressDirectionsMap = forwardRef<AddressDirectionsMapHandle, Addre
   }, [activeCourseHeading, navigationEngineState?.mapBearing])
   const followCameraCenter = useMemo(() => {
     if (!activeOrigin) return null
-    if (typeof navigationEngineState?.correctedPoint?.latitude === 'number' && typeof navigationEngineState?.correctedPoint?.longitude === 'number') {
-      return {
-        latitude: navigationEngineState.correctedPoint.latitude,
-        longitude: navigationEngineState.correctedPoint.longitude,
-      }
+    if (typeof navigationEngineState?.cameraCenter?.latitude === 'number' && typeof navigationEngineState?.cameraCenter?.longitude === 'number') {
+      return navigationEngineState.cameraCenter
     }
     return {
       latitude: activeOrigin.latitude,
       longitude: activeOrigin.longitude,
     }
-  }, [activeOrigin, navigationEngineState?.correctedPoint?.latitude, navigationEngineState?.correctedPoint?.longitude])
+  }, [activeOrigin, navigationEngineState?.cameraCenter?.latitude, navigationEngineState?.cameraCenter?.longitude])
   const headingCardinalLabel = useMemo(
     () => resolveHeadingCardinalLabel(activeCourseHeading ?? deviceHeading, activeRouteCoordinates),
     [activeCourseHeading, activeRouteCoordinates, deviceHeading],
@@ -800,20 +798,9 @@ export const AddressDirectionsMap = forwardRef<AddressDirectionsMapHandle, Addre
     setNavigationEngineState(null)
     setCourseHeading(null)
 
-    if (typeof window !== 'undefined' && 'DeviceOrientationEvent' in window) {
-      const OrientationEventCtor = window.DeviceOrientationEvent as typeof DeviceOrientationEvent & {
-        requestPermission?: () => Promise<'granted' | 'denied'>
-      }
-      if (typeof OrientationEventCtor.requestPermission === 'function') {
-        try {
-          const permission = await OrientationEventCtor.requestPermission()
-          if (permission !== 'granted') {
-            setDeviceHeading(null)
-          }
-        } catch {
-          setDeviceHeading(null)
-        }
-      }
+    const orientationPermission = await requestOrientationPermission('address-directions-navigation')
+    if (orientationPermission !== 'granted') {
+      setDeviceHeading(null)
     }
 
     if (wrapperRef.current?.requestFullscreen) {
@@ -1188,13 +1175,12 @@ export const AddressDirectionsMap = forwardRef<AddressDirectionsMapHandle, Addre
       if (!map) return
       map.stop?.()
       map.resize?.()
-      map.easeTo({
+      map.jumpTo({
         center: [followCameraCenter.longitude, followCameraCenter.latitude],
         zoom: ACTIVE_NAV_ZOOM,
         pitch: ACTIVE_NAV_PITCH,
-        bearing: resolveShortestMapBearing(map.getBearing?.(), activeBearing),
+        bearing: activeBearing,
         padding: ACTIVE_NAV_CAMERA_PADDING,
-        duration: 0,
       })
       map.triggerRepaint?.()
     })
@@ -1480,13 +1466,12 @@ export const AddressDirectionsMap = forwardRef<AddressDirectionsMapHandle, Addre
           latitude: activeOrigin.latitude,
           longitude: activeOrigin.longitude,
         }
-        map.easeTo({
+        map.jumpTo({
           center: [nextCenter.longitude, nextCenter.latitude],
           zoom: targetZoom,
           pitch: ACTIVE_NAV_PITCH,
-          bearing: resolveShortestMapBearing(map.getBearing?.(), activeBearing),
+          bearing: activeBearing,
           padding: ACTIVE_NAV_CAMERA_PADDING,
-          duration: ACTIVE_NAV_FOLLOW_DURATION_MS,
         })
         map.triggerRepaint?.()
       }

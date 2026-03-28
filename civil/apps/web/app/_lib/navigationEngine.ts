@@ -62,7 +62,7 @@ type NavigationEngineOptions = {
 
 const DEFAULT_GPS_BUFFER_SIZE = 8
 const DEFAULT_CORRECTED_BUFFER_SIZE = 6
-const DEFAULT_CAMERA_LOOKAHEAD_METERS = 55
+const DEFAULT_CAMERA_LOOKAHEAD_METERS = 22
 const DEFAULT_MATCH_INTERVAL_MS = 2_500
 const DEFAULT_FORCED_MATCH_INTERVAL_MS = 1_200
 const DEFAULT_REROUTE_DISTANCE_METERS = 28
@@ -84,6 +84,7 @@ const TURN_DEGREES_THRESHOLD = 20
 const STRONG_TURN_DEGREES_THRESHOLD = 45
 const LOCAL_ROUTE_SEARCH_BACKTRACK_SEGMENTS = 24
 const LOCAL_ROUTE_SEARCH_FORWARD_SEGMENTS = 96
+const MAP_BEARING_LOOKAHEAD_METERS = 8
 
 function logNavigation(event: string, details: Record<string, unknown>) {
   console.debug(`[navigation] ${event}`, details)
@@ -432,7 +433,6 @@ export function createNavigationEngine(options: NavigationEngineOptions = {}) {
   const rerouteDistanceMeters = options.rerouteDistanceMeters ?? DEFAULT_REROUTE_DISTANCE_METERS
   const snapDistanceMeters = options.snapDistanceMeters ?? DEFAULT_SNAP_DISTANCE_METERS
   const headingBlendFactor = options.headingBlendFactor ?? DEFAULT_HEADING_BLEND_FACTOR
-
   let gpsBuffer: NavigationGpsSample[] = []
   let correctedHistory: NavigationGpsSample[] = []
   let lastSnapshot: NavigationEngineSnapshot | null = null
@@ -626,6 +626,15 @@ export function createNavigationEngine(options: NavigationEngineOptions = {}) {
         ? bearingAlongRoute(route, correctedProjection.alongRouteMeters + predictiveLeadMeters, 18) ?? heading
         : heading)
     const resolvedHeading = typeof anticipatedHeading === 'number' && Number.isFinite(anticipatedHeading) ? normalizeHeading(anticipatedHeading) : null
+    const routeAheadBearing =
+      route && correctedProjection
+        ? bearingAlongRoute(route, correctedProjection.alongRouteMeters + predictiveLeadMeters, MAP_BEARING_LOOKAHEAD_METERS)
+        : null
+    const targetMapBearing =
+      typeof routeAheadBearing === 'number' && Number.isFinite(routeAheadBearing)
+        ? normalizeHeading(routeAheadBearing)
+        : resolvedHeading
+    const mapBearing = typeof targetMapBearing === 'number' && Number.isFinite(targetMapBearing) ? targetMapBearing : 0
     const cameraCenter = route && correctedProjection && resolvedHeading !== null
       ? pointAlongRoute(route, correctedProjection.alongRouteMeters + predictiveLeadMeters + cameraLookaheadMeters)
       : resolvedHeading !== null
@@ -648,7 +657,7 @@ export function createNavigationEngine(options: NavigationEngineOptions = {}) {
       projectedPoint: correctedProjection,
       usedMatch: Boolean(matchedPoint),
       heading: resolvedHeading,
-      mapBearing: resolvedHeading === null ? 0 : resolvedHeading,
+      mapBearing,
       cameraCenter,
       predictiveLeadMeters,
       deviationMeters,
@@ -666,6 +675,7 @@ export function createNavigationEngine(options: NavigationEngineOptions = {}) {
       predictiveLeadMeters: roundDistance(nextSnapshot.predictiveLeadMeters),
       deviationMeters: roundDistance(nextSnapshot.deviationMeters),
       heading: roundDistance(nextSnapshot.heading),
+      mapBearing: roundDistance(nextSnapshot.mapBearing),
     })
 
     if (turnAnticipation) {
