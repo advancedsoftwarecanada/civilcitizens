@@ -643,7 +643,7 @@ export default function UserPostPage({ params }: PageProps) {
             ) : status === 'error' ? (
               <div className="rounded-[28px] border border-white/70 bg-white/80 p-6 text-sm text-red-600 shadow-subtle">Unable to load this post right now.</div>
             ) : post ? (
-              <article className="flex min-h-[calc(var(--cc-viewport-height)-7.5rem)] flex-col rounded-[32px] border border-white/70 bg-white/95 p-6 shadow-panel sm:p-8 xl:min-h-0">
+              <article className="cc-thread-surface flex min-h-[calc(var(--cc-viewport-height)-7.5rem)] flex-col rounded-[32px] border border-white/70 bg-white/95 p-6 shadow-panel sm:p-8 xl:min-h-0">
                 <nav className="mb-4 text-xs text-gray-500">
                 <Link href="/home" className="hover:underline">
                   Home
@@ -834,7 +834,6 @@ export default function UserPostPage({ params }: PageProps) {
                       currentUser={viewer}
                     />
                   </div>
-                  {viewer && !mobileReplyComposerActive ? <div className="h-28 xl:hidden" aria-hidden="true" /> : null}
                 </section>
 
                 {repostModalOpen && shareTarget ? (

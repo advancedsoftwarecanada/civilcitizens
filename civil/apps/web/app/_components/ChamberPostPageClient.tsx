@@ -763,7 +763,7 @@ export default function ChamberPostPage({ params }: PageProps) {
       ) : status === 'error' ? (
         <div className="rounded border bg-white p-6 text-sm text-red-600 shadow-sm">Unable to load this post right now.</div>
       ) : post ? (
-        <article className="flex min-h-[calc(var(--cc-viewport-height)-7.5rem)] flex-col rounded border bg-white p-6 shadow-sm lg:min-h-0">
+        <article className="cc-thread-surface flex min-h-[calc(var(--cc-viewport-height)-7.5rem)] flex-col rounded border bg-white p-6 shadow-sm lg:min-h-0">
           <nav className="mb-4 text-xs text-gray-500">
             <Link href="/home" className="hover:underline">
               Home
@@ -960,7 +960,6 @@ export default function ChamberPostPage({ params }: PageProps) {
                 currentUser={viewer}
               />
             </div>
-            {viewer && !mobileReplyComposerActive ? <div className="h-28 lg:hidden" aria-hidden="true" /> : null}
           </section>
 
           {repostModalOpen && shareTarget ? (
