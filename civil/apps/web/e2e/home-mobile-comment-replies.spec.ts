@@ -257,4 +257,37 @@ test.describe('Home mobile feed comments', () => {
     await expect(page.getByRole('group', { name: 'Comment composer' })).toBeVisible()
     await expect(threadComment.getByLabel(/Reply composer for @/)).toHaveCount(0)
   })
+
+  test('thread bottom comment composer stays fixed near the bottom while the keyboard opens', async ({ page, request }) => {
+    await installVisualViewportMock(page)
+    const { postBody } = await seedHomeReplyScenario(page, request)
+
+    await page.setViewportSize(MOBILE_VIEWPORT)
+    await page.goto('/home')
+    await page.getByRole('button', { name: 'Latest' }).click()
+
+    const postCard = page.locator('[data-feed-post-id]').filter({ hasText: postBody }).first()
+    await expect(postCard).toBeVisible()
+    await postCard.getByRole('link', { name: 'Open comments' }).click()
+    await expect(page).toHaveURL(/\/u\/.+\/posts\//)
+
+    const composer = page.getByRole('group', { name: 'Comment composer' })
+    const composerInput = composer.locator('input[type="text"]').first()
+
+    await expect(composer).toBeVisible()
+    await composerInput.focus()
+    await setMockKeyboard(page, true)
+
+    await expect
+      .poll(async () => {
+        return page.evaluate(() => {
+          const composer = document.querySelector('[role="group"][aria-label="Comment composer"]')
+          const rect = composer?.getBoundingClientRect() ?? null
+          const viewportHeight = window.visualViewport?.height ?? window.innerHeight
+          if (!composer || !rect) return false
+          return rect.bottom <= viewportHeight + 8 && rect.top >= Math.max(0, viewportHeight - 170)
+        })
+      })
+      .toBe(true)
+  })
 })

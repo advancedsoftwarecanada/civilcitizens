@@ -69,6 +69,7 @@ const FAMILY_NAV_BUTTONS: Array<{
 
 const DRAWER_TRANSITION_MS = 320
 const MOBILE_MORE_DRAWER_CLOSE_EVENT = 'civil:mobile-more-close'
+const MOBILE_DRAWER_STATE_EVENT = 'civil:mobile-drawer-state'
 
 type NavButtonKey = (typeof DEFAULT_NAV_BUTTONS)[number]['key']
 
@@ -326,6 +327,20 @@ export default function MobileDock() {
       document.body.style.overflow = original
     }
   }, [menuMounted, moreMounted])
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    const open = menuMounted || moreMounted
+    window.dispatchEvent(new CustomEvent(MOBILE_DRAWER_STATE_EVENT, { detail: { open } }))
+  }, [menuMounted, moreMounted])
+
+  useEffect(
+    () => () => {
+      if (typeof window === 'undefined') return
+      window.dispatchEvent(new CustomEvent(MOBILE_DRAWER_STATE_EVENT, { detail: { open: false } }))
+    },
+    [],
+  )
 
   const handleCloseMenu = useCallback(() => {
     setMenuOpen(false)

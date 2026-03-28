@@ -42,6 +42,7 @@ import {
 const THREAD_PAGE_LIMIT = 20
 const MESSAGE_PAGE_LIMIT = 20
 const MOBILE_MORE_DRAWER_CLOSE_EVENT = 'civil:mobile-more-close'
+const MOBILE_DRAWER_STATE_EVENT = 'civil:mobile-drawer-state'
 
 function isFamilyConversationThreadId(threadId: string) {
   return threadId.startsWith('family-parent-') || threadId.startsWith('family-member-')
@@ -1399,6 +1400,7 @@ function StandardMessagesPageClient({ initialThreadId, initialInboxSection, view
   const [isMobileViewport, setIsMobileViewport] = useState(false)
   const [mobileThreadPanelHeight, setMobileThreadPanelHeight] = useState<string | null>(null)
   const [mobileMessagesViewportHeight, setMobileMessagesViewportHeight] = useState<string | null>(null)
+  const [mobileDockDrawerOpen, setMobileDockDrawerOpen] = useState(false)
   const mobileKeyboard = useMobileKeyboardState()
 
   useEffect(() => {
@@ -1439,6 +1441,23 @@ function StandardMessagesPageClient({ initialThreadId, initialInboxSection, view
       documentElement.classList.remove('cc-mobile-scroll-lock')
     }
   }, [isMobileViewport])
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return undefined
+
+    const handleDrawerState = (event: Event) => {
+      const open = Boolean((event as CustomEvent<{ open?: boolean }>).detail?.open)
+      setMobileDockDrawerOpen(open)
+    }
+
+    window.addEventListener(MOBILE_DRAWER_STATE_EVENT, handleDrawerState)
+    return () => window.removeEventListener(MOBILE_DRAWER_STATE_EVENT, handleDrawerState)
+  }, [])
+
+  useEffect(() => {
+    if (!mobileDockDrawerOpen) return
+    dismissMobileKeyboard()
+  }, [mobileDockDrawerOpen])
 
   useEffect(() => {
     if (initialInboxSection && (initialInboxSection !== 'family' || showFamilyInbox)) {
@@ -3904,7 +3923,17 @@ function StandardMessagesPageClient({ initialThreadId, initialInboxSection, view
     const title = getThreadTitle(activeThread)
     const threadProfileHref = otherUser?.handle ? `/u/${encodeURIComponent(otherUser.handle)}` : null
     const headerGroupParticipants = getOtherParticipants(activeThread, me?.id).slice(0, 5)
-    const showMobileDockComposer = isMobileViewport
+    const mobileOverlayOpen =
+      mobileDockDrawerOpen ||
+      callPermissionModalOpen ||
+      manageMembersOpen ||
+      marketSelectBuyerConfirmOpen ||
+      marketUnselectBuyerConfirmOpen ||
+      marketBuyerDeclineConfirmOpen ||
+      marketMarkSoldConfirmOpen ||
+      Boolean(lightboxUrl)
+
+    const showMobileDockComposer = isMobileViewport && !mobileOverlayOpen
     const mobileComposerBottomSpacer = showMobileDockComposer ? `${MOBILE_THREAD_COMPOSER_SHELL_HEIGHT_PX}px` : undefined
 
     const handleComposerFocus = () => {
