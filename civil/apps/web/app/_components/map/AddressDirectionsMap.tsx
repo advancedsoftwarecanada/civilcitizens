@@ -91,6 +91,7 @@ const ACTIVE_NAV_ZOOM = 19.4
 const ACTIVE_NAV_PITCH = 58
 const ACTIVE_NAV_FOLLOW_DURATION_MS = 220
 const LIVE_MARKER_ANIMATION_MS = 900
+const ACTIVE_NAV_MARKER_ANIMATION_MS = 180
 const ROUTE_LINE_PULSE_DURATION_MS = 2200
 const ROUTE_LINE_BASE_RGB = { red: 37, green: 99, blue: 235 }
 const ROUTE_LINE_PULSE_RGB = { red: 96, green: 165, blue: 250 }
@@ -102,7 +103,7 @@ const APPROACH_ROUTE_LINE_WIDTH = 6
 const APPROACH_ROUTE_LINE_COLOR = '#f59e0b'
 const AVATAR_OVERLAP_THRESHOLD_METERS = 20
 const AVATAR_OVERLAP_SPACING_METERS = 18
-const NAVIGATION_CAMERA_LOOKAHEAD_METERS = 55
+const ACTIVE_NAV_CAMERA_PADDING = { top: 132, right: 40, bottom: 196, left: 40 } as const
 
 function normalizeHeading(value: number) {
   const normalized = value % 360
@@ -491,21 +492,21 @@ export const AddressDirectionsMap = forwardRef<AddressDirectionsMapHandle, Addre
       return navigationEngineState.mapBearing
     }
     if (activeCourseHeading === null) return 0
-    return -activeCourseHeading
+    return activeCourseHeading
   }, [activeCourseHeading, navigationEngineState?.mapBearing])
   const followCameraCenter = useMemo(() => {
     if (!activeOrigin) return null
-    if ((navStatus === 'active' || navStatus === 'starting') && navigationEngineState?.cameraCenter) {
-      return navigationEngineState.cameraCenter
-    }
-    if (activeCourseHeading === null) {
+    if (typeof navigationEngineState?.correctedPoint?.latitude === 'number' && typeof navigationEngineState?.correctedPoint?.longitude === 'number') {
       return {
-        latitude: activeOrigin.latitude,
-        longitude: activeOrigin.longitude,
+        latitude: navigationEngineState.correctedPoint.latitude,
+        longitude: navigationEngineState.correctedPoint.longitude,
       }
     }
-    return offsetPointAlongBearing(activeOrigin, activeCourseHeading, NAVIGATION_CAMERA_LOOKAHEAD_METERS)
-  }, [activeCourseHeading, activeOrigin, navStatus, navigationEngineState])
+    return {
+      latitude: activeOrigin.latitude,
+      longitude: activeOrigin.longitude,
+    }
+  }, [activeOrigin, navigationEngineState?.correctedPoint?.latitude, navigationEngineState?.correctedPoint?.longitude])
   const headingCardinalLabel = useMemo(
     () => resolveHeadingCardinalLabel(activeCourseHeading ?? deviceHeading, activeRouteCoordinates),
     [activeCourseHeading, activeRouteCoordinates, deviceHeading],
@@ -1192,6 +1193,7 @@ export const AddressDirectionsMap = forwardRef<AddressDirectionsMapHandle, Addre
         zoom: ACTIVE_NAV_ZOOM,
         pitch: ACTIVE_NAV_PITCH,
         bearing: resolveShortestMapBearing(map.getBearing?.(), activeBearing),
+        padding: ACTIVE_NAV_CAMERA_PADDING,
         duration: 0,
       })
       map.triggerRepaint?.()
@@ -1356,11 +1358,25 @@ export const AddressDirectionsMap = forwardRef<AddressDirectionsMapHandle, Addre
 
         const startLng = previousLngLat.lng
         const startLat = previousLngLat.lat
+        const markerDistanceMeters = calculateDistanceMeters(
+          { latitude: startLat, longitude: startLng },
+          { latitude: targetLngLat[1], longitude: targetLngLat[0] },
+        )
+        const animationDurationMs =
+          navStatus === 'active' || navStatus === 'starting'
+            ? markerDistanceMeters > 12
+              ? 0
+              : ACTIVE_NAV_MARKER_ANIMATION_MS
+            : LIVE_MARKER_ANIMATION_MS
+        if (animationDurationMs <= 0) {
+          marker.setLngLat(targetLngLat)
+          return
+        }
         const startedAt = typeof performance !== 'undefined' ? performance.now() : Date.now()
 
         const animateMarker = (timestamp: number) => {
           const elapsed = timestamp - startedAt
-          const progress = Math.max(0, Math.min(1, elapsed / LIVE_MARKER_ANIMATION_MS))
+          const progress = Math.max(0, Math.min(1, elapsed / animationDurationMs))
           const eased = 1 - Math.pow(1 - progress, 3)
           const nextLng = startLng + (targetLngLat[0] - startLng) * eased
           const nextLat = startLat + (targetLngLat[1] - startLat) * eased
@@ -1469,6 +1485,7 @@ export const AddressDirectionsMap = forwardRef<AddressDirectionsMapHandle, Addre
           zoom: targetZoom,
           pitch: ACTIVE_NAV_PITCH,
           bearing: resolveShortestMapBearing(map.getBearing?.(), activeBearing),
+          padding: ACTIVE_NAV_CAMERA_PADDING,
           duration: ACTIVE_NAV_FOLLOW_DURATION_MS,
         })
         map.triggerRepaint?.()
