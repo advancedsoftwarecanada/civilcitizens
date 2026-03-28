@@ -11,6 +11,7 @@ import CivilCommentIdentity from './CivilCommentIdentity'
 import VerifiedAvatar from './VerifiedAvatar'
 import { pushToast } from './useToasts'
 import { formatUserDisplayName } from '../_lib/text'
+import { useMobileKeyboardState } from '../_lib/mobileKeyboard'
 
 const MOBILE_REPLY_BREAKPOINT_QUERY = '(max-width: 1023px)'
 
@@ -452,6 +453,7 @@ export default function CommentThread({
   onReplyComposerChange,
   currentUser,
 }: CommentThreadProps) {
+  const keyboardState = useMobileKeyboardState()
   const [highlightedCommentId, setHighlightedCommentId] = useState<string | null>(null)
   const [activeReplyCommentId, setActiveReplyCommentId] = useState<string | null>(null)
   const [isMobileReplyMode, setIsMobileReplyMode] = useState(false)
@@ -568,8 +570,10 @@ export default function CommentThread({
   }, [activeReplyCommentId, comments])
 
   useEffect(() => {
-    onReplyComposerChange?.(Boolean(activeReplyCommentId) && isMobileReplyMode)
-  }, [activeReplyCommentId, isMobileReplyMode, onReplyComposerChange])
+    const blockingBottomComposer =
+      Boolean(activeReplyCommentId) && isMobileReplyMode && (keyboardState.keyboardOpen || keyboardState.activeEditable)
+    onReplyComposerChange?.(blockingBottomComposer)
+  }, [activeReplyCommentId, isMobileReplyMode, keyboardState.activeEditable, keyboardState.keyboardOpen, onReplyComposerChange])
 
   if (!comments.length) {
     return <div className="rounded-2xl border border-dashed border-slate-200 bg-white/60 px-4 py-4 text-sm text-slate-500">No comments yet. Start the conversation!</div>

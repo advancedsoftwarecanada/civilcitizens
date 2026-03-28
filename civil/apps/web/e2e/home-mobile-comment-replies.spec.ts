@@ -256,6 +256,7 @@ test.describe('Home mobile feed comments', () => {
     await setMockKeyboard(page, false)
     await expect(page.getByRole('group', { name: 'Comment composer' })).toBeVisible()
     await expect(threadComment.getByLabel(/Reply composer for @/)).toHaveCount(0)
+    await expect(page.getByRole('navigation', { name: 'Mobile navigation' })).toBeVisible()
   })
 
   test('thread bottom comment composer stays fixed near the bottom while the keyboard opens', async ({ page, request }) => {
@@ -289,5 +290,26 @@ test.describe('Home mobile feed comments', () => {
         })
       })
       .toBe(true)
+
+    await setMockKeyboard(page, false)
+
+    await expect
+      .poll(async () => {
+        return page.evaluate(() => {
+          const composerInput = document.querySelector('[role="group"][aria-label="Comment composer"] input[type="text"]')
+          return {
+            keyboardOpen: document.documentElement.classList.contains('cc-keyboard-open'),
+            htmlLocked: document.documentElement.classList.contains('cc-mobile-scroll-lock'),
+            bodyLocked: document.body.classList.contains('cc-mobile-scroll-lock'),
+            inputFocused: document.activeElement === composerInput,
+          }
+        })
+      })
+      .toEqual({
+        keyboardOpen: false,
+        htmlLocked: false,
+        bodyLocked: false,
+        inputFocused: false,
+      })
   })
 })

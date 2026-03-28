@@ -31,9 +31,12 @@ export default function ThreadBottomCommentComposer({
   const [submitting, setSubmitting] = useState(false)
   const [isMobileViewport, setIsMobileViewport] = useState(false)
   const [inputFocused, setInputFocused] = useState(false)
+  const [focusHandoffActive, setFocusHandoffActive] = useState(false)
   const inputRef = useRef<HTMLInputElement | null>(null)
   const focusIntervalRef = useRef<number | null>(null)
   const focusTimeoutRef = useRef<number | null>(null)
+  const handoffTimeoutRef = useRef<number | null>(null)
+  const previousKeyboardOpenRef = useRef(false)
   const touchAtRef = useRef(0)
 
   const canSubmit = value.trim().length > 0 && !submitting
@@ -47,6 +50,14 @@ export default function ThreadBottomCommentComposer({
       window.clearTimeout(focusTimeoutRef.current)
       focusTimeoutRef.current = null
     }
+  }, [])
+
+  const clearFocusHandoff = useCallback(() => {
+    if (handoffTimeoutRef.current) {
+      window.clearTimeout(handoffTimeoutRef.current)
+      handoffTimeoutRef.current = null
+    }
+    setFocusHandoffActive(false)
   }, [])
 
   const setScrollLock = useCallback((locked: boolean) => {
@@ -91,10 +102,31 @@ export default function ThreadBottomCommentComposer({
     clearFocusStabilization()
   }, [clearFocusStabilization])
 
+  const releaseComposerFocus = useCallback(() => {
+    stopFocusStabilization()
+    clearFocusHandoff()
+    inputRef.current?.blur()
+    setInputFocused(false)
+    setScrollLock(false)
+  }, [clearFocusHandoff, setScrollLock, stopFocusStabilization])
+
+  const beginFocusHandoff = useCallback(() => {
+    if (!isMobileViewport) return
+    setFocusHandoffActive(true)
+    if (handoffTimeoutRef.current) {
+      window.clearTimeout(handoffTimeoutRef.current)
+    }
+    handoffTimeoutRef.current = window.setTimeout(() => {
+      setFocusHandoffActive(false)
+      handoffTimeoutRef.current = null
+    }, 1200)
+  }, [isMobileViewport])
+
   const handlePressStart = useCallback(() => {
     if (!isMobileViewport) return
     setScrollLock(true)
-  }, [isMobileViewport, setScrollLock])
+    beginFocusHandoff()
+  }, [beginFocusHandoff, isMobileViewport, setScrollLock])
 
   const markComposerTouch = useCallback(() => {
     touchAtRef.current = Date.now()
@@ -133,13 +165,14 @@ export default function ThreadBottomCommentComposer({
     try {
       await onSubmit(trimmed)
       setValue('')
+      releaseComposerFocus()
     } catch (error) {
       console.error('Unable to submit comment', error)
       pushToast('Unable to post your comment right now.', 'error')
     } finally {
       setSubmitting(false)
     }
-  }, [onSubmit, stopFocusStabilization, submitting, value])
+  }, [onSubmit, releaseComposerFocus, stopFocusStabilization, submitting, value])
 
   useEffect(() => {
     if (typeof window === 'undefined') return
@@ -171,11 +204,26 @@ export default function ThreadBottomCommentComposer({
   useEffect(() => {
     if (!isMobileViewport) {
       setScrollLock(false)
+      clearFocusHandoff()
       return
     }
 
-    setScrollLock(inputFocused || keyboardState.keyboardOpen)
-  }, [inputFocused, isMobileViewport, keyboardState.keyboardOpen, setScrollLock])
+    setScrollLock(keyboardState.keyboardOpen || focusHandoffActive)
+  }, [clearFocusHandoff, focusHandoffActive, isMobileViewport, keyboardState.keyboardOpen, setScrollLock])
+
+  useEffect(() => {
+    const wasKeyboardOpen = previousKeyboardOpenRef.current
+    previousKeyboardOpenRef.current = keyboardState.keyboardOpen
+
+    if (keyboardState.keyboardOpen) {
+      clearFocusHandoff()
+      return
+    }
+
+    if (wasKeyboardOpen && inputFocused) {
+      releaseComposerFocus()
+    }
+  }, [inputFocused, keyboardState.keyboardOpen, releaseComposerFocus])
 
   useEffect(() => {
     if (!autoFocus) return
@@ -184,15 +232,17 @@ export default function ThreadBottomCommentComposer({
 
     return () => {
       clearFocusStabilization()
+      clearFocusHandoff()
     }
-  }, [autoFocus, clearFocusStabilization, scheduleFocusStabilization])
+  }, [autoFocus, clearFocusHandoff, clearFocusStabilization, scheduleFocusStabilization])
 
   useEffect(
     () => () => {
       stopFocusStabilization()
+      clearFocusHandoff()
       setScrollLock(false)
     },
-    [setScrollLock, stopFocusStabilization],
+    [clearFocusHandoff, setScrollLock, stopFocusStabilization],
   )
 
   return (
@@ -234,6 +284,7 @@ export default function ThreadBottomCommentComposer({
             }}
             onBlur={() => {
               setInputFocused(false)
+              clearFocusHandoff()
               stopFocusStabilization()
             }}
             onKeyDown={(event) => {
