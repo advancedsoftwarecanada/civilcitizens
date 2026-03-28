@@ -22,12 +22,6 @@ export default function MobileDockVisibility() {
   const inviteGuestMode = useInviteViewStore((state) => state.inviteGuestMode)
   const [hasSession, setHasSession] = useState(false)
   const isInviteRoute = hasResolvedPathname ? resolvedPathname.includes('/invite/') : false
-  const isPostThreadRoute = hasResolvedPathname
-    ? (/^\/u\/[^/]+\/posts\/[^/]+$/i.test(resolvedPathname) ||
-      /^\/[a-z]{2}\/[^/]+\/posts\/[^/]+$/i.test(resolvedPathname) ||
-      /^\/c\/[a-z]{2}\/[^/]+\/posts\/[^/]+$/i.test(resolvedPathname) ||
-      /^\/post\/[^/]+$/i.test(resolvedPathname))
-    : false
 
   useEffect(() => {
     if (typeof window === 'undefined') return
@@ -58,7 +52,6 @@ export default function MobileDockVisibility() {
     resolvedPathname.startsWith('/verify') ||
     resolvedPathname.startsWith('/install/') ||
     (isInviteRoute && inviteGuestMode !== false) ||
-    isPostThreadRoute ||
     isMeetingRoomPath(resolvedPathname)
   ) {
     return null

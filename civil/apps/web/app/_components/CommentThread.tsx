@@ -1,6 +1,7 @@
 "use client"
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { flushSync } from 'react-dom'
 import clsx from 'clsx'
 import type { IconType } from 'react-icons'
 import { LuArrowBigDown, LuArrowBigUp, LuMessageSquare } from 'react-icons/lu'
@@ -75,7 +76,7 @@ type CommentItemProps = CommentContextProps & {
   depth: number
   replying: boolean
   activeReplyCommentId: string | null
-  setReplyingCommentId: (commentId: string | null) => void
+  setReplyingCommentId: (commentId: string | null, options?: { focusComposer?: boolean }) => void
   isMobileReplyMode: boolean
 }
 
@@ -194,6 +195,15 @@ function commentContainsId(comment: ApiComment, targetId: string): boolean {
   return comment.replies.some((reply) => commentContainsId(reply, targetId))
 }
 
+function findCommentById(comments: ApiComment[], targetId: string): ApiComment | null {
+  for (const comment of comments) {
+    if (comment.id === targetId) return comment
+    const replyMatch = findCommentById(comment.replies, targetId)
+    if (replyMatch) return replyMatch
+  }
+  return null
+}
+
 function CommentItem(props: CommentItemProps) {
   const {
     comment,
@@ -264,8 +274,8 @@ function CommentItem(props: CommentItemProps) {
       pushToast('Sign in to reply to comments.', 'info')
       return
     }
-    setReplyingCommentId(replying ? null : comment.id)
-  }, [canReply, comment.id, replying, setReplyingCommentId])
+    setReplyingCommentId(replying ? null : comment.id, { focusComposer: isMobileReplyMode && !replying })
+  }, [canReply, comment.id, isMobileReplyMode, replying, setReplyingCommentId])
 
   const toggleCollapsed = useCallback(() => {
     setCollapsed((prev) => {
@@ -301,6 +311,7 @@ function CommentItem(props: CommentItemProps) {
         className={clsx(
           'border-b border-slate-100 pb-3 pt-3 transition',
           isNested && 'ml-auto w-full',
+          replying && isMobileReplyMode && 'rounded-2xl bg-slate-50/90 px-3 ring-1 ring-slate-200',
           isHighlighted && 'rounded-2xl bg-amber-50/80 px-3 ring-2 ring-amber-300/80',
         )}
       >
@@ -394,6 +405,7 @@ function CommentItem(props: CommentItemProps) {
                   placeholder={`Reply to @${comment.author.handle}`}
                   submitLabel="Reply"
                   variant={isMobileReplyMode ? 'inline-reply' : 'default'}
+                  composerId={comment.id}
                   ariaLabel={`Reply composer for @${comment.author.handle}`}
                   onSubmit={(body) => onReply(comment.id, body)}
                   onSuccess={() => setReplyingCommentId(null)}
@@ -443,6 +455,42 @@ export default function CommentThread({
   const [highlightedCommentId, setHighlightedCommentId] = useState<string | null>(null)
   const [activeReplyCommentId, setActiveReplyCommentId] = useState<string | null>(null)
   const [isMobileReplyMode, setIsMobileReplyMode] = useState(false)
+
+  const setReplyingCommentId = useCallback(
+    (commentId: string | null, options?: { focusComposer?: boolean }) => {
+      if (!commentId) {
+        setActiveReplyCommentId(null)
+        return
+      }
+
+      if (isMobileReplyMode && options?.focusComposer && typeof document !== 'undefined') {
+        flushSync(() => {
+          setActiveReplyCommentId(commentId)
+        })
+
+        const focusComposer = () => {
+          const textarea = document.querySelector(`textarea[data-inline-reply-id="${commentId}"]`)
+          if (!(textarea instanceof HTMLTextAreaElement)) return
+          textarea.focus({ preventScroll: true })
+          const length = textarea.value.length
+          textarea.setSelectionRange(length, length)
+        }
+
+        focusComposer()
+        window.requestAnimationFrame(focusComposer)
+        window.setTimeout(focusComposer, 80)
+        window.setTimeout(focusComposer, 180)
+        const focusInterval = window.setInterval(focusComposer, 110)
+        window.setTimeout(() => {
+          window.clearInterval(focusInterval)
+        }, 880)
+        return
+      }
+
+      setActiveReplyCommentId(commentId)
+    },
+    [isMobileReplyMode],
+  )
 
   useEffect(() => {
     if (typeof window === 'undefined') return
@@ -542,7 +590,7 @@ export default function CommentThread({
           currentUser={currentUser}
           replying={activeReplyCommentId === comment.id}
           activeReplyCommentId={activeReplyCommentId}
-          setReplyingCommentId={setActiveReplyCommentId}
+          setReplyingCommentId={setReplyingCommentId}
           isMobileReplyMode={isMobileReplyMode}
         />
       ))}

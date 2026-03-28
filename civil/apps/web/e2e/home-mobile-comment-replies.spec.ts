@@ -204,10 +204,11 @@ test.describe('Home mobile feed comments', () => {
 
     await postCard.getByRole('link', { name: 'Open comments' }).click()
     await expect(page).toHaveURL(/\/u\/.+\/posts\//)
+    await expect(page.getByRole('navigation', { name: 'Mobile navigation' })).toBeVisible()
     await expect(page.getByRole('group', { name: 'Comment composer' })).toBeVisible()
   })
 
-  test('thread replies use a compact inline composer on mobile without the bottom overlay fighting it', async ({ page, request }) => {
+  test('thread replies stay inline on mobile and remain visible while the keyboard opens', async ({ page, request }) => {
     await installVisualViewportMock(page)
     const { postBody, commentBody } = await seedHomeReplyScenario(page, request)
 
@@ -219,6 +220,7 @@ test.describe('Home mobile feed comments', () => {
     await expect(postCard).toBeVisible()
     await postCard.getByRole('link', { name: 'Open comments' }).click()
     await expect(page).toHaveURL(/\/u\/.+\/posts\//)
+    await expect(page.getByRole('navigation', { name: 'Mobile navigation' })).toBeVisible()
 
     const threadComment = page.locator('article[id^="comment-"]').filter({ hasText: commentBody }).first()
     await expect(threadComment).toBeVisible()
@@ -226,24 +228,24 @@ test.describe('Home mobile feed comments', () => {
     await threadComment.getByRole('button', { name: 'Reply' }).click()
 
     const replyComposer = threadComment.getByLabel(/Reply composer for @/).first()
-    const replyInput = replyComposer.locator('textarea')
+    const replyInput = replyComposer.locator('textarea').first()
 
     await expect(replyComposer).toBeVisible()
+    await expect(replyInput).toBeFocused()
     await expect(page.getByRole('group', { name: 'Comment composer' })).toHaveCount(0)
 
-    await replyInput.focus()
     await setMockKeyboard(page, true)
 
     await expect
       .poll(async () => {
         return page.evaluate(() => {
-          const inlineReplyComposer = document.querySelector('form[aria-label^="Reply composer for @"]')
+          const replyComposer = document.querySelector('form[aria-label^="Reply composer for @"]')
           const bottomComposer = document.querySelector('[role="group"][aria-label="Comment composer"]')
-          const rect = inlineReplyComposer?.getBoundingClientRect() ?? null
+          const rect = replyComposer?.getBoundingClientRect() ?? null
           const viewportHeight = window.visualViewport?.height ?? window.innerHeight
-          const replyCenter = rect ? rect.top + rect.height / 2 : null
-          const centeredEnough = replyCenter !== null ? Math.abs(replyCenter - viewportHeight / 2) <= 120 : false
-          return Boolean(inlineReplyComposer) && !bottomComposer && Boolean(rect) && (rect?.top ?? 0) >= 0 && (rect?.bottom ?? 0) <= viewportHeight + 8 && centeredEnough
+          if (!replyComposer || bottomComposer || !rect) return false
+          const midPoint = rect.top + rect.height / 2
+          return rect.top >= 24 && rect.bottom <= viewportHeight - 24 && midPoint >= viewportHeight * 0.24 && midPoint <= viewportHeight * 0.76
         })
       })
       .toBe(true)
@@ -251,7 +253,8 @@ test.describe('Home mobile feed comments', () => {
     await replyInput.fill(`Playwright inline reply ${Date.now()}`)
     await replyComposer.getByRole('button', { name: 'Reply' }).click()
 
-    await expect(page.getByRole('group', { name: 'Comment composer' })).toBeVisible()
     await setMockKeyboard(page, false)
+    await expect(page.getByRole('group', { name: 'Comment composer' })).toBeVisible()
+    await expect(threadComment.getByLabel(/Reply composer for @/)).toHaveCount(0)
   })
 })
