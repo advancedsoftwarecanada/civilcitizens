@@ -10,6 +10,7 @@ import MessagesNavBlock from '../_components/MessagesNavBlock'
 import Modal from '../_components/Modal'
 import CivilCard from '../_components/CivilCard'
 import VerifiedAvatar from '../_components/VerifiedAvatar'
+import MobileBottomInputShell from '../_components/MobileBottomInputShell'
 import { pushToast } from '../_components/useToasts'
 import { buildApiUrl } from '../_lib/api'
 import { buildAddressesHrefFromAddress } from '../_lib/addressSearch'
@@ -3905,9 +3906,6 @@ function StandardMessagesPageClient({ initialThreadId, initialInboxSection, view
     const headerGroupParticipants = getOtherParticipants(activeThread, me?.id).slice(0, 5)
     const showMobileDockComposer = isMobileViewport
     const mobileComposerBottomSpacer = showMobileDockComposer ? `${MOBILE_THREAD_COMPOSER_SHELL_HEIGHT_PX}px` : undefined
-    const mobileComposerShellBottom = mobileKeyboard.keyboardOpen
-      ? 'var(--cc-keyboard-inset)'
-      : 'var(--mobile-dock-active-clearance)'
 
     const handleComposerFocus = () => {
       requestAnimationFrame(() => {
@@ -4693,23 +4691,14 @@ function StandardMessagesPageClient({ initialThreadId, initialInboxSection, view
             )}
           </div>
         </div>
-        {showMobileDockComposer && typeof document !== 'undefined'
-          ? createPortal(
-              <div
-                ref={mobileComposerShellRef}
-                className="fixed inset-x-0 z-[85] border-t border-slate-200 bg-white/95 px-3 shadow-[0_-8px_20px_rgba(15,23,42,0.08)] xl:hidden"
-                style={{
-                  bottom: mobileComposerShellBottom,
-                  minHeight: `${MOBILE_THREAD_COMPOSER_SHELL_HEIGHT_PX}px`,
-                  paddingTop: '6px',
-                  paddingBottom: '6px',
-                }}
-              >
-                {composerNode}
-              </div>,
-              document.body,
-            )
-          : null}
+        {showMobileDockComposer ? (
+          <MobileBottomInputShell
+            className="z-[85]"
+            style={{ minHeight: `${MOBILE_THREAD_COMPOSER_SHELL_HEIGHT_PX}px` }}
+          >
+            <div ref={mobileComposerShellRef}>{composerNode}</div>
+          </MobileBottomInputShell>
+        ) : null}
       </div>
     )
   }
