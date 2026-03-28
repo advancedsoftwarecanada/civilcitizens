@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import clsx from 'clsx'
-import { readMobileKeyboardSnapshot, useMobileKeyboardState } from '../_lib/mobileKeyboard'
+import { dismissMobileKeyboardTracking, readMobileKeyboardSnapshot, useMobileKeyboardState } from '../_lib/mobileKeyboard'
 
 const MAX_COMMENT_LENGTH = 5000
 
@@ -153,6 +153,13 @@ export default function CommentComposer({
     }
   }, [clearFocusStabilization, clearInlineReplyAlignment, isInlineReply])
 
+  const releaseInlineReplyFocus = useCallback(() => {
+    if (!isInlineReply) return
+    stopMobileComposerStabilization()
+    textareaRef.current?.blur()
+    dismissMobileKeyboardTracking()
+  }, [isInlineReply, stopMobileComposerStabilization])
+
   const submit = useCallback(async () => {
     if (!canSubmit || submitting) return
 
@@ -161,6 +168,7 @@ export default function CommentComposer({
     try {
       await onSubmit(value.trim())
       setValue('')
+      releaseInlineReplyFocus()
       onSuccess?.()
     } catch (err) {
       console.error('Unable to submit comment', err)
@@ -168,7 +176,12 @@ export default function CommentComposer({
     } finally {
       setSubmitting(false)
     }
-  }, [canSubmit, onSubmit, onSuccess, submitting, value])
+  }, [canSubmit, onSubmit, onSuccess, releaseInlineReplyFocus, submitting, value])
+
+  const handleCancel = useCallback(() => {
+    releaseInlineReplyFocus()
+    onCancel?.()
+  }, [onCancel, releaseInlineReplyFocus])
 
   const handleSubmit = useCallback(
     async (event: React.FormEvent) => {
@@ -259,7 +272,7 @@ export default function CommentComposer({
         {onCancel ? (
           <button
             type="button"
-            onClick={onCancel}
+            onClick={handleCancel}
             onPointerDown={stopMobileComposerStabilization}
             disabled={submitting}
             className={clsx(
