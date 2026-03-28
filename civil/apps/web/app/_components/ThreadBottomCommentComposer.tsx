@@ -5,7 +5,7 @@ import clsx from 'clsx'
 import { HiOutlinePaperAirplane, HiOutlinePhoto } from 'react-icons/hi2'
 import MobileBottomInputShell from './MobileBottomInputShell'
 import { pushToast } from './useToasts'
-import { readMobileKeyboardSnapshot, useMobileKeyboardState } from '../_lib/mobileKeyboard'
+import { dismissMobileKeyboardTracking, readMobileKeyboardSnapshot, useMobileKeyboardState } from '../_lib/mobileKeyboard'
 
 type ThreadBottomCommentComposerProps = {
   onSubmit: (body: string) => Promise<void>
@@ -106,6 +106,7 @@ export default function ThreadBottomCommentComposer({
     stopFocusStabilization()
     clearFocusHandoff()
     inputRef.current?.blur()
+    dismissMobileKeyboardTracking()
     setInputFocused(false)
     setScrollLock(false)
   }, [clearFocusHandoff, setScrollLock, stopFocusStabilization])
