@@ -110,6 +110,7 @@ export default function ChamberPostPage({ params }: PageProps) {
   const [editTitle, setEditTitle] = useState('')
   const [editBody, setEditBody] = useState('')
   const [savingPost, setSavingPost] = useState(false)
+  const [mobileReplyComposerActive, setMobileReplyComposerActive] = useState(false)
   const [railPosts, setRailPosts] = useState<ApiPost[]>([])
   const [railOrganizations, setRailOrganizations] = useState<CommunityOrgItem[]>([])
   const [railContributors, setRailContributors] = useState<CauseContributorItem[]>([])
@@ -762,7 +763,7 @@ export default function ChamberPostPage({ params }: PageProps) {
       ) : status === 'error' ? (
         <div className="rounded border bg-white p-6 text-sm text-red-600 shadow-sm">Unable to load this post right now.</div>
       ) : post ? (
-        <article className="rounded border bg-white p-6 shadow-sm">
+        <article className="flex min-h-[calc(var(--cc-viewport-height)-7.5rem)] flex-col rounded border bg-white p-6 shadow-sm lg:min-h-0">
           <nav className="mb-4 text-xs text-gray-500">
             <Link href="/home" className="hover:underline">
               Home
@@ -955,10 +956,11 @@ export default function ChamberPostPage({ params }: PageProps) {
                 onVote={handleCommentVote}
                 onCommentReported={handleCommentReported}
                 onCommentAuthorBlocked={handleCommentAuthorBlocked}
+                onReplyComposerChange={setMobileReplyComposerActive}
                 currentUser={viewer}
               />
             </div>
-            {viewer ? <div className="h-28 lg:hidden" aria-hidden="true" /> : null}
+            {viewer && !mobileReplyComposerActive ? <div className="h-28 lg:hidden" aria-hidden="true" /> : null}
           </section>
 
           {repostModalOpen && shareTarget ? (
@@ -1034,7 +1036,7 @@ export default function ChamberPostPage({ params }: PageProps) {
               </div>
             </Modal>
           ) : null}
-          {viewer ? <ThreadBottomCommentComposer onSubmit={(body) => handleReply(null, body)} /> : null}
+          {viewer && !mobileReplyComposerActive ? <ThreadBottomCommentComposer onSubmit={(body) => handleReply(null, body)} /> : null}
         </article>
       ) : null}
     </DashboardShell>

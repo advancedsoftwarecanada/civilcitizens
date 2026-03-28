@@ -11,6 +11,8 @@ import VerifiedAvatar from './VerifiedAvatar'
 import { pushToast } from './useToasts'
 import { formatUserDisplayName } from '../_lib/text'
 
+const MOBILE_REPLY_BREAKPOINT_QUERY = '(max-width: 1023px)'
+
 export type ApiComment = {
   id: string
   postId: string
@@ -41,6 +43,7 @@ type CommentThreadProps = {
   onVote: (commentId: string, value: -1 | 0 | 1) => Promise<void>
   onCommentReported?: (commentId: string) => void
   onCommentAuthorBlocked?: (authorId: string) => void
+  onReplyComposerChange?: (active: boolean) => void
   currentUser?: {
     id: string
     handle: string
@@ -70,6 +73,10 @@ type CommentContextProps = {
 type CommentItemProps = CommentContextProps & {
   comment: ApiComment
   depth: number
+  replying: boolean
+  activeReplyCommentId: string | null
+  setReplyingCommentId: (commentId: string | null) => void
+  isMobileReplyMode: boolean
 }
 
 const RELATIVE_TIME_THRESHOLDS: Array<[number, Intl.RelativeTimeFormatUnit]> = [
@@ -182,9 +189,26 @@ function formatRelativeTime(iso: string) {
   return rtf.format(-rounded, unit)
 }
 
+function commentContainsId(comment: ApiComment, targetId: string): boolean {
+  if (comment.id === targetId) return true
+  return comment.replies.some((reply) => commentContainsId(reply, targetId))
+}
+
 function CommentItem(props: CommentItemProps) {
-  const { comment, depth, onReply, onVote, onCommentReported, onCommentAuthorBlocked, highlightedCommentId, currentUser } = props
-  const [replying, setReplying] = useState(false)
+  const {
+    comment,
+    depth,
+    onReply,
+    onVote,
+    onCommentReported,
+    onCommentAuthorBlocked,
+    highlightedCommentId,
+    currentUser,
+    replying,
+    activeReplyCommentId,
+    setReplyingCommentId,
+    isMobileReplyMode,
+  } = props
   const [collapsed, setCollapsed] = useState(false)
   const [pendingVote, setPendingVote] = useState(false)
   const [showVoteTooltip, setShowVoteTooltip] = useState(false)
@@ -240,18 +264,18 @@ function CommentItem(props: CommentItemProps) {
       pushToast('Sign in to reply to comments.', 'info')
       return
     }
-    setReplying((prev) => !prev)
-  }, [canReply])
+    setReplyingCommentId(replying ? null : comment.id)
+  }, [canReply, comment.id, replying, setReplyingCommentId])
 
   const toggleCollapsed = useCallback(() => {
     setCollapsed((prev) => {
       const next = !prev
-      if (next) {
-        setReplying(false)
+      if (next && activeReplyCommentId && commentContainsId(comment, activeReplyCommentId)) {
+        setReplyingCommentId(null)
       }
       return next
     })
-  }, [])
+  }, [activeReplyCommentId, comment, setReplyingCommentId])
 
   return (
     <div className={clsx('relative', (showCollapseButton || isNested) && 'pl-8')}>
@@ -369,9 +393,11 @@ function CommentItem(props: CommentItemProps) {
                   className="mt-3"
                   placeholder={`Reply to @${comment.author.handle}`}
                   submitLabel="Reply"
+                  variant={isMobileReplyMode ? 'inline-reply' : 'default'}
+                  ariaLabel={`Reply composer for @${comment.author.handle}`}
                   onSubmit={(body) => onReply(comment.id, body)}
-                  onSuccess={() => setReplying(false)}
-                  onCancel={() => setReplying(false)}
+                  onSuccess={() => setReplyingCommentId(null)}
+                  onCancel={() => setReplyingCommentId(null)}
                   autoFocus
                 />
               ) : null}
@@ -393,6 +419,10 @@ function CommentItem(props: CommentItemProps) {
               onCommentAuthorBlocked={onCommentAuthorBlocked}
               highlightedCommentId={highlightedCommentId}
               currentUser={currentUser}
+              replying={activeReplyCommentId === child.id}
+              activeReplyCommentId={activeReplyCommentId}
+              setReplyingCommentId={setReplyingCommentId}
+              isMobileReplyMode={isMobileReplyMode}
             />
           ))}
         </div>
@@ -401,8 +431,44 @@ function CommentItem(props: CommentItemProps) {
   )
 }
 
-export default function CommentThread({ comments, onReply, onVote, onCommentReported, onCommentAuthorBlocked, currentUser }: CommentThreadProps) {
+export default function CommentThread({
+  comments,
+  onReply,
+  onVote,
+  onCommentReported,
+  onCommentAuthorBlocked,
+  onReplyComposerChange,
+  currentUser,
+}: CommentThreadProps) {
   const [highlightedCommentId, setHighlightedCommentId] = useState<string | null>(null)
+  const [activeReplyCommentId, setActiveReplyCommentId] = useState<string | null>(null)
+  const [isMobileReplyMode, setIsMobileReplyMode] = useState(false)
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    const mediaQuery = window.matchMedia(MOBILE_REPLY_BREAKPOINT_QUERY)
+    const syncViewport = () => setIsMobileReplyMode(mediaQuery.matches)
+    syncViewport()
+
+    if (typeof mediaQuery.addEventListener === 'function') {
+      mediaQuery.addEventListener('change', syncViewport)
+    } else {
+      mediaQuery.addListener(syncViewport)
+    }
+
+    window.addEventListener('resize', syncViewport)
+    window.addEventListener('orientationchange', syncViewport)
+
+    return () => {
+      if (typeof mediaQuery.removeEventListener === 'function') {
+        mediaQuery.removeEventListener('change', syncViewport)
+      } else {
+        mediaQuery.removeListener(syncViewport)
+      }
+      window.removeEventListener('resize', syncViewport)
+      window.removeEventListener('orientationchange', syncViewport)
+    }
+  }, [])
 
   useEffect(() => {
     if (typeof window === 'undefined' || !comments.length) return
@@ -439,6 +505,24 @@ export default function CommentThread({ comments, onReply, onVote, onCommentRepo
     }
   }, [comments])
 
+  useEffect(() => {
+    if (!currentUser && activeReplyCommentId) {
+      setActiveReplyCommentId(null)
+    }
+  }, [activeReplyCommentId, currentUser])
+
+  useEffect(() => {
+    if (!activeReplyCommentId) return
+    const stillExists = comments.some((comment) => commentContainsId(comment, activeReplyCommentId))
+    if (!stillExists) {
+      setActiveReplyCommentId(null)
+    }
+  }, [activeReplyCommentId, comments])
+
+  useEffect(() => {
+    onReplyComposerChange?.(Boolean(activeReplyCommentId) && isMobileReplyMode)
+  }, [activeReplyCommentId, isMobileReplyMode, onReplyComposerChange])
+
   if (!comments.length) {
     return <div className="rounded-2xl border border-dashed border-slate-200 bg-white/60 px-4 py-4 text-sm text-slate-500">No comments yet. Start the conversation!</div>
   }
@@ -456,6 +540,10 @@ export default function CommentThread({ comments, onReply, onVote, onCommentRepo
           onCommentAuthorBlocked={onCommentAuthorBlocked}
           highlightedCommentId={highlightedCommentId}
           currentUser={currentUser}
+          replying={activeReplyCommentId === comment.id}
+          activeReplyCommentId={activeReplyCommentId}
+          setReplyingCommentId={setActiveReplyCommentId}
+          isMobileReplyMode={isMobileReplyMode}
         />
       ))}
     </div>
