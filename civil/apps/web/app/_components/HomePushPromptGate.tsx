@@ -1,16 +1,12 @@
 'use client'
 
 import { useEffect } from 'react'
-import { isAndroidInstalledPwaContext, isIosInstalledPwaContext } from '../_lib/appleInstallGate'
 import {
   hasAttemptedHomeNativePushPrompt,
-  hasAttemptedHomeWebPushPrompt,
   markHomeNativePushPromptAttempted,
-  markHomeWebPushPromptAttempted,
 } from '../_lib/homePushPromptState'
 import { hasDeclaredCivilStatus, hasHomeCommunity } from '../_lib/me'
 import { ensureNativePushRegistration, isNativeApp, isNativePushOptedOut } from '../_lib/nativePush'
-import { canEnablePush as canEnableWebPush, enablePush as enableWebPush } from '../_lib/pushClient'
 import { useViewerStore } from '../_lib/viewerStore'
 
 function hasAuthToken(): boolean {
@@ -29,42 +25,16 @@ export default function HomePushPromptGate() {
     if (!hasAuthToken()) return
     if (!hasHomeCommunity(me) || !hasDeclaredCivilStatus(me)) return
 
-    const nativeContext = isNativeApp()
-    const webPwaContext = !nativeContext && (isIosInstalledPwaContext() || isAndroidInstalledPwaContext())
-
-    if (!nativeContext && !webPwaContext) return
-
-    if (nativeContext) {
-      if (isNativePushOptedOut()) return
-      if (hasAttemptedHomeNativePushPrompt()) return
-    }
-
-    if (webPwaContext) {
-      if (!canEnableWebPush()) return
-      if (hasAttemptedHomeWebPushPrompt()) return
-    }
+    if (!isNativeApp()) return
+    if (isNativePushOptedOut()) return
+    if (hasAttemptedHomeNativePushPrompt()) return
 
     let cancelled = false
     void (async () => {
-      if (nativeContext) {
-        const state = await ensureNativePushRegistration({ requestIfPrompt: true })
-        if (cancelled) return
-        if (state === 'granted' || state === 'denied' || state === 'prompt') {
-          markHomeNativePushPromptAttempted()
-        }
-        return
-      }
-
-      const result = await enableWebPush()
+      const state = await ensureNativePushRegistration({ requestIfPrompt: true })
       if (cancelled) return
-
-      if (
-        result.ok ||
-        result.status === 'permission-denied' ||
-        result.status === 'permission-dismissed' ||
-        result.status === 'already-enabled'
-      ) {
-        markHomeWebPushPromptAttempted()
+      if (state === 'granted' || state === 'denied' || state === 'prompt') {
+        markHomeNativePushPromptAttempted()
       }
     })()
 

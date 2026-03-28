@@ -756,8 +756,8 @@ export default function SettingsPage() {
               {showWebPushControl ? (
                 <SettingsToggleCard
                   icon={HiOutlineBell}
-                  title="Web Push Notifications"
-                  description="Turn on browser or PWA notifications for this device."
+                  title={webPushEnabled ? 'Notifications Enabled' : 'Enable Notifications'}
+                  description={webPushEnabled ? 'Civil can send browser or PWA notifications to this device.' : 'Turn on browser or PWA notifications for this device.'}
                   enabled={webPushEnabled}
                   busy={webPushBusy}
                   disabled={!webPushEnabled && !isWebPushSupported}

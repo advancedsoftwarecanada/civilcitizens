@@ -7,8 +7,9 @@ import { clearWebPushDebugState, readWebPushDebugState, type WebPushDebugState }
 function shouldOpen(state: WebPushDebugState | null): boolean {
   if (!state) return false
   if (state.platformContext === 'other') return false
+  if (state.result.startsWith('skipped_')) return false
+  if (state.result === 'subscription_sync_skipped_unchanged') return false
   if (state.error) return true
-  if (state.result.startsWith('skipped_')) return true
   if (state.result === 'sync_failed') return true
   return false
 }
