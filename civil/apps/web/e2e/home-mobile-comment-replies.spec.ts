@@ -291,6 +291,8 @@ test.describe('Home mobile feed comments', () => {
       })
       .toBe(true)
 
+    await composerInput.fill(`Playwright thread comment ${Date.now()}`)
+    await composer.getByRole('button', { name: 'Post comment' }).click()
     await setMockKeyboard(page, false)
 
     await expect
@@ -311,5 +313,7 @@ test.describe('Home mobile feed comments', () => {
         bodyLocked: false,
         inputFocused: false,
       })
+    await expect(page.getByRole('navigation', { name: 'Mobile navigation' })).toBeVisible()
+    await expect(page.getByRole('group', { name: 'Comment composer' })).toBeVisible()
   })
 })

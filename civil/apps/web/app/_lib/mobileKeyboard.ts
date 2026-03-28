@@ -73,6 +73,7 @@ let baselineViewportHeight = 0
 let baselineViewportWidth = 0
 let lastEditableFocusAt = 0
 let lastKeyboardOpenAt = 0
+let forceClosedUntilEditableFocus = false
 
 function computeSnapshot(): MobileKeyboardSnapshot {
   if (typeof window === 'undefined') return getServerSnapshot()
@@ -88,6 +89,7 @@ function computeSnapshot(): MobileKeyboardSnapshot {
   const activeEditable = typeof document !== 'undefined' ? isEditableElement(document.activeElement) : false
 
   if (activeEditable) {
+    forceClosedUntilEditableFocus = false
     lastEditableFocusAt = now
   }
 
@@ -105,7 +107,8 @@ function computeSnapshot(): MobileKeyboardSnapshot {
   const inferredHeightDelta = Math.max(0, Math.round(baselineViewportHeight - viewportHeight))
   const keyboardVisible = inferredBottomOverlap > KEYBOARD_MIN_INSET_PX || inferredHeightDelta > KEYBOARD_MIN_DELTA_PX
   const editableRecentlyActive = activeEditable || now - lastEditableFocusAt < RECENT_EDITABLE_FOCUS_MS
-  const keyboardOpen = keyboardVisible && (editableRecentlyActive || now - lastKeyboardOpenAt < KEYBOARD_OPEN_HOLD_MS)
+  const keyboardOpen =
+    !forceClosedUntilEditableFocus && keyboardVisible && (editableRecentlyActive || now - lastKeyboardOpenAt < KEYBOARD_OPEN_HOLD_MS)
 
   if (keyboardOpen) {
     lastKeyboardOpenAt = now
@@ -192,4 +195,13 @@ export function useMobileKeyboardState(): MobileKeyboardSnapshot {
 
 export function readMobileKeyboardSnapshot(): MobileKeyboardSnapshot {
   return getSnapshot()
+}
+
+export function dismissMobileKeyboardTracking() {
+  if (typeof window === 'undefined') return
+
+  forceClosedUntilEditableFocus = true
+  lastEditableFocusAt = 0
+  lastKeyboardOpenAt = 0
+  emitSnapshotChange()
 }
