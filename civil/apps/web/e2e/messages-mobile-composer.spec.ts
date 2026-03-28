@@ -126,6 +126,8 @@ async function readComposerMetrics(page: Page) {
     const dockStyle = dock ? getComputedStyle(dock) : null
     return {
       keyboardOpen: document.documentElement.classList.contains('cc-keyboard-open'),
+      htmlLocked: document.documentElement.classList.contains('cc-mobile-scroll-lock'),
+      bodyLocked: document.body.classList.contains('cc-mobile-scroll-lock'),
       viewportHeight: window.visualViewport?.height ?? window.innerHeight,
       composerTop: composerRect?.top ?? null,
       composerBottom: composerRect?.bottom ?? null,
@@ -180,6 +182,12 @@ test.describe('Messages mobile composer', () => {
           const metrics = await readComposerMetrics(page)
           return (
             !metrics.keyboardOpen &&
+            !metrics.htmlLocked &&
+            !metrics.bodyLocked &&
+            metrics.composerBottom !== null &&
+            metrics.composerTop !== null &&
+            metrics.composerBottom <= metrics.viewportHeight + 8 &&
+            metrics.composerTop >= metrics.viewportHeight - 170 &&
             metrics.dockOpacity !== null &&
             metrics.dockOpacity > 0.8 &&
             metrics.dockPointerEvents === 'auto'
