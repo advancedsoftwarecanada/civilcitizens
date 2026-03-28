@@ -188,4 +188,22 @@ test.describe('Messages mobile composer', () => {
         .toBe(true)
     }
   })
+
+  test('composer hides while the mobile more drawer is open and returns after close', async ({ page, request }) => {
+    const { threadId } = await seedDirectThread(page, request)
+
+    await page.setViewportSize(MOBILE_VIEWPORT)
+    await page.goto(`/messages?thread=${encodeURIComponent(threadId)}`)
+
+    const composer = page.getByRole('group', { name: 'Message composer' })
+    await expect(composer).toBeVisible()
+
+    await page.getByRole('button', { name: 'More' }).click()
+    await expect(page.getByText('Communities & shortcuts')).toBeVisible()
+    await expect(composer).toHaveCount(0)
+
+    await page.getByRole('button', { name: 'Close more panel' }).last().click()
+    await expect(page.getByText('Communities & shortcuts')).toHaveCount(0)
+    await expect(composer).toBeVisible()
+  })
 })
