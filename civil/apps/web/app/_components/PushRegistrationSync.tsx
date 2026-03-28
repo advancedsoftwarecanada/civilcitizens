@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from 'react'
 import { isAndroidInstalledPwaContext, isIosInstalledPwaContext } from '../_lib/appleInstallGate'
 import { AUTH_SESSION_CHANGED_EVENT } from '../_lib/authSession'
 import { ensureNativePushRegistration, getNativePlatformName, isNativePushOptedOut } from '../_lib/nativePush'
-import { canEnablePush as canEnableWebPush, enablePush as enableWebPush, getPermissionState as getWebPushPermissionState } from '../_lib/pushClient'
+import { canEnablePush as canEnableWebPush, getPermissionState as getWebPushPermissionState, syncExistingPushSubscription } from '../_lib/pushClient'
 import { writeWebPushDebugState } from '../_lib/webPushDebug'
 
 function hasAuthToken(): boolean {
@@ -43,8 +43,7 @@ async function syncPushRegistration(): Promise<void> {
     return
   }
 
-  writeWebPushDebugState({ source: 'syncPushRegistration', result: 'sync_started', error: null })
-  await enableWebPush()
+  await syncExistingPushSubscription()
 }
 
 export default function PushRegistrationSync() {
