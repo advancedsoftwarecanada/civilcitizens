@@ -217,6 +217,7 @@ export default function UserPostPage({ params }: PageProps) {
   const [editTitle, setEditTitle] = useState('')
   const [editBody, setEditBody] = useState('')
   const [savingPost, setSavingPost] = useState(false)
+  const [mobileReplyComposerActive, setMobileReplyComposerActive] = useState(false)
 
   const loadViewer = useCallback(async () => {
     const token = localStorage.getItem('token')
@@ -642,7 +643,7 @@ export default function UserPostPage({ params }: PageProps) {
             ) : status === 'error' ? (
               <div className="rounded-[28px] border border-white/70 bg-white/80 p-6 text-sm text-red-600 shadow-subtle">Unable to load this post right now.</div>
             ) : post ? (
-              <article className="rounded-[32px] border border-white/70 bg-white/95 p-6 shadow-panel sm:p-8">
+              <article className="flex min-h-[calc(var(--cc-viewport-height)-7.5rem)] flex-col rounded-[32px] border border-white/70 bg-white/95 p-6 shadow-panel sm:p-8 xl:min-h-0">
                 <nav className="mb-4 text-xs text-gray-500">
                 <Link href="/home" className="hover:underline">
                   Home
@@ -829,10 +830,11 @@ export default function UserPostPage({ params }: PageProps) {
                       onVote={handleCommentVote}
                       onCommentReported={handleCommentReported}
                       onCommentAuthorBlocked={handleCommentAuthorBlocked}
+                      onReplyComposerChange={setMobileReplyComposerActive}
                       currentUser={viewer}
                     />
                   </div>
-                  {viewer ? <div className="h-28 xl:hidden" aria-hidden="true" /> : null}
+                  {viewer && !mobileReplyComposerActive ? <div className="h-28 xl:hidden" aria-hidden="true" /> : null}
                 </section>
 
                 {repostModalOpen && shareTarget ? (
@@ -918,7 +920,7 @@ export default function UserPostPage({ params }: PageProps) {
           </aside>
         </div>
       </div>
-      {viewer ? <ThreadBottomCommentComposer onSubmit={(body) => handleReply(null, body)} /> : null}
+      {viewer && !mobileReplyComposerActive ? <ThreadBottomCommentComposer onSubmit={(body) => handleReply(null, body)} /> : null}
     </div>
   )
 }

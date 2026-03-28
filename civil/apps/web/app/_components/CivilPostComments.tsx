@@ -1,6 +1,6 @@
 'use client'
 
-import type { FormEvent } from 'react'
+import { useEffect, useState, type FormEvent } from 'react'
 import Link from 'next/link'
 import clsx from 'clsx'
 import type { ApiPost } from './PostComposer'
@@ -63,6 +63,29 @@ export default function CivilPostComments({
   onInlineCommentChange,
   onInlineCommentSubmit,
 }: CivilPostCommentsProps) {
+  const [isMobileViewport, setIsMobileViewport] = useState(false)
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return
+    const mediaQuery = window.matchMedia('(max-width: 1023px)')
+    const syncViewport = () => setIsMobileViewport(mediaQuery.matches)
+    syncViewport()
+
+    if (typeof mediaQuery.addEventListener === 'function') {
+      mediaQuery.addEventListener('change', syncViewport)
+    } else {
+      mediaQuery.addListener(syncViewport)
+    }
+
+    return () => {
+      if (typeof mediaQuery.removeEventListener === 'function') {
+        mediaQuery.removeEventListener('change', syncViewport)
+      } else {
+        mediaQuery.removeListener(syncViewport)
+      }
+    }
+  }, [])
+
   return (
     <section className="space-y-3 border-t border-slate-100 pt-3" data-prevent-card-nav="true">
       {comments.map((comment) => {
@@ -111,56 +134,60 @@ export default function CivilPostComments({
                   <p className="mt-1.5 whitespace-pre-wrap text-sm leading-6 text-slate-900 hover:text-slate-950">{comment.body}</p>
                 </Link>
 
-                <div className="mt-2 flex items-center gap-3">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      if (comment.optimistic) return
-                      if (!viewerId) {
-                        onRequireAuth()
-                        return
-                      }
-                      onToggleReply(comment.id)
-                    }}
-                    className={clsx(
-                      'inline-flex items-center rounded-full px-1 py-0.5 text-xs font-semibold text-[var(--cc-primary)] hover:bg-[var(--cc-primary)]/10',
-                      comment.optimistic && 'cursor-default opacity-60 hover:bg-transparent',
-                        comment.localPreview && !comment.optimistic && 'text-rose-700 hover:bg-rose-100/70',
-                    )}
-                  >
-                    {comment.optimistic ? 'Posting...' : isReplyTarget ? 'Cancel reply' : 'Reply'}
-                  </button>
-                </div>
+                {!isMobileViewport ? (
+                  <div className="mt-2 flex items-center gap-3">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (comment.optimistic) return
+                        if (!viewerId) {
+                          onRequireAuth()
+                          return
+                        }
+                        onToggleReply(comment.id)
+                      }}
+                      className={clsx(
+                        'inline-flex items-center rounded-full px-1 py-0.5 text-xs font-semibold text-[var(--cc-primary)] hover:bg-[var(--cc-primary)]/10',
+                        comment.optimistic && 'cursor-default opacity-60 hover:bg-transparent',
+                          comment.localPreview && !comment.optimistic && 'text-rose-700 hover:bg-rose-100/70',
+                      )}
+                    >
+                      {comment.optimistic ? 'Posting...' : isReplyTarget ? 'Cancel reply' : 'Reply'}
+                    </button>
+                  </div>
+                ) : null}
 
                 {isReplyTarget ? (
-                  <form
-                    className="mt-2 flex items-center gap-2 rounded-2xl border border-slate-200 bg-slate-50/90 p-2"
-                    onSubmit={async (event) => {
-                      event.preventDefault()
-                      await onReplySubmit(comment.id)
-                    }}
-                  >
-                    <input
-                      type="text"
-                      value={replyDraft}
-                      onChange={(event) => onReplyDraftChange(event.target.value)}
-                      placeholder={`Reply to @${comment.author.handle}…`}
-                      autoFocus
-                      className="h-8 w-full rounded-full border border-slate-200 bg-white px-3 text-sm text-slate-900 placeholder:text-slate-400 focus:border-[var(--cc-primary)] focus:outline-none focus:ring-1 focus:ring-[var(--cc-primary)]"
-                      maxLength={5000}
-                      disabled={inlineSubmitting || !viewerId}
-                    />
-                    <button
-                      type="submit"
-                      className={clsx(
-                        'h-8 rounded-full bg-[var(--cc-primary)] px-3 text-xs font-semibold text-white transition',
-                        !replyDraft.trim() || inlineSubmitting || !viewerId ? 'cursor-not-allowed opacity-60' : 'hover:bg-[var(--cc-primary-700)]',
-                      )}
-                      disabled={!replyDraft.trim() || inlineSubmitting || !viewerId}
+                  !isMobileViewport ? (
+                    <form
+                      className="mt-2 flex items-center gap-2 rounded-2xl border border-slate-200 bg-slate-50/90 p-2"
+                      onSubmit={async (event) => {
+                        event.preventDefault()
+                        await onReplySubmit(comment.id)
+                      }}
                     >
-                      {inlineSubmitting ? '...' : 'Reply'}
-                    </button>
-                  </form>
+                      <input
+                        type="text"
+                        value={replyDraft}
+                        onChange={(event) => onReplyDraftChange(event.target.value)}
+                        placeholder={`Reply to @${comment.author.handle}…`}
+                        autoFocus
+                        className="h-8 w-full rounded-full border border-slate-200 bg-white px-3 text-sm text-slate-900 placeholder:text-slate-400 focus:border-[var(--cc-primary)] focus:outline-none focus:ring-1 focus:ring-[var(--cc-primary)]"
+                        maxLength={5000}
+                        disabled={inlineSubmitting || !viewerId}
+                      />
+                      <button
+                        type="submit"
+                        className={clsx(
+                          'h-8 rounded-full bg-[var(--cc-primary)] px-3 text-xs font-semibold text-white transition',
+                          !replyDraft.trim() || inlineSubmitting || !viewerId ? 'cursor-not-allowed opacity-60' : 'hover:bg-[var(--cc-primary-700)]',
+                        )}
+                        disabled={!replyDraft.trim() || inlineSubmitting || !viewerId}
+                      >
+                        {inlineSubmitting ? '...' : 'Reply'}
+                      </button>
+                    </form>
+                  ) : null
                 ) : null}
               </div>
             </div>
@@ -169,34 +196,36 @@ export default function CivilPostComments({
       })}
 
       {!hideInlineCommentComposer ? (
-        <form className="rounded-2xl border border-slate-200 bg-slate-50/80 p-2" onSubmit={onInlineCommentSubmit}>
-          <div className="flex items-center gap-2">
-            <input
-              type="text"
-              value={inlineComment}
-              onChange={(event) => onInlineCommentChange(event.target.value)}
-              onFocus={() => {
-                if (!viewerId) {
-                  onRequireAuth()
-                }
-              }}
-              placeholder={viewerId ? 'Add a comment' : 'Sign in to comment'}
-              className="h-9 w-full rounded-full border border-slate-200 bg-white px-3 text-sm text-slate-900 placeholder:text-slate-400 focus:border-[var(--cc-primary)] focus:outline-none focus:ring-1 focus:ring-[var(--cc-primary)]"
-              maxLength={5000}
-              disabled={inlineSubmitting || !viewerId}
-            />
-            <button
-              type="submit"
-              className={clsx(
-                'h-9 rounded-full bg-[var(--cc-primary)] px-3 text-xs font-semibold text-white transition',
-                !inlineComment.trim() || inlineSubmitting || !viewerId ? 'cursor-not-allowed opacity-60' : 'hover:bg-[var(--cc-primary-700)]',
-              )}
-              disabled={!inlineComment.trim() || inlineSubmitting || !viewerId}
-            >
-              {inlineSubmitting ? '...' : 'Comment'}
-            </button>
-          </div>
-        </form>
+        !isMobileViewport ? (
+          <form className="rounded-2xl border border-slate-200 bg-slate-50/80 p-2" onSubmit={onInlineCommentSubmit}>
+            <div className="flex items-center gap-2">
+              <input
+                type="text"
+                value={inlineComment}
+                onChange={(event) => onInlineCommentChange(event.target.value)}
+                onFocus={() => {
+                  if (!viewerId) {
+                    onRequireAuth()
+                  }
+                }}
+                placeholder={viewerId ? 'Add a comment' : 'Sign in to comment'}
+                className="h-9 w-full rounded-full border border-slate-200 bg-white px-3 text-sm text-slate-900 placeholder:text-slate-400 focus:border-[var(--cc-primary)] focus:outline-none focus:ring-1 focus:ring-[var(--cc-primary)]"
+                maxLength={5000}
+                disabled={inlineSubmitting || !viewerId}
+              />
+              <button
+                type="submit"
+                className={clsx(
+                  'h-9 rounded-full bg-[var(--cc-primary)] px-3 text-xs font-semibold text-white transition',
+                  !inlineComment.trim() || inlineSubmitting || !viewerId ? 'cursor-not-allowed opacity-60' : 'hover:bg-[var(--cc-primary-700)]',
+                )}
+                disabled={!inlineComment.trim() || inlineSubmitting || !viewerId}
+              >
+                {inlineSubmitting ? '...' : 'Comment'}
+              </button>
+            </div>
+          </form>
+        ) : null
       ) : null}
     </section>
   )
