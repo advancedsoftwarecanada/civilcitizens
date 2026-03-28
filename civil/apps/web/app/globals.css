@@ -116,6 +116,10 @@ body.cc-mobile-scroll-lock {
     opacity: 0;
     pointer-events: none;
   }
+
+  html.cc-keyboard-open .cc-thread-surface {
+    min-height: auto !important;
+  }
 }
 
 .cc-safe-modal-overlay {
