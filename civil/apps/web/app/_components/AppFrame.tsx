@@ -56,7 +56,7 @@ export default function AppFrame({ children, modal }: AppFrameProps) {
       className={clsx(
         'min-h-0',
         showShellTopOffset && 'pt-[calc(var(--cc-native-safe-top-offset)+var(--cc-native-shell-top-gap))]',
-        showMobileDockClearance && 'pb-[var(--mobile-dock-clearance)] xl:pb-0',
+        showMobileDockClearance && 'pb-[var(--mobile-dock-active-clearance)] xl:pb-0',
         !topNavHidden && !hideForMeetingRoom && 'md:pt-[var(--cc-top-nav-offset)]',
       )}
     >
