@@ -648,7 +648,7 @@ export function createNavigationEngine(options: NavigationEngineOptions = {}) {
       projectedPoint: correctedProjection,
       usedMatch: Boolean(matchedPoint),
       heading: resolvedHeading,
-      mapBearing: resolvedHeading === null ? 0 : -resolvedHeading,
+      mapBearing: resolvedHeading === null ? 0 : resolvedHeading,
       cameraCenter,
       predictiveLeadMeters,
       deviationMeters,
