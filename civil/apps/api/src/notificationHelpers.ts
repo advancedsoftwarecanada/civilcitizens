@@ -626,7 +626,7 @@ export function createNotificationHelpers(deps: CreateNotificationHelpersDeps) {
     return { title: 'Civil Citizens', message: `${actorLabel} sent you a notification.` }
   }
 
-  function getNotificationDeepLink(record: NotificationRecord): string | null {
+  function getNotificationDeepLink(record: NotificationRecord, actor?: FriendUserLike | null): string | null {
     const payload = readPayloadRecord(record.payload)
     if (record.type === 'drive_ride_contract_update') {
       return '/drive'
@@ -650,6 +650,28 @@ export function createNotificationHelpers(deps: CreateNotificationHelpersDeps) {
       if (url.startsWith('/')) return url
     }
 
+    const threadIdCandidates = [payload?.threadId, payload?.threadID, payload?.channelId, payload?.conversationId]
+    for (const raw of threadIdCandidates) {
+      const threadId = typeof raw === 'string' ? raw.trim() : ''
+      if (threadId) {
+        return `/messages?thread=${encodeURIComponent(threadId)}`
+      }
+    }
+
+    if (record.postId) {
+      const commentId = typeof payload?.commentId === 'string' ? payload.commentId.trim() : ''
+      if (commentId) {
+        const encodedCommentId = encodeURIComponent(commentId)
+        return `/post/${encodeURIComponent(record.postId)}?comment=${encodedCommentId}#comment-${encodedCommentId}`
+      }
+      return `/post/${encodeURIComponent(record.postId)}`
+    }
+
+    const actorHandle = actor?.handle?.trim()
+    if (actorHandle) {
+      return `/u/${encodeURIComponent(actorHandle)}`
+    }
+
     return null
   }
 
@@ -668,7 +690,7 @@ export function createNotificationHelpers(deps: CreateNotificationHelpersDeps) {
     return {
       title: alert.title,
       body: alert.message,
-      url: getNotificationDeepLink(record) ?? '/notifications',
+      url: getNotificationDeepLink(record, actor) ?? '/notifications',
       type: mapNotificationPushType(record.type),
       entityId: record.id,
     }
@@ -694,7 +716,7 @@ export function createNotificationHelpers(deps: CreateNotificationHelpersDeps) {
           channelId: getNativeNotificationChannelId(record.type, platform),
           data: {
             kind: 'notification',
-            url: getNotificationDeepLink(record) ?? '/notifications',
+            url: getNotificationDeepLink(record, actor) ?? '/notifications',
           },
         }),
       ),

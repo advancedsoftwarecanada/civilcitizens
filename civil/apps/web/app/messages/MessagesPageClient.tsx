@@ -28,6 +28,7 @@ import { useViewerStore } from '../_lib/viewerStore'
 import { formatUserDisplayName } from '../_lib/text'
 import { getStoredToken } from '../_lib/tokenStorage'
 import { dismissMobileKeyboardTracking, useMobileKeyboardState } from '../_lib/mobileKeyboard'
+import { PUSH_NAVIGATION_EVENT } from '../_lib/pushNavigation'
 import {
   HiOutlineArrowPath,
   HiOutlinePaperAirplane,
@@ -514,6 +515,21 @@ function isMobileMessagesViewport() {
   return window.matchMedia('(max-width: 1023px)').matches
 }
 
+function resolveThreadIdFromPushUrl(rawUrl: string | null | undefined) {
+  if (typeof rawUrl !== 'string') return null
+  const trimmed = rawUrl.trim()
+  if (!trimmed) return null
+
+  try {
+    const parsed = new URL(trimmed, typeof window !== 'undefined' ? window.location.origin : 'https://civilcitizens.ca')
+    if (parsed.pathname !== '/messages') return null
+    const threadId = parsed.searchParams.get('thread')?.trim()
+    return threadId || null
+  } catch {
+    return null
+  }
+}
+
 const MOBILE_THREAD_MESSAGE_CLEARANCE_PX = 20
 const MOBILE_THREAD_COMPOSER_SHELL_HEIGHT_PX = 60
 const MOBILE_THREAD_LAYOUT_SETTLE_DELAYS_MS = [90, 180, 320]
@@ -770,6 +786,22 @@ function FamilyMemberMessagesShell({ viewer }: { viewer: MeResponse }) {
   useEffect(() => {
     void loadSelectedThread()
   }, [loadSelectedThread])
+
+  useEffect(() => {
+    if (typeof window === 'undefined' || !selectedThreadId) return undefined
+
+    const handlePushNavigation = (event: Event) => {
+      const pushedThreadId = resolveThreadIdFromPushUrl((event as CustomEvent<{ url?: string }>).detail?.url ?? null)
+      if (!pushedThreadId || pushedThreadId !== selectedThreadId) return
+      void loadThreads()
+      void loadSelectedThread()
+    }
+
+    window.addEventListener(PUSH_NAVIGATION_EVENT, handlePushNavigation as EventListener)
+    return () => {
+      window.removeEventListener(PUSH_NAVIGATION_EVENT, handlePushNavigation as EventListener)
+    }
+  }, [loadSelectedThread, loadThreads, selectedThreadId])
 
   const handleSendMessage = useCallback(async () => {
     if (!activeThread || !selectedThreadId || selectedIsParentThread) return
@@ -1308,15 +1340,6 @@ function StandardMessagesPageClient({ initialThreadId, initialInboxSection, view
   }, [])
 
   const shouldIgnoreMobileComposerClick = useCallback(() => Date.now() - mobileComposerLastTouchAtRef.current < 750, [])
-
-  useEffect(() => {
-    if (!initialThreadId) return
-    initialThreadIdRef.current = initialThreadId
-    if (selectedThreadRef.current === initialThreadId) return
-    forceBottomScrollThreadRef.current = initialThreadId
-    smoothScrollPendingRef.current = false
-    setSelectedThreadId(initialThreadId)
-  }, [initialThreadId])
 
   useEffect(() => {
     if (lightboxUrl) {
@@ -1961,6 +1984,46 @@ function StandardMessagesPageClient({ initialThreadId, initialInboxSection, view
     },
     [authedFetch, markThreadRead, markThreadReadLocally, scheduleMessagesBottomSettle, upsertThread],
   )
+
+  useEffect(() => {
+    if (!initialThreadId || !authReady) return
+    initialThreadIdRef.current = initialThreadId
+    failedThreadDetailRef.current.delete(initialThreadId)
+    shownThreadDetailErrorRef.current.delete(initialThreadId)
+    forceBottomScrollThreadRef.current = initialThreadId
+    smoothScrollPendingRef.current = false
+    explicitThreadOpenRef.current = initialThreadId
+    if (selectedThreadRef.current !== initialThreadId) {
+      setSelectedThreadId(initialThreadId)
+    }
+    void fetchThreadDetail(initialThreadId)
+  }, [authReady, fetchThreadDetail, initialThreadId])
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return undefined
+
+    const handlePushNavigation = (event: Event) => {
+      const pushedThreadId = resolveThreadIdFromPushUrl((event as CustomEvent<{ url?: string }>).detail?.url ?? null)
+      if (!pushedThreadId) return
+      if (selectedThreadRef.current && pushedThreadId !== selectedThreadRef.current) return
+
+      failedThreadDetailRef.current.delete(pushedThreadId)
+      shownThreadDetailErrorRef.current.delete(pushedThreadId)
+      forceBottomScrollThreadRef.current = pushedThreadId
+      smoothScrollPendingRef.current = false
+      explicitThreadOpenRef.current = pushedThreadId
+      setSelectedThreadId(pushedThreadId)
+
+      if (authReady) {
+        void fetchThreadDetail(pushedThreadId)
+      }
+    }
+
+    window.addEventListener(PUSH_NAVIGATION_EVENT, handlePushNavigation as EventListener)
+    return () => {
+      window.removeEventListener(PUSH_NAVIGATION_EVENT, handlePushNavigation as EventListener)
+    }
+  }, [authReady, fetchThreadDetail])
 
   const loadOlderMessages = useCallback(
     async (threadId: string) => {

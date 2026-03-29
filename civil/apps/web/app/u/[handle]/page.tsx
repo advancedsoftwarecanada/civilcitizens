@@ -1730,10 +1730,15 @@ export default function UserPostsPage({ params }: PageProps) {
         return
       }
 
-      const payload = (await response.json().catch(() => null)) as { error?: string } | null
+      const payload = (await response.json().catch(() => null)) as { error?: string; updatedExisting?: boolean } | null
       if (!response.ok) {
         if (payload?.error === 'already_family') {
           pushToast('This Family connection is already complete.', 'info')
+          setFamilyInviteModalOpen(false)
+          return
+        }
+        if (payload?.error === 'family_invite_pending') {
+          pushToast(`A Family request is already pending for @${profile.handle}.`, 'info')
           setFamilyInviteModalOpen(false)
           return
         }
@@ -1744,7 +1749,12 @@ export default function UserPostsPage({ params }: PageProps) {
         return
       }
 
-      pushToast(`Family request sent to @${profile.handle}.`, 'success')
+      pushToast(
+        payload?.updatedExisting
+          ? `Family request refreshed for @${profile.handle}.`
+          : `Family request sent to @${profile.handle}.`,
+        'success',
+      )
       setFamilyInviteModalOpen(false)
     } catch (error) {
       console.error('Failed to send family request', error)
