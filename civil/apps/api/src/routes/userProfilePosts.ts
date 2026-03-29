@@ -414,6 +414,11 @@ export function registerUserProfilePostRoutes(app: FastifyInstance, deps: UserPr
           familyType: string
           relationshipLabel: string
         } | null = null
+        let profileFamilyInvite: {
+          direction: 'incoming' | 'outgoing'
+          familyType: string
+          relationshipLabel: string
+        } | null = null
 
         if (viewerId && viewerId !== user.id) {
           try {
@@ -421,9 +426,8 @@ export function registerUserProfilePostRoutes(app: FastifyInstance, deps: UserPr
               where: { id: viewerId },
               select: { communityMeta: true },
             })
-            const storedRelationship = deps
-              .getStoredProfileFamilyRelationships(viewerUser?.communityMeta)
-              .find((entry: { relatedUserId: string }) => entry.relatedUserId === user.id)
+            const storedRelationships = viewerUser?.communityMeta ? deps.getStoredProfileFamilyRelationships(viewerUser.communityMeta) : []
+            const storedRelationship = storedRelationships.find((entry: { relatedUserId: string }) => entry.relatedUserId === user.id)
 
             if (storedRelationship) {
               profileFamilyRelationship = {
@@ -432,7 +436,49 @@ export function registerUserProfilePostRoutes(app: FastifyInstance, deps: UserPr
               }
             }
           } catch (error) {
-            // Ignore
+            // Ignore malformed stored family metadata and keep checking live invites below.
+          }
+
+          if (!profileFamilyRelationship) {
+            try {
+              const pendingNotification = await prisma.notification.findFirst({
+                where: {
+                  type: deps.PROFILE_INVITE_NOTIFICATION_TYPES.FAMILY,
+                  OR: [
+                    { userId: user.id, actorId: viewerId },
+                    { userId: viewerId, actorId: user.id },
+                  ],
+                },
+                orderBy: { createdAt: 'desc' },
+                select: {
+                  userId: true,
+                  actorId: true,
+                  payload: true,
+                },
+              })
+              const payload =
+                pendingNotification?.payload && typeof pendingNotification.payload === 'object' && !Array.isArray(pendingNotification.payload)
+                  ? (pendingNotification.payload as Record<string, unknown>)
+                  : null
+              const status = typeof payload?.status === 'string' ? payload.status.trim().toLowerCase() : ''
+              const familyType = typeof payload?.relationship === 'string' ? payload.relationship.trim() : ''
+              if (
+                pendingNotification &&
+                status === 'pending' &&
+                familyType
+              ) {
+                profileFamilyInvite = {
+                  direction: pendingNotification.actorId === viewerId ? 'outgoing' : 'incoming',
+                  familyType,
+                  relationshipLabel:
+                    (typeof payload?.relationshipLabel === 'string' && payload.relationshipLabel.trim()) ||
+                    deps.profileFamilyRelationshipLabels[familyType] ||
+                    familyType,
+                }
+              }
+            } catch (error) {
+              // Ignore
+            }
           }
         }
 
@@ -606,6 +652,7 @@ export function registerUserProfilePostRoutes(app: FastifyInstance, deps: UserPr
           relationship: {
             ...relationship,
             profileFamilyRelationship,
+            profileFamilyInvite,
           },
           items: posts.map((post: (typeof posts)[number]) =>
             deps.formatPost(post, {

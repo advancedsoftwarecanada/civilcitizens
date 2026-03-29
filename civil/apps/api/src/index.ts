@@ -5579,6 +5579,7 @@ registerUserProfilePostRoutes(app, {
   normalizeMediaUrl,
   normalizeUserMedia,
   parseCommunityMeta,
+  PROFILE_INVITE_NOTIFICATION_TYPES,
   profileFamilyRelationshipLabels: PROFILE_FAMILY_RELATIONSHIP_LABELS as Record<string, string>,
   resolveFamilyProfileAccess,
   withSchemaGuard,

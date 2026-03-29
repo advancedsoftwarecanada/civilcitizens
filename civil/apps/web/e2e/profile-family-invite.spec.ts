@@ -12,8 +12,9 @@ async function getHandle(userId: string) {
 }
 
 async function openFamilyInviteModal(page: import('@playwright/test').Page, handle: string) {
-  await page.locator('summary').filter({ hasText: 'Connect' }).first().click()
-  await page.getByRole('button', { name: 'Add Family' }).click()
+  await page.locator('summary').filter({ hasText: /Connect(?: Pending)?/ }).first().click()
+  const familyActionButton = page.getByRole('button', { name: /^(Add Family|Change Family Request)$/ })
+  await familyActionButton.click()
   await expect(page.getByText(`Add @${handle} as family`, { exact: true })).toBeVisible()
 }
 
@@ -42,6 +43,14 @@ test.describe('Profile family invites', () => {
     await expect(page.getByText(`Family request refreshed for @${receiverHandle}.`)).toBeVisible()
     await expect(page.getByText('Unable to send family request right now.')).toHaveCount(0)
 
+    await page.reload()
+    await expect(page.locator('summary').filter({ hasText: 'Connect Pending' }).first()).toBeVisible()
+    await page.locator('summary').filter({ hasText: 'Connect Pending' }).first().click()
+    await expect(page.getByRole('button', { name: 'Cancel Request Brother', exact: true })).toBeVisible()
+    await page.getByRole('button', { name: 'Cancel Request Brother', exact: true }).click()
+    await expect(page.getByText('Family request canceled.')).toBeVisible()
+    await expect(page.locator('summary').filter({ hasText: 'Connect Pending' })).toHaveCount(0)
+
     const notifications = await prisma.notification.findMany({
       where: {
         userId: receiver.userId,
@@ -63,7 +72,7 @@ test.describe('Profile family invites', () => {
         : null
 
     expect(latestPayload?.relationship).toBe('brother')
-    expect(latestPayload?.status).toBe('pending')
+    expect(latestPayload?.status).toBe('canceled')
 
     const pendingCount = notifications.filter((notification) => {
       const payload = notification.payload && typeof notification.payload === 'object' && !Array.isArray(notification.payload)
@@ -72,6 +81,6 @@ test.describe('Profile family invites', () => {
       return payload?.status === 'pending'
     }).length
 
-    expect(pendingCount).toBe(1)
+    expect(pendingCount).toBe(0)
   })
 })

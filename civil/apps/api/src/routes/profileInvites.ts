@@ -309,6 +309,69 @@ export function registerProfileInviteRoutes(app: FastifyInstance, deps: ProfileI
     }),
   )
 
+  app.delete('/profile/family-requests/:targetUserId', async (req: FastifyRequest, reply: FastifyReply) =>
+    deps.withSchemaGuard(req, reply, async () => {
+      const actorUserId = (await deps.resolveUserId(req)) ?? null
+      if (!actorUserId) return reply.code(401).send({ error: 'unauthorized' })
+
+      const params = ProfileFamilyRelationshipParams.safeParse(req.params ?? {})
+      if (!params.success) return reply.code(400).send({ error: params.error.flatten() })
+      if (params.data.targetUserId === actorUserId) return reply.code(400).send({ error: 'invalid_target' })
+
+      const targetUser = await prisma.user.findUnique({
+        where: { id: params.data.targetUserId },
+        select: { id: true },
+      })
+      if (!targetUser) return reply.code(404).send({ error: 'user_not_found' })
+
+      const notifications = await prisma.notification.findMany({
+        where: {
+          userId: targetUser.id,
+          actorId: actorUserId,
+          type: deps.PROFILE_INVITE_NOTIFICATION_TYPES.FAMILY,
+        },
+        orderBy: { createdAt: 'desc' },
+        take: 20,
+        select: { id: true, payload: true },
+      })
+
+      const pendingNotifications = notifications.filter((notification: (typeof notifications)[number]) => {
+        const payload =
+          notification.payload && typeof notification.payload === 'object' && !Array.isArray(notification.payload)
+            ? (notification.payload as Record<string, unknown>)
+            : null
+        return typeof payload?.status === 'string' && payload.status.trim().toLowerCase() === 'pending'
+      })
+
+      if (!pendingNotifications.length) {
+        return reply.code(404).send({ error: 'family_invite_not_found' })
+      }
+
+      const canceledAt = new Date().toISOString()
+      await prisma.$transaction(
+        pendingNotifications.map((notification: (typeof pendingNotifications)[number]) => {
+          const payload =
+            notification.payload && typeof notification.payload === 'object' && !Array.isArray(notification.payload)
+              ? (notification.payload as Record<string, unknown>)
+              : {}
+          return prisma.notification.update({
+            where: { id: notification.id },
+            data: {
+              payload: {
+                ...payload,
+                status: 'canceled',
+                canceledAt,
+              } as Prisma.InputJsonValue,
+              readAt: new Date(),
+            },
+          })
+        }),
+      )
+
+      return reply.send({ ok: true })
+    }),
+  )
+
   app.delete('/profile/family-relationships/:targetUserId', async (req: FastifyRequest, reply: FastifyReply) =>
     deps.withSchemaGuard(req, reply, async () => {
       const actorUserId = (await deps.resolveUserId(req)) ?? null
