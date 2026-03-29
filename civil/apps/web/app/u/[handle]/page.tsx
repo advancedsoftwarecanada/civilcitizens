@@ -162,6 +162,11 @@ type ProfileRelationship = {
     familyType: FamilyInviteRelationshipValue
     relationshipLabel: string
   } | null
+  profileFamilyInvite?: {
+    direction: 'incoming' | 'outgoing'
+    familyType: FamilyInviteRelationshipValue
+    relationshipLabel: string
+  } | null
 }
 
 type FriendRequestPayload = {
@@ -560,8 +565,8 @@ export default function UserPostsPage({ params }: PageProps) {
   const [composerOpen, setComposerOpen] = useState(false)
   const [composerDefaultType, setComposerDefaultType] = useState<PostType>('post')
   const [relationship, setRelationship] = useState<ProfileRelationship | null>(null)
-  const [friendshipAction, setFriendshipAction] = useState<'send' | 'accept' | 'reject' | null>(null)
-  const [connectionAction, setConnectionAction] = useState<'send' | 'accept' | 'reject' | null>(null)
+  const [friendshipAction, setFriendshipAction] = useState<'send' | 'accept' | 'reject' | 'cancel' | null>(null)
+  const [connectionAction, setConnectionAction] = useState<'send' | 'accept' | 'reject' | 'cancel' | null>(null)
   const [removeFriendModalOpen, setRemoveFriendModalOpen] = useState(false)
   const [removeConnectionModalOpen, setRemoveConnectionModalOpen] = useState(false)
   const [removeFamilyModalOpen, setRemoveFamilyModalOpen] = useState(false)
@@ -790,8 +795,21 @@ export default function UserPostsPage({ params }: PageProps) {
       connectionId: undefined,
       connectionSince: null,
       profileFamilyRelationship: null,
+      profileFamilyInvite: null,
     }
   const currentProfileFamilyRelationship = resolvedRelationship.profileFamilyRelationship ?? null
+  const currentProfileFamilyInvite = resolvedRelationship.profileFamilyInvite ?? null
+  const currentProfileFamilyInviteLabel = currentProfileFamilyInvite
+    ? FAMILY_INVITE_RELATIONSHIP_OPTIONS.find((option) => option.value === currentProfileFamilyInvite.familyType)?.label ??
+      currentProfileFamilyInvite.relationshipLabel
+          .split('_')
+          .map((part) => {
+            const trimmed = part.trim()
+            return trimmed ? trimmed.charAt(0).toUpperCase() + trimmed.slice(1) : ''
+          })
+          .filter(Boolean)
+          .join(' ')
+    : 'Family'
   const friendCount = profile?.friendCount ?? 0
   const communityCount = profile?.communityCount ?? 0
   const organizationCount = profile?.organizationCount ?? 0
@@ -820,9 +838,11 @@ export default function UserPostsPage({ params }: PageProps) {
   const isSendingFriendRequest = friendshipAction === 'send'
   const isAcceptingFriendRequest = friendshipAction === 'accept'
   const isRejectingFriendRequest = friendshipAction === 'reject'
+  const isCancelingFriendRequest = friendshipAction === 'cancel'
   const isSendingConnectionRequest = connectionAction === 'send'
   const isAcceptingConnectionRequest = connectionAction === 'accept'
   const isRejectingConnectionRequest = connectionAction === 'reject'
+  const isCancelingConnectionRequest = connectionAction === 'cancel'
   const profileStatCards = profile
     ? [
         {
@@ -884,10 +904,24 @@ export default function UserPostsPage({ params }: PageProps) {
     if (!profile?.homeShippingAddress) return null
     return buildAddressesHrefFromAddress(profile.homeShippingAddress, profileDisplayName)
   }, [profile?.homeShippingAddress, profileDisplayName])
-  const hasAnyProfileRelationship =
+  const hasAcceptedProfileRelationship =
     Boolean(currentProfileFamilyRelationship) ||
-    ['friends', 'incoming', 'outgoing'].includes(resolvedRelationship.friendshipStatus) ||
-    ['connected', 'incoming', 'outgoing'].includes(resolvedRelationship.connectionStatus)
+    resolvedRelationship.friendshipStatus === 'friends' ||
+    resolvedRelationship.connectionStatus === 'connected'
+
+  const normalizeRelationshipState = useCallback(
+    (prev?: ProfileRelationship | null): ProfileRelationship => ({
+      friendshipStatus: prev?.friendshipStatus ?? (isOwner ? 'self' : 'none'),
+      friendshipId: prev?.friendshipId,
+      friendshipSince: prev?.friendshipSince ?? null,
+      connectionStatus: prev?.connectionStatus ?? (isOwner ? 'self' : 'none'),
+      connectionId: prev?.connectionId,
+      connectionSince: prev?.connectionSince ?? null,
+      profileFamilyRelationship: prev?.profileFamilyRelationship ?? null,
+      profileFamilyInvite: prev?.profileFamilyInvite ?? null,
+    }),
+    [isOwner],
+  )
 
   const handleSendCivilCredits = async () => {
     if (!profile?.id || !canTransferCivilCreditsToProfile) return
@@ -1204,6 +1238,10 @@ export default function UserPostsPage({ params }: PageProps) {
   const renderConnectMenu = () => {
     const hasIncomingFriendRequest = resolvedRelationship.friendshipStatus === 'incoming'
     const hasIncomingConnectionRequest = resolvedRelationship.connectionStatus === 'incoming'
+    const hasOutgoingPendingRequest =
+      resolvedRelationship.friendshipStatus === 'outgoing' ||
+      resolvedRelationship.connectionStatus === 'outgoing' ||
+      currentProfileFamilyInvite?.direction === 'outgoing'
     const connectTone =
       resolvedRelationship.friendshipStatus === 'friends' || resolvedRelationship.connectionStatus === 'connected'
         ? 'success'
@@ -1213,7 +1251,9 @@ export default function UserPostsPage({ params }: PageProps) {
       ? 'Accept Friend'
       : hasIncomingConnectionRequest
         ? 'Accept Network'
-        : 'Connect'
+        : hasOutgoingPendingRequest
+          ? 'Connect Pending'
+          : 'Connect'
 
     return renderActionMenu({
       label: connectLabel,
@@ -1247,9 +1287,12 @@ export default function UserPostsPage({ params }: PageProps) {
               Remove friend
             </button>
           ) : resolvedRelationship.friendshipStatus === 'outgoing' ? (
-            <button type="button" className={menuItemClassName} disabled>
+            <button type="button" className={destructiveMenuItemClassName} onClick={(event) => {
+              closeDetailsMenu(event)
+              void handleCancelFriendRequest()
+            }} disabled={isCancelingFriendRequest}>
               <HiOutlineUsers className="h-4 w-4" aria-hidden="true" />
-              Friend request sent
+              {isCancelingFriendRequest ? 'Canceling friend request…' : 'Cancel Request Friend'}
             </button>
           ) : (
             <button type="button" className={menuItemClassName} onClick={(event) => {
@@ -1270,13 +1313,32 @@ export default function UserPostsPage({ params }: PageProps) {
               Add Family
             </button>
           ) : profile?.accountType !== 'family_member' && !currentProfileFamilyRelationship ? (
-            <button type="button" className={menuItemClassName} onClick={(event) => {
-              closeDetailsMenu(event)
-              openFamilyInviteModal()
-            }} disabled={familyInviteSending}>
-              <HiOutlineUsers className="h-4 w-4" aria-hidden="true" />
-              Add Family
-            </button>
+            currentProfileFamilyInvite?.direction === 'outgoing' ? (
+              <>
+                <button type="button" className={menuItemClassName} onClick={(event) => {
+                  closeDetailsMenu(event)
+                  openFamilyInviteModal()
+                }} disabled={familyInviteSending}>
+                  <HiOutlineUsers className="h-4 w-4" aria-hidden="true" />
+                  Change Family Request
+                </button>
+                <button type="button" className={destructiveMenuItemClassName} onClick={(event) => {
+                  closeDetailsMenu(event)
+                  void handleCancelFamilyInvite()
+                }} disabled={familyInviteSending}>
+                  <HiOutlineUsers className="h-4 w-4" aria-hidden="true" />
+                  {familyInviteSending ? 'Canceling family request…' : `Cancel Request ${currentProfileFamilyInviteLabel}`}
+                </button>
+              </>
+            ) : (
+              <button type="button" className={menuItemClassName} onClick={(event) => {
+                closeDetailsMenu(event)
+                openFamilyInviteModal()
+              }} disabled={familyInviteSending}>
+                <HiOutlineUsers className="h-4 w-4" aria-hidden="true" />
+                Add Family
+              </button>
+            )
           ) : null}
 
           {resolvedRelationship.connectionStatus === 'incoming' ? (
@@ -1305,9 +1367,12 @@ export default function UserPostsPage({ params }: PageProps) {
               Remove Business Network
             </button>
           ) : resolvedRelationship.connectionStatus === 'outgoing' ? (
-            <button type="button" className={menuItemClassName} disabled>
+            <button type="button" className={destructiveMenuItemClassName} onClick={(event) => {
+              closeDetailsMenu(event)
+              void handleCancelConnectionRequest()
+            }} disabled={isCancelingConnectionRequest}>
               <FaUserTie className="h-4 w-4" aria-hidden="true" />
-              Business request sent
+              {isCancelingConnectionRequest ? 'Canceling business request…' : 'Cancel Request Business Network'}
             </button>
           ) : (
             <button type="button" className={menuItemClassName} onClick={(event) => {
@@ -1755,6 +1820,14 @@ export default function UserPostsPage({ params }: PageProps) {
           : `Family request sent to @${profile.handle}.`,
         'success',
       )
+      setRelationship((prev) => ({
+        ...normalizeRelationshipState(prev),
+        profileFamilyInvite: {
+          direction: 'outgoing',
+          familyType: familyInviteRelationship,
+          relationshipLabel: familyInviteRelationshipLabel,
+        },
+      }))
       setFamilyInviteModalOpen(false)
     } catch (error) {
       console.error('Failed to send family request', error)
@@ -1762,7 +1835,52 @@ export default function UserPostsPage({ params }: PageProps) {
     } finally {
       setFamilyInviteSending(false)
     }
-  }, [familyInviteRelationship, profile, resolveDirectTargetId])
+  }, [familyInviteRelationship, familyInviteRelationshipLabel, normalizeRelationshipState, profile, resolveDirectTargetId])
+
+  const handleCancelFamilyInvite = useCallback(async () => {
+    if (!profile) return
+    const token = requireAuthToken()
+    if (!token) return
+
+    setFamilyInviteSending(true)
+    try {
+      const response = await fetch(buildApiUrl(`/profile/family-requests/${encodeURIComponent(profile.id)}`), {
+        method: 'DELETE',
+        headers: {
+          authorization: `Bearer ${token}`,
+        },
+      })
+
+      const payload = (await response.json().catch(() => null)) as { error?: string } | null
+      if (response.status === 401) {
+        redirectToAuthModal('login')
+        return
+      }
+      if (!response.ok) {
+        if (payload?.error === 'family_invite_not_found') {
+          setRelationship((prev) => ({
+            ...normalizeRelationshipState(prev),
+            profileFamilyInvite: null,
+          }))
+          pushToast('Family request already cleared.', 'info')
+          return
+        }
+        pushToast(payload?.error ?? 'Unable to cancel family request right now.', 'error')
+        return
+      }
+
+      setRelationship((prev) => ({
+        ...normalizeRelationshipState(prev),
+        profileFamilyInvite: null,
+      }))
+      pushToast('Family request canceled.', 'info')
+    } catch (error) {
+      console.error('Failed to cancel family request', error)
+      pushToast('Unable to cancel family request right now.', 'error')
+    } finally {
+      setFamilyInviteSending(false)
+    }
+  }, [normalizeRelationshipState, profile])
 
   const handleSendFriendRequest = async () => {
     if (!profile) return
@@ -1778,23 +1896,63 @@ export default function UserPostsPage({ params }: PageProps) {
         },
         body: JSON.stringify({ userId: profile.id }),
       })
-      const payload = (await res.json().catch(() => null)) as { request?: FriendRequestPayload; error?: string } | null
+      const payload = (await res.json().catch(() => null)) as { request?: FriendRequestPayload; error?: string; direction?: 'incoming' | 'outgoing' } | null
       if (!res.ok) {
+        if (payload?.error === 'friendship_pending' && payload.direction) {
+          setRelationship((prev) => ({
+            ...normalizeRelationshipState(prev),
+            friendshipStatus: payload.direction === 'incoming' ? 'incoming' : 'outgoing',
+            friendshipId: payload?.request?.id ?? prev?.friendshipId,
+            friendshipSince: null,
+          }))
+          pushToast(payload.direction === 'outgoing' ? 'Friend request already pending.' : 'This person already sent you a friend request.', 'info')
+          return
+        }
         pushToast(payload?.error ?? 'Unable to send friend request right now.', 'error')
         return
       }
       setRelationship((prev) => ({
+        ...normalizeRelationshipState(prev),
         friendshipStatus: 'outgoing',
         friendshipId: payload?.request?.id ?? prev?.friendshipId,
         friendshipSince: null,
-        connectionStatus: prev?.connectionStatus ?? (isOwner ? 'self' : 'none'),
-        connectionId: prev?.connectionId,
-        connectionSince: prev?.connectionSince ?? null,
       }))
       pushToast('Friend request sent.', 'success')
     } catch (err) {
       console.error('Failed to send friend request', err)
       pushToast('Unable to send friend request right now.', 'error')
+    } finally {
+      setFriendshipAction(null)
+    }
+  }
+
+  const handleCancelFriendRequest = async () => {
+    if (!relationship?.friendshipId) return
+    const token = requireAuthToken()
+    if (!token) return
+    setFriendshipAction('cancel')
+    try {
+      const res = await fetch(buildApiUrl(`/friends/${relationship.friendshipId}`), {
+        method: 'DELETE',
+        headers: {
+          authorization: `Bearer ${token}`,
+        },
+      })
+      const payload = (await res.json().catch(() => null)) as { error?: string } | null
+      if (!res.ok) {
+        pushToast(payload?.error ?? 'Unable to cancel friend request right now.', 'error')
+        return
+      }
+      setRelationship((prev) => ({
+        ...normalizeRelationshipState(prev),
+        friendshipStatus: 'none',
+        friendshipId: undefined,
+        friendshipSince: null,
+      }))
+      pushToast('Friend request canceled.', 'info')
+    } catch (err) {
+      console.error('Failed to cancel friend request', err)
+      pushToast('Unable to cancel friend request right now.', 'error')
     } finally {
       setFriendshipAction(null)
     }
@@ -1819,12 +1977,10 @@ export default function UserPostsPage({ params }: PageProps) {
       }
       const sinceIso = payload?.friend?.since ? new Date(payload.friend.since).toISOString() : new Date().toISOString()
       setRelationship((prev) => ({
+        ...normalizeRelationshipState(prev),
         friendshipStatus: 'friends',
         friendshipId: payload?.friend?.id ?? prev?.friendshipId ?? relationship.friendshipId,
         friendshipSince: sinceIso,
-        connectionStatus: prev?.connectionStatus ?? (isOwner ? 'self' : 'none'),
-        connectionId: prev?.connectionId,
-        connectionSince: prev?.connectionSince ?? null,
       }))
       pushToast('Friend request accepted.', 'success')
     } catch (err) {
@@ -1853,12 +2009,10 @@ export default function UserPostsPage({ params }: PageProps) {
         return
       }
       setRelationship((prev) => ({
+        ...normalizeRelationshipState(prev),
         friendshipStatus: 'none',
         friendshipId: undefined,
         friendshipSince: null,
-        connectionStatus: prev?.connectionStatus ?? (isOwner ? 'self' : 'none'),
-        connectionId: prev?.connectionId,
-        connectionSince: prev?.connectionSince ?? null,
       }))
       pushToast('Friend request dismissed.', 'info')
     } catch (err) {
@@ -1889,12 +2043,10 @@ export default function UserPostsPage({ params }: PageProps) {
       }
 
       setRelationship((prev) => ({
+        ...normalizeRelationshipState(prev),
         friendshipStatus: 'none',
         friendshipId: undefined,
         friendshipSince: null,
-        connectionStatus: prev?.connectionStatus ?? (isOwner ? 'self' : 'none'),
-        connectionId: prev?.connectionId,
-        connectionSince: prev?.connectionSince ?? null,
       }))
       setProfile((prev) => {
         if (!prev) return prev
@@ -1928,9 +2080,7 @@ export default function UserPostsPage({ params }: PageProps) {
       }
 
       setRelationship((prev) => ({
-        friendshipStatus: prev?.friendshipStatus ?? (isOwner ? 'self' : 'none'),
-        friendshipId: prev?.friendshipId,
-        friendshipSince: prev?.friendshipSince ?? null,
+        ...normalizeRelationshipState(prev),
         connectionStatus: 'none',
         connectionId: undefined,
         connectionSince: null,
@@ -1969,13 +2119,9 @@ export default function UserPostsPage({ params }: PageProps) {
       if (!res.ok) {
         if (payload?.error === 'family_relationship_not_found') {
           setRelationship((prev) => ({
-            friendshipStatus: prev?.friendshipStatus ?? (isOwner ? 'self' : 'none'),
-            friendshipId: prev?.friendshipId,
-            friendshipSince: prev?.friendshipSince ?? null,
-            connectionStatus: prev?.connectionStatus ?? (isOwner ? 'self' : 'none'),
-            connectionId: prev?.connectionId,
-            connectionSince: prev?.connectionSince ?? null,
+            ...normalizeRelationshipState(prev),
             profileFamilyRelationship: null,
+            profileFamilyInvite: null,
           }))
           setRemoveFamilyModalOpen(false)
           pushToast('Family relationship already removed.', 'info')
@@ -1986,13 +2132,9 @@ export default function UserPostsPage({ params }: PageProps) {
       }
 
       setRelationship((prev) => ({
-        friendshipStatus: prev?.friendshipStatus ?? (isOwner ? 'self' : 'none'),
-        friendshipId: prev?.friendshipId,
-        friendshipSince: prev?.friendshipSince ?? null,
-        connectionStatus: prev?.connectionStatus ?? (isOwner ? 'self' : 'none'),
-        connectionId: prev?.connectionId,
-        connectionSince: prev?.connectionSince ?? null,
+        ...normalizeRelationshipState(prev),
         profileFamilyRelationship: null,
+        profileFamilyInvite: null,
       }))
       setRemoveFamilyModalOpen(false)
       pushToast('Family relationship removed from both profiles.', 'info')
@@ -2018,15 +2160,23 @@ export default function UserPostsPage({ params }: PageProps) {
         },
         body: JSON.stringify({ userId: profile.id }),
       })
-      const payload = (await res.json().catch(() => null)) as { request?: ConnectionRequestPayload; error?: string } | null
+      const payload = (await res.json().catch(() => null)) as { request?: ConnectionRequestPayload; error?: string; direction?: 'incoming' | 'outgoing' } | null
       if (!res.ok) {
+        if (payload?.error === 'connection_pending' && payload.direction) {
+          setRelationship((prev) => ({
+            ...normalizeRelationshipState(prev),
+            connectionStatus: payload.direction === 'incoming' ? 'incoming' : 'outgoing',
+            connectionId: payload?.request?.id ?? prev?.connectionId,
+            connectionSince: null,
+          }))
+          pushToast(payload.direction === 'outgoing' ? 'Business request already pending.' : 'This person already sent you a business request.', 'info')
+          return
+        }
         pushToast(payload?.error ?? 'Unable to send connection request right now.', 'error')
         return
       }
       setRelationship((prev) => ({
-        friendshipStatus: prev?.friendshipStatus ?? (isOwner ? 'self' : 'none'),
-        friendshipId: prev?.friendshipId,
-        friendshipSince: prev?.friendshipSince ?? null,
+        ...normalizeRelationshipState(prev),
         connectionStatus: 'outgoing',
         connectionId: payload?.request?.id ?? prev?.connectionId,
         connectionSince: null,
@@ -2035,6 +2185,38 @@ export default function UserPostsPage({ params }: PageProps) {
     } catch (err) {
       console.error('Failed to send connection request', err)
       pushToast('Unable to send connection request right now.', 'error')
+    } finally {
+      setConnectionAction(null)
+    }
+  }
+
+  const handleCancelConnectionRequest = async () => {
+    if (!relationship?.connectionId) return
+    const token = requireAuthToken()
+    if (!token) return
+    setConnectionAction('cancel')
+    try {
+      const res = await fetch(buildApiUrl(`/connections/${relationship.connectionId}`), {
+        method: 'DELETE',
+        headers: {
+          authorization: `Bearer ${token}`,
+        },
+      })
+      const payload = (await res.json().catch(() => null)) as { error?: string } | null
+      if (!res.ok) {
+        pushToast(payload?.error ?? 'Unable to cancel business request right now.', 'error')
+        return
+      }
+      setRelationship((prev) => ({
+        ...normalizeRelationshipState(prev),
+        connectionStatus: 'none',
+        connectionId: undefined,
+        connectionSince: null,
+      }))
+      pushToast('Business request canceled.', 'info')
+    } catch (err) {
+      console.error('Failed to cancel connection request', err)
+      pushToast('Unable to cancel business request right now.', 'error')
     } finally {
       setConnectionAction(null)
     }
@@ -2059,9 +2241,7 @@ export default function UserPostsPage({ params }: PageProps) {
       }
       const sinceIso = payload?.connection?.since ? new Date(payload.connection.since).toISOString() : new Date().toISOString()
       setRelationship((prev) => ({
-        friendshipStatus: prev?.friendshipStatus ?? (isOwner ? 'self' : 'none'),
-        friendshipId: prev?.friendshipId,
-        friendshipSince: prev?.friendshipSince ?? null,
+        ...normalizeRelationshipState(prev),
         connectionStatus: 'connected',
         connectionId: payload?.connection?.id ?? prev?.connectionId ?? relationship.connectionId,
         connectionSince: sinceIso,
@@ -2093,9 +2273,7 @@ export default function UserPostsPage({ params }: PageProps) {
         return
       }
       setRelationship((prev) => ({
-        friendshipStatus: prev?.friendshipStatus ?? (isOwner ? 'self' : 'none'),
-        friendshipId: prev?.friendshipId,
-        friendshipSince: prev?.friendshipSince ?? null,
+        ...normalizeRelationshipState(prev),
         connectionStatus: 'none',
         connectionId: undefined,
         connectionSince: null,
@@ -2278,12 +2456,14 @@ export default function UserPostsPage({ params }: PageProps) {
       }
 
       setRelationship((prev) => ({
+        ...normalizeRelationshipState(prev),
         friendshipStatus: prev?.friendshipStatus === 'self' ? 'self' : 'none',
         friendshipId: undefined,
         friendshipSince: null,
         connectionStatus: prev?.connectionStatus === 'self' ? 'self' : 'none',
         connectionId: undefined,
         connectionSince: null,
+        profileFamilyInvite: null,
       }))
       pushToast('User blocked. Your parent has been notified.', 'success')
       router.push('/friends')
@@ -2582,7 +2762,7 @@ export default function UserPostsPage({ params }: PageProps) {
                   <>
                     <div className="flex w-full max-w-full flex-wrap items-center justify-center gap-2 overflow-visible pb-1 pt-1 sm:w-auto sm:max-w-none">
                       {renderRelationshipManageMenu()}
-                      {!hasAnyProfileRelationship ? renderConnectMenu() : null}
+                      {!hasAcceptedProfileRelationship ? renderConnectMenu() : null}
                       {renderMessageMenu()}
                     </div>
                     <div className="flex w-full justify-center">
