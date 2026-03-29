@@ -112,6 +112,26 @@ type OsrmRouteResponse = {
 }
 
 const MIN_ADDRESS_QUERY_LENGTH = 3
+const MAX_PLACE_SEARCH_RADIUS_KM = 500
+const LOW_SIGNAL_PLACE_TYPES = new Set([
+  'stream',
+  'river',
+  'canal',
+  'ditch',
+  'drain',
+  'residential',
+  'footway',
+  'path',
+  'cycleway',
+  'bridleway',
+  'track',
+  'steps',
+  'corridor',
+  'service',
+  'living_street',
+  'pedestrian',
+])
+const LOW_SIGNAL_PLACE_CLASSES = new Set(['waterway', 'landuse'])
 
 function hasFiniteCoordinate(value: unknown): value is number {
   return typeof value === 'number' && Number.isFinite(value)
@@ -368,12 +388,19 @@ function buildBoundedViewbox(latitude: number, longitude: number, radiusKm: numb
 }
 
 function normalizeAddressSearchOptions(options?: number | AddressSearchOptions) {
+  const normalizedRadiusKm =
+    typeof options === 'number'
+      ? null
+      : typeof options?.radiusKm === 'number' && Number.isFinite(options.radiusKm) && options.radiusKm > 0
+        ? Math.min(options.radiusKm, MAX_PLACE_SEARCH_RADIUS_KM)
+        : null
+
   if (typeof options === 'number') {
     return {
       limit: options,
       latitude: null,
       longitude: null,
-      radiusKm: null,
+      radiusKm: normalizedRadiusKm,
     }
   }
 
@@ -381,7 +408,7 @@ function normalizeAddressSearchOptions(options?: number | AddressSearchOptions) 
     limit: typeof options?.limit === 'number' && Number.isFinite(options.limit) ? options.limit : 5,
     latitude: hasFiniteCoordinate(options?.latitude) ? options.latitude : null,
     longitude: hasFiniteCoordinate(options?.longitude) ? options.longitude : null,
-    radiusKm: typeof options?.radiusKm === 'number' && Number.isFinite(options.radiusKm) && options.radiusKm > 0 ? options.radiusKm : null,
+    radiusKm: normalizedRadiusKm,
   }
 }
 
@@ -503,6 +530,15 @@ function sortPlaceResults(results: CivilPlaceSearchResult[]) {
     if (right.distanceKm !== null) return 1
     return (right.importance ?? 0) - (left.importance ?? 0)
   })
+}
+
+function shouldKeepPlaceSearchResult(result: CivilPlaceSearchResult) {
+  if (result.kind !== 'place') return true
+  const normalizedType = normalizeText(result.typeName).toLowerCase()
+  const normalizedClass = normalizeText(result.className).toLowerCase()
+  if (normalizedType && LOW_SIGNAL_PLACE_TYPES.has(normalizedType)) return false
+  if (normalizedClass && LOW_SIGNAL_PLACE_CLASSES.has(normalizedClass)) return false
+  return true
 }
 
 export function buildNominatimSearchUrl(query: string, limit = 5, options?: Pick<AddressSearchOptions, 'latitude' | 'longitude' | 'radiusKm'>) {
@@ -670,6 +706,13 @@ export async function fetchPlaceSearchResults(
     q: trimmedQuery,
     limit: String(Math.max(1, Math.min(10, normalizedOptions.limit))),
   })
+  if (hasFiniteCoordinate(normalizedOptions.latitude) && hasFiniteCoordinate(normalizedOptions.longitude)) {
+    params.set('lat', String(normalizedOptions.latitude))
+    params.set('lng', String(normalizedOptions.longitude))
+    if (typeof normalizedOptions.radiusKm === 'number' && Number.isFinite(normalizedOptions.radiusKm) && normalizedOptions.radiusKm > 0) {
+      params.set('radiusKm', String(Math.min(normalizedOptions.radiusKm, MAX_PLACE_SEARCH_RADIUS_KM)))
+    }
+  }
 
   const response = await fetch(buildApiUrl(`/search/places?${params.toString()}`), {
     method: 'GET',
@@ -687,7 +730,8 @@ export async function fetchPlaceSearchResults(
     ? payload.places.flatMap((entry) => {
         if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return []
         const mapped = mapPlaceSearchRecord(entry as Record<string, unknown>)
-        return mapped ? [mapped] : []
+        if (!mapped || !shouldKeepPlaceSearchResult(mapped)) return []
+        return [mapped]
       })
     : []
   const addresses = Array.isArray(payload?.addresses)

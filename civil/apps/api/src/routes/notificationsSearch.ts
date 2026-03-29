@@ -43,6 +43,9 @@ const CombinedSearchQuery = z.object({
 const PlaceSearchQuery = z.object({
   q: z.string().trim().min(1).max(120),
   limit: z.coerce.number().int().min(1).max(10).default(10),
+  lat: z.coerce.number().finite().min(-90).max(90).optional(),
+  lng: z.coerce.number().finite().min(-180).max(180).optional(),
+  radiusKm: z.coerce.number().finite().min(1).max(500).optional(),
 })
 
 const POI_CLASSES = new Set(['amenity', 'tourism', 'shop', 'healthcare', 'leisure', 'historic', 'office', 'craft'])
@@ -50,6 +53,26 @@ const HEALTHCARE_TYPES = new Set(['hospital', 'clinic', 'doctors', 'dentist', 'p
 const FOOD_TYPES = new Set(['restaurant', 'cafe', 'fast_food', 'bar', 'pub', 'food_court', 'ice_cream'])
 const TRANSPORT_TYPES = new Set(['parking', 'fuel', 'bus_station', 'charging_station', 'ferry_terminal', 'taxi'])
 const GENERIC_NAME_VALUES = new Set(['yes', 'building'])
+const MAX_PLACE_SEARCH_RADIUS_KM = 500
+const LOW_SIGNAL_PLACE_TYPES = new Set([
+  'stream',
+  'river',
+  'canal',
+  'ditch',
+  'drain',
+  'residential',
+  'footway',
+  'path',
+  'cycleway',
+  'bridleway',
+  'track',
+  'steps',
+  'corridor',
+  'service',
+  'living_street',
+  'pedestrian',
+])
+const LOW_SIGNAL_PLACE_CLASSES = new Set(['waterway', 'landuse'])
 
 type PlaceSearchResultPayload = {
   kind: 'place' | 'address'
@@ -122,7 +145,30 @@ function getNominatimBaseUrl(req: FastifyRequest, civilPublicHost: string) {
   return `${buildPublicOrigin(req, civilPublicHost)}/nominatim`
 }
 
-function buildNominatimSearchUrl(req: FastifyRequest, civilPublicHost: string, query: string, limit: number) {
+function buildBoundedViewbox(latitude: number, longitude: number, radiusKm: number) {
+  const safeRadiusKm = Math.max(1, Math.min(MAX_PLACE_SEARCH_RADIUS_KM, radiusKm))
+  const latitudeDelta = safeRadiusKm / 111
+  const longitudeDelta = safeRadiusKm / (111 * Math.max(0.2, Math.cos((latitude * Math.PI) / 180)))
+
+  const minLongitude = Math.max(-180, longitude - longitudeDelta)
+  const maxLongitude = Math.min(180, longitude + longitudeDelta)
+  const minLatitude = Math.max(-90, latitude - latitudeDelta)
+  const maxLatitude = Math.min(90, latitude + latitudeDelta)
+
+  return `${minLongitude},${maxLatitude},${maxLongitude},${minLatitude}`
+}
+
+function buildNominatimSearchUrl(
+  req: FastifyRequest,
+  civilPublicHost: string,
+  query: string,
+  limit: number,
+  options?: {
+    latitude?: number
+    longitude?: number
+    radiusKm?: number
+  },
+) {
   const url = new URL(`${getNominatimBaseUrl(req, civilPublicHost)}/search`)
   url.searchParams.set('q', query)
   url.searchParams.set('format', 'json')
@@ -131,6 +177,18 @@ function buildNominatimSearchUrl(req: FastifyRequest, civilPublicHost: string, q
   url.searchParams.set('limit', String(limit))
   url.searchParams.set('dedupe', '1')
   url.searchParams.set('countrycodes', 'ca')
+  if (
+    typeof options?.latitude === 'number' &&
+    Number.isFinite(options.latitude) &&
+    typeof options?.longitude === 'number' &&
+    Number.isFinite(options.longitude) &&
+    typeof options?.radiusKm === 'number' &&
+    Number.isFinite(options.radiusKm) &&
+    options.radiusKm > 0
+  ) {
+    url.searchParams.set('viewbox', buildBoundedViewbox(options.latitude, options.longitude, options.radiusKm))
+    url.searchParams.set('bounded', '1')
+  }
   return url.toString()
 }
 
@@ -275,6 +333,15 @@ function mapPlaceSearchResult(record: Record<string, unknown>): PlaceSearchResul
   }
 }
 
+function shouldKeepPlaceSearchResult(result: PlaceSearchResultPayload) {
+  if (result.kind !== 'place') return true
+  const normalizedType = normalizeText(result.typeName).toLowerCase()
+  const normalizedClass = normalizeText(result.className).toLowerCase()
+  if (normalizedType && LOW_SIGNAL_PLACE_TYPES.has(normalizedType)) return false
+  if (normalizedClass && LOW_SIGNAL_PLACE_CLASSES.has(normalizedClass)) return false
+  return true
+}
+
 type NotificationsSearchDeps = {
   CIVIL_PUBLIC_HOST: string
   NOTIFICATION_CHANNEL_PREFIX: string
@@ -371,7 +438,7 @@ export function registerNotificationsSearchRoutes(app: FastifyInstance, deps: No
       const parse = PlaceSearchQuery.safeParse(req.query)
       if (!parse.success) return reply.code(400).send({ error: parse.error.flatten() })
 
-      const { q, limit } = parse.data
+      const { q, limit, lat, lng, radiusKm } = parse.data
       const normalizedQuery = deps.normalizeSearchTerm(q)
       if (!normalizedQuery) {
         return reply.send({
@@ -387,11 +454,18 @@ export function registerNotificationsSearchRoutes(app: FastifyInstance, deps: No
       }
 
       try {
-        const upstreamResponse = await fetch(buildNominatimSearchUrl(req, deps.CIVIL_PUBLIC_HOST, normalizedQuery, limit), {
-          method: 'GET',
-          headers: { accept: 'application/json' },
-          cache: 'no-store',
-        })
+        const upstreamResponse = await fetch(
+          buildNominatimSearchUrl(req, deps.CIVIL_PUBLIC_HOST, normalizedQuery, limit, {
+            latitude: typeof lat === 'number' ? lat : undefined,
+            longitude: typeof lng === 'number' ? lng : undefined,
+            radiusKm: typeof radiusKm === 'number' ? Math.min(radiusKm, MAX_PLACE_SEARCH_RADIUS_KM) : undefined,
+          }),
+          {
+            method: 'GET',
+            headers: { accept: 'application/json' },
+            cache: 'no-store',
+          },
+        )
 
         if (!upstreamResponse.ok) {
           req.log.warn({ query: normalizedQuery, statusCode: upstreamResponse.status }, 'search_places_upstream_failed')
@@ -404,7 +478,8 @@ export function registerNotificationsSearchRoutes(app: FastifyInstance, deps: No
               payload.flatMap((entry) => {
                 if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return []
                 const mapped = mapPlaceSearchResult(entry as Record<string, unknown>)
-                return mapped ? [mapped] : []
+                if (!mapped || !shouldKeepPlaceSearchResult(mapped)) return []
+                return [mapped]
               }),
             )
           : []
@@ -415,6 +490,7 @@ export function registerNotificationsSearchRoutes(app: FastifyInstance, deps: No
 
         req.log.info({
           query: normalizedQuery,
+          radiusKm: typeof radiusKm === 'number' ? Math.min(radiusKm, MAX_PLACE_SEARCH_RADIUS_KM) : null,
           totalResults: rankedResults.length,
           poiCount: places.length,
           hasPois: places.length > 0,

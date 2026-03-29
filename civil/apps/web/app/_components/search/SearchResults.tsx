@@ -44,6 +44,7 @@ import {
   type SavedShippingAddress,
 } from '../../_lib/canadianAddresses'
 import { getCurrentLocation } from '../../_lib/locationService'
+import { useMobileKeyboardState } from '../../_lib/mobileKeyboard'
 import {
   formatSavedShippingAddressDetail,
   formatSavedShippingAddressTitle,
@@ -62,8 +63,10 @@ const EVENT_LIMIT = 2
 const MARKET_LIMIT = 2
 const POST_LIMIT = 2
 const PLACE_FETCH_LIMIT = 8
-const MAP_RESULT_DISTANCE_LIMIT_KM = 1000
+const MAP_RESULT_DISTANCE_LIMIT_KM = 500
 const PLACE_SEARCH_DEBOUNCE_MS = 300
+const SEARCH_PANEL_MAX_HEIGHT_PX = 672
+const SEARCH_PANEL_BOTTOM_GAP_PX = 12
 const GENERAL_SEARCH_STEPS = [
   'Searching people',
   'Searching communities',
@@ -131,6 +134,7 @@ function formatDistanceBadge(distanceKm: number) {
 
 export function SearchResults({ query, open, onResultSelect, onLoadingStateChange }: SearchResultsProps) {
   const trimmedQuery = query.trim()
+  const keyboardState = useMobileKeyboardState()
   const [debouncedPlaceQuery, setDebouncedPlaceQuery] = useState(trimmedQuery)
   const [peopleResults, setPeopleResults] = useState<UserSearchResult[]>([])
   const [communityResults, setCommunityResults] = useState<CommunitySearchResult[]>([])
@@ -146,9 +150,11 @@ export function SearchResults({ query, open, onResultSelect, onLoadingStateChang
   const [placeLoading, setPlaceLoading] = useState(false)
   const [loadingStepIndex, setLoadingStepIndex] = useState(0)
   const [error, setError] = useState<string | null>(null)
+  const [panelMaxHeight, setPanelMaxHeight] = useState<number | null>(null)
   const abortRef = useRef<AbortController | null>(null)
   const placeAbortRef = useRef<AbortController | null>(null)
   const addressAnchorAttemptedRef = useRef(false)
+  const panelRef = useRef<HTMLDivElement | null>(null)
 
   useEffect(() => {
     if (open) return
@@ -282,7 +288,12 @@ export function SearchResults({ query, open, onResultSelect, onLoadingStateChang
     placeAbortRef.current = controller
     setPlaceLoading(true)
 
-    void fetchPlaceSearchResults(debouncedPlaceQuery, controller.signal, PLACE_FETCH_LIMIT)
+    void fetchPlaceSearchResults(debouncedPlaceQuery, controller.signal, {
+      limit: PLACE_FETCH_LIMIT,
+      latitude: addressSearchAnchor?.latitude ?? null,
+      longitude: addressSearchAnchor?.longitude ?? null,
+      radiusKm: MAP_RESULT_DISTANCE_LIMIT_KM,
+    })
       .then((results) => {
         setPlaceResults(results)
       })
@@ -295,7 +306,7 @@ export function SearchResults({ query, open, onResultSelect, onLoadingStateChang
       })
 
     return () => controller.abort()
-  }, [debouncedPlaceQuery, open])
+  }, [addressSearchAnchor, debouncedPlaceQuery, open])
 
   useEffect(() => {
     if (!open || trimmedQuery.length < MIN_QUERY_LENGTH) {
@@ -494,6 +505,54 @@ export function SearchResults({ query, open, onResultSelect, onLoadingStateChang
     onLoadingStateChange({ active: showPanel && anyLoading, label: loadingLabel })
   }, [anyLoading, loadingLabel, onLoadingStateChange, showPanel])
 
+  useEffect(() => {
+    if (!showPanel) {
+      setPanelMaxHeight(null)
+      return
+    }
+
+    let frameId = 0
+    const viewport = typeof window !== 'undefined' ? window.visualViewport : null
+    const measure = () => {
+      const panel = panelRef.current
+      if (!panel || typeof window === 'undefined') return
+
+      const viewportHeight = keyboardState.keyboardOpen
+        ? keyboardState.viewportHeight
+        : Math.max(keyboardState.layoutViewportHeight, keyboardState.viewportHeight, window.innerHeight)
+      const availableHeight = Math.floor(viewportHeight - panel.getBoundingClientRect().top - SEARCH_PANEL_BOTTOM_GAP_PX)
+      const nextHeight = Math.max(0, Math.min(SEARCH_PANEL_MAX_HEIGHT_PX, availableHeight))
+      setPanelMaxHeight((current) => (current === nextHeight ? current : nextHeight))
+    }
+    const scheduleMeasure = () => {
+      if (typeof window === 'undefined') return
+      window.cancelAnimationFrame(frameId)
+      frameId = window.requestAnimationFrame(measure)
+    }
+
+    scheduleMeasure()
+    viewport?.addEventListener('resize', scheduleMeasure)
+    viewport?.addEventListener('scroll', scheduleMeasure)
+    window.addEventListener('resize', scheduleMeasure)
+
+    return () => {
+      if (typeof window !== 'undefined') {
+        window.cancelAnimationFrame(frameId)
+        window.removeEventListener('resize', scheduleMeasure)
+      }
+      viewport?.removeEventListener('resize', scheduleMeasure)
+      viewport?.removeEventListener('scroll', scheduleMeasure)
+    }
+  }, [
+    anyLoading,
+    hasAnyResults,
+    keyboardState.keyboardOpen,
+    keyboardState.layoutViewportHeight,
+    keyboardState.viewportHeight,
+    showPanel,
+    trimmedQuery,
+  ])
+
   if (!showPanel) return null
 
   const renderHomeCommunity = (home: UserSearchResult['homeCommunity']) => {
@@ -505,7 +564,12 @@ export function SearchResults({ query, open, onResultSelect, onLoadingStateChang
 
   return (
     <div
-      className="absolute left-0 top-[calc(100%+0.5rem)] z-40 max-h-[min(70vh,42rem)] w-full min-w-[18rem] overflow-y-auto overscroll-contain rounded-2xl border border-slate-200 bg-white p-3 text-left shadow-2xl shadow-slate-900/12"
+      ref={panelRef}
+      className="absolute left-0 top-[calc(100%+0.5rem)] z-40 max-h-[min(70vh,42rem)] w-full min-w-[18rem] overflow-y-auto overscroll-contain rounded-2xl border border-slate-200 bg-white p-3 text-left shadow-2xl shadow-slate-900/12 [touch-action:pan-y]"
+      style={{
+        maxHeight: panelMaxHeight && panelMaxHeight > 0 ? `${panelMaxHeight}px` : undefined,
+        WebkitOverflowScrolling: 'touch',
+      }}
       onMouseDown={(event) => event.preventDefault()}
     >
       {anyLoading ? (
