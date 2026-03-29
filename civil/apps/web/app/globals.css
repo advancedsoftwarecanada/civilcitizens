@@ -85,6 +85,10 @@ body.cc-mobile-scroll-lock {
   --cc-modal-safe-right: max(1rem, var(--safe-area-right));
   --cc-modal-safe-bottom: calc(max(var(--safe-area-bottom), var(--cc-runtime-bottom-inset)) + 0.75rem);
   --cc-modal-safe-left: max(1rem, var(--safe-area-left));
+  --cc-toast-safe-top: calc(var(--cc-native-safe-top-offset) + 0.75rem);
+  --cc-toast-safe-right: max(0.75rem, var(--safe-area-right));
+  --cc-toast-safe-bottom: calc(max(var(--safe-area-bottom), var(--cc-runtime-bottom-inset)) + 0.75rem);
+  --cc-toast-safe-left: max(0.75rem, var(--safe-area-left));
 }
 
 @media (max-width: 1023px) {
@@ -133,6 +137,12 @@ body.cc-mobile-scroll-lock {
   max-height: calc(var(--cc-viewport-height) - var(--cc-modal-safe-top) - var(--cc-modal-safe-bottom));
 }
 
+.cc-safe-toast-viewport {
+  top: var(--cc-toast-safe-top);
+  right: var(--cc-toast-safe-right);
+  left: var(--cc-toast-safe-left);
+}
+
 @media (max-width: 639px) {
   html.cc-keyboard-open .cc-auth-screen .cc-auth-screen__container {
     justify-content: flex-start;
@@ -147,6 +157,13 @@ body.cc-mobile-scroll-lock {
     padding-right: max(1.5rem, var(--cc-modal-safe-right));
     padding-bottom: max(1.5rem, var(--cc-modal-safe-bottom));
     padding-left: max(1.5rem, var(--cc-modal-safe-left));
+  }
+
+  .cc-safe-toast-viewport {
+    top: auto;
+    right: max(1rem, var(--cc-toast-safe-right));
+    bottom: max(1rem, var(--cc-toast-safe-bottom));
+    left: auto;
   }
 }
 

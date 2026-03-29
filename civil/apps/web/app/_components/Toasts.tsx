@@ -39,7 +39,7 @@ export default function Toasts() {
 
   // Simple fade-in/out via Tailwind classes
   return (
-    <div className="pointer-events-none fixed inset-x-0 top-4 z-[60] flex justify-center md:inset-x-auto md:bottom-4 md:right-4 md:top-auto md:justify-end">
+    <div className="cc-safe-toast-viewport pointer-events-none fixed z-[60] flex justify-center md:justify-end">
       <div className="flex max-w-sm flex-col gap-2">
         {toasts.map((t) => (
           t.notification ? (
