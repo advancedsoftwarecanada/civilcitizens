@@ -1323,21 +1323,54 @@ export default function UserPostsPage({ params }: PageProps) {
     })
   }
 
-  const renderFamilyRelationshipMenu = () => {
-    if (!currentProfileFamilyRelationship) return null
+  const renderRelationshipManageMenu = () => {
+    const canRemoveFriendRelationship = resolvedRelationship.friendshipStatus === 'friends'
+    const canRemoveConnectionRelationship = resolvedRelationship.connectionStatus === 'connected'
+    const canRemoveFamilyRelationship = Boolean(currentProfileFamilyRelationship)
+    const relationshipLabels = [
+      ...(canRemoveFriendRelationship ? ['Friends'] : []),
+      ...(canRemoveFamilyRelationship ? ['Family'] : []),
+      ...(canRemoveConnectionRelationship ? ['Connection'] : []),
+    ]
+
+    if (!relationshipLabels.length) return null
+
+    const label = relationshipLabels.length === 1 ? relationshipLabels[0] ?? 'Relationships' : 'Relationships'
 
     return renderActionMenu({
-      label: `Your ${currentProfileFamilyRelationship.relationshipLabel}`,
+      label,
       tone: 'neutral',
       icon: <HiOutlineUsers className="h-4 w-4" aria-hidden="true" />,
       children: (
-        <button type="button" className={destructiveMenuItemClassName} onClick={(event) => {
-          closeDetailsMenu(event)
-          setRemoveFamilyModalOpen(true)
-        }}>
-          <HiOutlineUsers className="h-4 w-4" aria-hidden="true" />
-          Remove Family relationship
-        </button>
+        <>
+          {canRemoveFriendRelationship ? (
+            <button type="button" className={destructiveMenuItemClassName} onClick={(event) => {
+              closeDetailsMenu(event)
+              setRemoveFriendModalOpen(true)
+            }}>
+              <HiOutlineUsers className="h-4 w-4" aria-hidden="true" />
+              Remove Friend
+            </button>
+          ) : null}
+          {canRemoveFamilyRelationship ? (
+            <button type="button" className={destructiveMenuItemClassName} onClick={(event) => {
+              closeDetailsMenu(event)
+              setRemoveFamilyModalOpen(true)
+            }}>
+              <HiOutlineUsers className="h-4 w-4" aria-hidden="true" />
+              Remove Family
+            </button>
+          ) : null}
+          {canRemoveConnectionRelationship ? (
+            <button type="button" className={destructiveMenuItemClassName} onClick={(event) => {
+              closeDetailsMenu(event)
+              setRemoveConnectionModalOpen(true)
+            }}>
+              <FaUserTie className="h-4 w-4" aria-hidden="true" />
+              Remove Connection
+            </button>
+          ) : null}
+        </>
       ),
     })
   }
@@ -2538,7 +2571,7 @@ export default function UserPostsPage({ params }: PageProps) {
                 ) : (
                   <>
                     <div className="flex w-full max-w-full flex-wrap items-center justify-center gap-2 overflow-visible pb-1 pt-1 sm:w-auto sm:max-w-none">
-                      {renderFamilyRelationshipMenu()}
+                      {renderRelationshipManageMenu()}
                       {!hasAnyProfileRelationship ? renderConnectMenu() : null}
                       {renderMessageMenu()}
                     </div>
