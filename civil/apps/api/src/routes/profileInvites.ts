@@ -233,7 +233,7 @@ export function registerProfileInviteRoutes(app: FastifyInstance, deps: ProfileI
         return reply.code(409).send({ error: 'already_family' })
       }
 
-      const existingNotifications: Array<{ payload: unknown }> = await prisma.notification.findMany({
+      const existingNotifications: Array<{ id: string; payload: unknown }> = await prisma.notification.findMany({
         where: {
           userId: targetUser.id,
           actorId: actorUser.id,
@@ -241,20 +241,61 @@ export function registerProfileInviteRoutes(app: FastifyInstance, deps: ProfileI
         },
         orderBy: { createdAt: 'desc' },
         take: 20,
-        select: { payload: true },
+        select: { id: true, payload: true },
       })
-      let hasPendingInvite = false
+      const pendingInvites: Array<{ id: string; payload: Record<string, unknown> | null }> = []
       for (const entry of existingNotifications) {
         const payload = entry.payload && typeof entry.payload === 'object' && !Array.isArray(entry.payload)
           ? (entry.payload as Record<string, unknown>)
           : null
         if (typeof payload?.status === 'string' && payload.status.trim().toLowerCase() === 'pending') {
-          hasPendingInvite = true
-          break
+          pendingInvites.push({ id: entry.id, payload })
         }
       }
-      if (hasPendingInvite) {
-        return reply.code(409).send({ error: 'family_invite_pending' })
+      if (pendingInvites.length > 0) {
+        const refreshedAt = new Date().toISOString()
+        const relationshipLabel =
+          typeof deps.profileFamilyRelationshipLabels?.[body.data.relationship] === 'string'
+            ? deps.profileFamilyRelationshipLabels[body.data.relationship]
+            : body.data.relationship
+        const profileUrl = `/u/${encodeURIComponent(actorUser.handle)}`
+        const [latestPending, ...olderPending] = pendingInvites
+        if (!latestPending) {
+          return reply.code(409).send({ error: 'family_invite_pending' })
+        }
+
+        await prisma.$transaction([
+          prisma.notification.update({
+            where: { id: latestPending.id },
+            data: {
+              payload: {
+                ...(latestPending.payload ?? {}),
+                relationship: body.data.relationship,
+                relationshipLabel,
+                status: 'pending',
+                requestedAt: refreshedAt,
+                refreshedAt,
+                url: profileUrl,
+                sourceUrl: profileUrl,
+              } as Prisma.InputJsonValue,
+              readAt: null,
+            },
+          }),
+          ...olderPending.map((notification) =>
+            prisma.notification.update({
+              where: { id: notification.id },
+              data: {
+                payload: {
+                  ...(notification.payload ?? {}),
+                  status: 'superseded',
+                  supersededAt: refreshedAt,
+                } as Prisma.InputJsonValue,
+              },
+            }),
+          ),
+        ])
+
+        return reply.send({ ok: true, updatedExisting: true })
       }
 
       await deps.notifyProfileFamilyInvite({

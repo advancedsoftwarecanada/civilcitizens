@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { usePathname, useRouter, useSearchParams } from 'next/navigation'
 import { clearLastNativeNotificationTapUrl, ensureNativeNotificationTapListener, getLastNativeNotificationTapUrl, getNativePlatformName } from '../_lib/nativePush'
 import { acknowledgePendingPushRedirect, markPendingPushRedirectAttempt, setPendingPushRedirect } from '../_lib/pendingPushRedirect'
+import { emitPushNavigation } from '../_lib/pushNavigation'
 
 function normalizeDeepLinkUrl(raw: string): string | null {
   const trimmed = raw.trim()
@@ -76,6 +77,7 @@ export default function NotificationTapRouter() {
 
         // If we're already there, just clear and stop.
         if (nextUrl === currentUrl) {
+          emitPushNavigation(nextUrl)
           acknowledgePendingPushRedirect(currentUrl)
           await clearLastNativeNotificationTapUrl()
           return

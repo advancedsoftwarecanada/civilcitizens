@@ -624,7 +624,15 @@ export function getNotificationTargetUrl(notification: NotificationItem): string
     }
   }
   if (notification.postId) {
-    return `/post/${notification.postId}`
+    const commentId = typeof notification.payload?.commentId === 'string' ? notification.payload.commentId.trim() : ''
+    if (commentId) {
+      const encodedCommentId = encodeURIComponent(commentId)
+      return `/post/${encodeURIComponent(notification.postId)}?comment=${encodedCommentId}#comment-${encodedCommentId}`
+    }
+    return `/post/${encodeURIComponent(notification.postId)}`
+  }
+  if (notification.actor?.handle) {
+    return `/u/${encodeURIComponent(notification.actor.handle)}`
   }
   return null
 }
