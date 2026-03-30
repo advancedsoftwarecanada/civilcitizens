@@ -118,7 +118,7 @@ export default function Home() {
 
             <div className="text-center lg:text-left">
               <p className="text-sm sm:text-base font-semibold uppercase tracking-[0.35em] text-white/80 mb-3">Community. Commerce. Careers. Governance.</p>
-              <h1 className="text-4xl font-extrabold mb-3 text-white">Together, we imagine an ideal society.</h1>
+              <h1 className="text-4xl font-extrabold mb-3 text-white">Together, we build an ideal society.</h1>
               <p className="text-lg leading-relaxed text-white/90">
                 Civil is Canada’s integrated network for people, business, and civic life — built to connect Canadians, strengthen small business, and organize our communities for the future.
               </p>
@@ -533,9 +533,21 @@ export default function Home() {
         <div className="absolute inset-0 -z-10 bg-slate-950/65" aria-hidden="true" />
         <div className="relative z-10 container mx-auto px-4">
           <div className="grid grid-cols-1 lg:grid-cols-2 items-center gap-8">
-            <div className="hidden lg:flex items-center justify-center">
-              <div className="mx-auto max-w-xs sm:max-w-sm lg:max-w-md">
-                <img src="/logo-white.svg" width={420} height={100} alt="Civil Citizens" className="h-auto w-full" />
+            <div className="order-first flex items-center justify-center lg:order-none">
+              <div className="mx-auto w-full max-w-xl overflow-hidden rounded-[28px] border border-white/20 bg-white/10 shadow-[0_24px_80px_rgba(15,23,42,0.35)] backdrop-blur-sm">
+                <div className="border-b border-white/15 px-4 py-3 text-left">
+                  <p className="text-xs font-semibold uppercase tracking-[0.28em] text-white/70">Chamber Map</p>
+                  <p className="mt-1 text-sm text-white/85">Federal electoral district view</p>
+                </div>
+                <div className="relative aspect-[16/10]">
+                  <Image
+                    src="/eda-example-ontario.jpg"
+                    alt="Civil chamber district map preview"
+                    fill
+                    sizes="(min-width: 1024px) 40vw, 92vw"
+                    className="object-cover"
+                  />
+                </div>
               </div>
             </div>
 
