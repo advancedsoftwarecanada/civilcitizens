@@ -628,6 +628,19 @@ export function createNotificationHelpers(deps: CreateNotificationHelpersDeps) {
 
   function getNotificationDeepLink(record: NotificationRecord, actor?: FriendUserLike | null): string | null {
     const payload = readPayloadRecord(record.payload)
+    const status = typeof payload?.status === 'string' ? payload.status.trim().toLowerCase() : ''
+    if (
+      status === 'pending' &&
+      (
+        record.type === FRIEND_NOTIFICATION_TYPES.REQUEST ||
+        record.type === CONNECTION_NOTIFICATION_TYPES.REQUEST ||
+        record.type === PROFILE_INVITE_NOTIFICATION_TYPES.FAMILY ||
+        record.type === FAMILY_NOTIFICATION_TYPES.FRIEND_REQUEST
+      )
+    ) {
+      return '/notifications'
+    }
+
     if (record.type === 'drive_ride_contract_update') {
       return '/drive'
     }

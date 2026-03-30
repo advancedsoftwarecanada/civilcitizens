@@ -592,6 +592,8 @@ export default function TopNav() {
           pushToast(action === 'accept' ? 'Delivery bid accepted.' : 'Delivery bid declined.', action === 'accept' ? 'success' : 'info')
         } else if (notification.type === 'drive_ride_complete_confirmation') {
           pushToast(action === 'accept' ? 'Ride completion confirmed.' : 'Ride issue reported to support.', action === 'accept' ? 'success' : 'info')
+        } else if (notification.type === 'connection_request') {
+          pushToast(action === 'accept' ? 'Connection request accepted.' : 'Connection request declined.', action === 'accept' ? 'success' : 'info')
         } else if (notification.type === 'profile_family_invite') {
           pushToast(action === 'accept' ? 'Family relationship accepted.' : 'Family relationship declined.', action === 'accept' ? 'success' : 'info')
         } else {

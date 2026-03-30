@@ -312,6 +312,7 @@ export function getNotificationRequestStatus(notification: NotificationItem): Fr
 export function isActionableNotification(notification: NotificationItem): boolean {
   return (
     notification.type === 'friend_request' ||
+    notification.type === 'connection_request' ||
     notification.type === 'profile_family_invite' ||
     notification.type === 'family_child_friend_request' ||
     notification.type === 'delivery_contract_bid' ||
@@ -358,13 +359,13 @@ export function getNotificationMessage(notification: NotificationItem) {
       return 'Backed your Cause'
     }
     case 'friend_request':
-      return 'sent you a friend request'
+      return 'Sent you a friend request'
     case 'friend_accept':
-      return 'accepted your friend request'
+      return 'Accepted your friend request'
     case 'connection_request':
-      return 'sent you a connection request'
+      return 'Sent you a connection request'
     case 'connection_accept':
-      return 'accepted your connection request'
+      return 'Accepted your connection request'
     case 'comment_reply': {
       const snippet = formatReplySnippet(notification)
       return snippet ? `replied: "${snippet}"` : 'replied to your comment'
@@ -401,7 +402,7 @@ export function getNotificationMessage(notification: NotificationItem) {
       return inviteTitle ? `invited you to organization: ${inviteTitle}` : 'invited you to an organization'
     case 'profile_family_invite': {
       const relationshipLabel = typeof notification.payload?.relationshipLabel === 'string' ? notification.payload.relationshipLabel.trim() : ''
-      return relationshipLabel ? `has added you as their ${relationshipLabel}` : 'has added you as family'
+      return relationshipLabel ? `Added you as their ${relationshipLabel}` : 'Added you as family'
     }
     case 'delivery_contract_bid':
       if (deliveryListingTitle && deliveryAmountLabel) return `wants to deliver your ${deliveryListingTitle} for ${deliveryAmountLabel}`
@@ -464,10 +465,10 @@ export function getNotificationMessage(notification: NotificationItem) {
       const relationshipLabel = typeof notification.payload?.relationshipLabel === 'string' ? notification.payload.relationshipLabel.trim() : 'family'
       const status = typeof notification.payload?.status === 'string' ? notification.payload.status.toLowerCase() : ''
       return status === 'accepted'
-        ? `accepted your ${relationshipLabel} request`
+        ? `Accepted your ${relationshipLabel} request`
         : status === 'rejected'
-          ? `declined your ${relationshipLabel} request`
-          : `responded to your ${relationshipLabel} request`
+          ? `Declined your ${relationshipLabel} request`
+          : `Responded to your ${relationshipLabel} request`
     }
     case 'poll_results_available': {
       const questionPreview = typeof notification.payload?.questionPreview === 'string' ? notification.payload.questionPreview.trim() : ''
@@ -577,6 +578,19 @@ export function getNotificationActionLabels(notification: NotificationItem): { a
 }
 
 export function getNotificationTargetUrl(notification: NotificationItem): string | null {
+  const requestStatus = getNotificationRequestStatus(notification)
+  if (
+    requestStatus === 'pending' &&
+    (
+      notification.type === 'friend_request' ||
+      notification.type === 'connection_request' ||
+      notification.type === 'profile_family_invite' ||
+      notification.type === 'family_child_friend_request'
+    )
+  ) {
+    return null
+  }
+
   if (notification.type === 'drive_ride_tip_received') {
     return '/drive'
   }
