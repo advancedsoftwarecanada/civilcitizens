@@ -37,7 +37,7 @@ const MIN_QUERY_LENGTH = 2
 const SEARCH_TABS: Array<{ value: SearchType; label: string }> = [
   { value: 'all', label: 'All' },
   { value: 'people', label: 'People' },
-  { value: 'communities', label: 'Communities' },
+  { value: 'communities', label: 'Chambers' },
   { value: 'organizations', label: 'Organizations' },
   { value: 'events', label: 'Events' },
   { value: 'market', label: 'Market' },
@@ -249,7 +249,7 @@ export default function SearchPageClient({ initialQuery = '', initialType = 'all
       case 'people':
         return 'People'
       case 'communities':
-        return 'Communities'
+        return 'Chambers'
       case 'organizations':
         return 'Organizations'
       case 'events':
@@ -301,10 +301,10 @@ export default function SearchPageClient({ initialQuery = '', initialType = 'all
   ])
 
   const renderHomeCommunity = (home: HomeCommunitySummary | null | undefined) => {
-    if (!home) return 'No home community yet'
+    if (!home) return 'No home chamber yet'
     const provinceLabel = home.provinceName ?? home.provinceCode.toUpperCase()
     const chamberLabel = home.communityName ?? home.chamberName ?? home.communitySlug ?? home.chamberSlug
-    if (!chamberLabel) return 'No home community yet'
+    if (!chamberLabel) return 'No home chamber yet'
     return `${provinceLabel} / ${chamberLabel}`
   }
 
@@ -507,10 +507,10 @@ export default function SearchPageClient({ initialQuery = '', initialType = 'all
     },
     {
       key: 'communities',
-      title: 'Communities',
+      title: 'Chambers',
       count: communityResults.length,
-      emptyMessage: <>No communities found for <span className="font-semibold">{trimmedActiveQuery}</span>.</>,
-      content: communityResults.length > 0 ? renderCommunityList(communityResults) : renderEmptyState(<>No communities found for <span className="font-semibold">{trimmedActiveQuery}</span>.</>),
+      emptyMessage: <>No chambers found for <span className="font-semibold">{trimmedActiveQuery}</span>.</>,
+      content: communityResults.length > 0 ? renderCommunityList(communityResults) : renderEmptyState(<>No chambers found for <span className="font-semibold">{trimmedActiveQuery}</span>.</>),
     },
     {
       key: 'organizations',

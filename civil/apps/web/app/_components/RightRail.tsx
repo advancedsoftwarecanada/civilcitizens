@@ -905,7 +905,7 @@ export function RightRail({
   if (mode === 'communitiesFeed') {
     return (
       <div className="space-y-6">
-        <Block title="Your Communities" action={{ label: 'View all', href: '/communities/settings' }}>
+        <Block title="Your Chambers of Citizens" action={{ label: 'View all', href: '/chambers/settings' }}>
           {data?.communities.length ? (
             <ul className="space-y-3">
               {data.communities.map((comm) => {
@@ -936,7 +936,7 @@ export function RightRail({
               })}
             </ul>
           ) : (
-            <p className="text-sm text-slate-500">No communities followed.</p>
+            <p className="text-sm text-slate-500">No chambers of citizens followed.</p>
           )}
         </Block>
 
@@ -1044,8 +1044,8 @@ export function RightRail({
             </Block>
           ))
         ) : (
-          <Block title="Community Organizations" action={{ label: 'View all', href: '/communities/settings' }}>
-            <p className="text-sm text-slate-500">Follow a community to see its organizations here.</p>
+          <Block title="Chamber Organizations" action={{ label: 'View all', href: '/chambers/settings' }}>
+            <p className="text-sm text-slate-500">Follow a chamber of citizens to see its organizations here.</p>
           </Block>
         )}
       </div>
@@ -1133,8 +1133,8 @@ export function RightRail({
             </Block>
           ))
         ) : (
-          <Block title="Community Organizations" action={{ label: 'View all', href: '/communities/settings' }}>
-            <p className="text-sm text-slate-500">Follow a community to see its organizations here.</p>
+          <Block title="Chamber Organizations" action={{ label: 'View all', href: '/chambers/settings' }}>
+            <p className="text-sm text-slate-500">Follow a chamber of citizens to see its organizations here.</p>
           </Block>
         )}
       </div>
@@ -1557,7 +1557,7 @@ export function RightRail({
 
       {/* Communities Section */}
       {!hideSocialBlocks && !hideCommunities && !isFamilyLockedSession ? (
-        <Block title="Your Communities" action={{ label: 'View all', href: '/communities/settings' }}>
+        <Block title="Your Chambers of Citizens" action={{ label: 'View all', href: '/chambers/settings' }}>
           {data?.communities.length ? (
             <ul className="space-y-3">
               {data.communities.map((comm) => {
@@ -1588,7 +1588,7 @@ export function RightRail({
               })}
             </ul>
           ) : (
-            <p className="text-sm text-slate-500">No communities followed.</p>
+            <p className="text-sm text-slate-500">No chambers of citizens followed.</p>
           )}
         </Block>
       ) : null}
@@ -1634,9 +1634,9 @@ export function RightRail({
               })}
             </ul>
           ) : data?.communities.length ? (
-            <p className="text-center text-sm text-slate-500">No active causes in your communities right now.</p>
+            <p className="text-center text-sm text-slate-500">No active causes in your chambers of citizens right now.</p>
           ) : (
-            <p className="text-center text-sm text-slate-500">Follow a community to see local causes here.</p>
+            <p className="text-center text-sm text-slate-500">Follow a chamber of citizens to see local causes here.</p>
           )}
         </Block>
       ) : null}

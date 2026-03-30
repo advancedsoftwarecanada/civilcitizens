@@ -28,8 +28,8 @@ export default function HomePageClient() {
         scope="all"
         sidebarActive="home"
         title=""
-        emptyState="Your home feed is quiet right now. Follow more communities, people, and organizations to fill it out."
-        emptyStateCta={{ label: 'Explore Communities', href: '/communities' }}
+        emptyState="Your home feed is quiet right now. Follow more chambers of citizens, people, and organizations to fill it out."
+        emptyStateCta={{ label: 'Explore Chambers of Citizens', href: '/chambers' }}
         defaultSort="hot"
         showFeedSummary={false}
         showSupplementalFeedItems={false}

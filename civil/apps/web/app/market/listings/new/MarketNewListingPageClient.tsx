@@ -1917,7 +1917,7 @@ export default function MarketNewListingPageClient() {
                   }}
                   className="w-full rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900"
                 >
-                  <option value="">Select community…</option>
+                  <option value="">Select chamber…</option>
                   {communityOptions.map((option) => (
                     <option key={`${option.provinceCode}|${option.communitySlug}`} value={`${option.provinceCode}|${option.communitySlug}`}>
                       {option.label}
@@ -1926,7 +1926,7 @@ export default function MarketNewListingPageClient() {
                 </select>
               </label>
               {!communityOptions.length ? (
-                <p className="mt-2 text-xs text-amber-700">Follow or set a home community first to publish listings into market feed scope.</p>
+                <p className="mt-2 text-xs text-amber-700">Follow or set a home chamber first to publish listings into market feed scope.</p>
               ) : null}
             </div>
             </section>

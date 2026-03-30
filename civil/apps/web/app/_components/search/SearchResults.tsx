@@ -556,7 +556,7 @@ export function SearchResults({ query, open, onResultSelect, onLoadingStateChang
   if (!showPanel) return null
 
   const renderHomeCommunity = (home: UserSearchResult['homeCommunity']) => {
-    if (!home) return 'No home community yet'
+    if (!home) return 'No home chamber yet'
     const provinceLabel = home.provinceName ?? home.provinceCode.toUpperCase()
     const chamberLabel = home.communityName ?? home.communitySlug
     return `${provinceLabel} / ${chamberLabel}`
@@ -751,7 +751,7 @@ export function SearchResults({ query, open, onResultSelect, onLoadingStateChang
           ) : null}
 
           {communityResults.length > 0 ? (
-            <CompactSection title="Communities" href={sectionHref.communities} onResultSelect={onResultSelect}>
+            <CompactSection title="Chambers" href={sectionHref.communities} onResultSelect={onResultSelect}>
               <ul className="divide-y divide-slate-100">
                 {communityResults.map((community) => (
                   <li key={`${community.provinceCode}:${community.slug}`}>

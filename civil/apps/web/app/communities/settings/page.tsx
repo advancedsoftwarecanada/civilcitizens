@@ -1,5 +1,5 @@
-import { CommunitiesView } from '../CommunitiesView'
+import { redirect } from 'next/navigation'
 
-export default function CommunitiesSettingsPage() {
-  return <CommunitiesView />
+export default function CommunitiesSettingsRedirect() {
+  redirect('/chambers/settings')
 }
