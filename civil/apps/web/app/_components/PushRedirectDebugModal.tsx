@@ -6,6 +6,8 @@ import Modal from './Modal'
 import { clearLastNativeNotificationTapUrl, getLastNativeNotificationTapUrl, getNativePlatformName, getStoredNativeNotificationTapUrl } from '../_lib/nativePush'
 import { clearPendingPushRedirect, getPendingPushRedirectDebugRecord } from '../_lib/pendingPushRedirect'
 
+const DISPLAY_DELAY_MS = 5000
+
 type DebugState = {
   platform: string | null
   currentUrl: string
@@ -32,6 +34,7 @@ export default function PushRedirectDebugModal() {
   const searchParams = useSearchParams()
   const currentUrl = useMemo(() => `${pathname}${searchParams ? `?${searchParams.toString()}` : ''}${typeof window !== 'undefined' ? window.location.hash || '' : ''}`, [pathname, searchParams])
   const [dismissed, setDismissed] = useState(false)
+  const [displayReady, setDisplayReady] = useState(false)
   const [debugState, setDebugState] = useState<DebugState>(() => readDebugState(currentUrl))
   const [nativePlatform, setNativePlatform] = useState<string | null>(() => getNativePlatformName())
 
@@ -87,19 +90,44 @@ export default function PushRedirectDebugModal() {
     setDismissed(false)
   }, [debugState.pendingRedirect?.url, debugState.storedTapUrl, debugState.resolvedTapUrl, debugState.currentUrl])
 
-  if (!nativePlatform) return null
-
   const shouldOpen = !dismissed && (
-    debugState.currentUrl === '/' ||
+    Boolean(debugState.pendingRedirect) ||
     Boolean(debugState.storedTapUrl) ||
-    Boolean(debugState.resolvedTapUrl) ||
-    Boolean(debugState.pendingRedirect)
+    Boolean(debugState.resolvedTapUrl)
   )
 
   const retryTarget = debugState.pendingRedirect?.url ?? debugState.resolvedTapUrl ?? debugState.storedTapUrl
+  const waitingOnRedirect = Boolean(retryTarget) && retryTarget !== debugState.currentUrl
+
+  useEffect(() => {
+    if (!shouldOpen || !waitingOnRedirect) {
+      setDisplayReady(false)
+      return
+    }
+
+    setDisplayReady(false)
+    const timeoutId = window.setTimeout(() => {
+      setDisplayReady(true)
+    }, DISPLAY_DELAY_MS)
+
+    return () => {
+      window.clearTimeout(timeoutId)
+    }
+  }, [shouldOpen, waitingOnRedirect, retryTarget])
+
+  if (!nativePlatform) return null
 
   return (
-    <Modal open={shouldOpen} onClose={() => setDismissed(true)} title="Push Redirect Debug" maxWidthClassName="max-w-lg" closeOnBackdrop={false}>
+    <Modal
+      open={shouldOpen && waitingOnRedirect && displayReady}
+      onClose={() => {
+        setDismissed(true)
+        setDisplayReady(false)
+      }}
+      title="Push Redirect Debug"
+      maxWidthClassName="max-w-lg"
+      closeOnBackdrop={false}
+    >
       <div className="space-y-4 text-sm text-slate-700">
         <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-amber-900">
           <div className="font-semibold">Redirecting you</div>
