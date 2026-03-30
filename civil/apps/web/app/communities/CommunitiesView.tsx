@@ -840,7 +840,7 @@ export function CommunitiesView({ mode = 'default' }: { mode?: CommunitiesPageMo
       pushToast(
         isWelcomeMode
           ? 'Your browser does not support location detection. Use the postal search above instead.'
-          : 'Your browser does not support location detection. Please pick your city manually.',
+          : 'Your browser does not support location detection. Please pick your chamber manually.',
         'error',
       )
       return
@@ -873,12 +873,12 @@ export function CommunitiesView({ mode = 'default' }: { mode?: CommunitiesPageMo
           setGeoError(
             isWelcomeMode
               ? 'Enable location permissions in your browser and try again, or enter your postal code above to continue.'
-              : 'Enable location permissions in your browser to auto-detect your city, or select it manually.',
+              : 'Enable location permissions in your browser to auto-detect your chamber, or select it manually.',
           )
           pushToast(
             isWelcomeMode
               ? 'Location permission denied. Adjust permissions or use the postal search above.'
-              : 'Location permission denied. Select your city manually.',
+              : 'Location permission denied. Select your chamber manually.',
             'error',
           )
           return
@@ -889,7 +889,7 @@ export function CommunitiesView({ mode = 'default' }: { mode?: CommunitiesPageMo
           setGeoError(
             isWelcomeMode
               ? 'We could not get a fix. Adjust permissions or search by postal code above to move forward.'
-              : 'Try again from a spot with better reception, or pick your city manually.',
+              : 'Try again from a spot with better reception, or pick your chamber manually.',
           )
           pushToast(
             isWelcomeMode
@@ -904,18 +904,18 @@ export function CommunitiesView({ mode = 'default' }: { mode?: CommunitiesPageMo
         setGeoError(
           isWelcomeMode
             ? 'We could not retrieve your location. Adjust permissions and retry, or enter your postal code above.'
-            : 'Please select your province and city manually.',
+            : 'Please select your province and chamber manually.',
         )
         pushToast(
           isWelcomeMode
             ? 'We could not retrieve your location. Adjust permissions or use the postal search above.'
-            : 'We could not retrieve your location. Select your city manually.',
+            : 'We could not retrieve your location. Select your chamber manually.',
           'error',
         )
         return
       }
 
-      setGeoStatus('Matching your city…')
+      setGeoStatus('Matching your chamber…')
       try {
         const latitude = locationResult.location.latitude
         const longitude = locationResult.location.longitude
@@ -947,7 +947,7 @@ export function CommunitiesView({ mode = 'default' }: { mode?: CommunitiesPageMo
           ? 'Unable to match your location right now. Try another postal code or pick from the suggestions above.'
           : 'Unable to match your location right now. Please choose manually.'
         setGeoError(getErrorMessage(error) ?? fallbackMessage)
-        pushToast('Unable to identify your city automatically right now.', 'error')
+        pushToast('Unable to identify your chamber automatically right now.', 'error')
       } finally {
         setGeoBusy(false)
         setShowGeoOverlay(false)
@@ -1112,7 +1112,7 @@ export function CommunitiesView({ mode = 'default' }: { mode?: CommunitiesPageMo
     } catch (error) {
       console.error('Failed saving home city', error)
       const message = getErrorMessage(error)
-      const friendly = message === 'chamber_not_found' ? 'City not found. Please pick a different option.' : 'Unable to save home city right now.'
+      const friendly = message === 'chamber_not_found' ? 'Chamber not found. Please pick a different option.' : 'Unable to save home chamber right now.'
       pushToast(friendly, 'error')
       keepWelcomeLocked = false
     } finally {
@@ -1150,16 +1150,16 @@ export function CommunitiesView({ mode = 'default' }: { mode?: CommunitiesPageMo
       })
       await jsonOrThrow<unknown>(res)
       await refreshFollows({ token, syncHome: true })
-      pushToast('City followed! You will now see updates from this community.', 'success')
+      pushToast('Chamber followed! You will now see updates from this chamber.', 'success')
     } catch (error) {
       console.error('Failed following city', error)
       const message = getErrorMessage(error)
       const friendly =
         message === 'chamber_not_found'
-          ? 'City not found. Try selecting from the list above.'
+          ? 'Chamber not found. Try selecting from the list above.'
           : message === 'invalid_province'
             ? 'Province not recognized. Please try again.'
-            : 'Unable to follow this city right now.'
+            : 'Unable to follow this chamber right now.'
       pushToast(friendly, 'error')
     } finally {
       if (options?.savingKey) {
@@ -1211,7 +1211,7 @@ export function CommunitiesView({ mode = 'default' }: { mode?: CommunitiesPageMo
     } catch (error) {
       console.error('Failed unfollowing city', error)
       const message = getErrorMessage(error)
-      const friendly = message === 'not_following' ? 'You are not following that city.' : 'Unable to remove this city right now.'
+      const friendly = message === 'not_following' ? 'You are not following that chamber.' : 'Unable to remove this chamber right now.'
       pushToast(friendly, 'error')
     } finally {
       setManagingFollow(null)
@@ -1505,7 +1505,7 @@ export function CommunitiesView({ mode = 'default' }: { mode?: CommunitiesPageMo
                     Show on map
                   </button>
                   <Link className="border border-slate-300 px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-white" href={entry.communityHref}>
-                    Visit Community
+                    Visit Chamber
                   </Link>
                   {entry.electionsCanadaUrl ? (
                     <a
@@ -1530,7 +1530,7 @@ export function CommunitiesView({ mode = 'default' }: { mode?: CommunitiesPageMo
   const renderPickerSection = (variant: 'default' | 'welcome') => {
     const isWelcome = variant === 'welcome'
     const sectionClasses = isWelcome ? 'surface-card px-8 py-8 shadow-panel' : 'surface-card px-6 py-5 shadow-subtle'
-    const heading = isWelcome ? 'Find your Civil Community' : 'Look up another community'
+    const heading = isWelcome ? 'Find your Civil Chamber' : 'Look up another chamber'
     const isLocked = isWelcome && welcomeAutoSaving
 
     const showFullPicker = !isWelcome
@@ -1577,7 +1577,7 @@ export function CommunitiesView({ mode = 'default' }: { mode?: CommunitiesPageMo
               <span className="h-4 w-4 animate-spin rounded-full border-2 border-emerald-500 border-t-transparent" aria-hidden="true" />
               <div>
                 <div className="text-sm font-semibold text-gray-900">Setting your Civil home…</div>
-                <div className="text-xs text-gray-500">Hang tight while we save your city and redirect you.</div>
+                <div className="text-xs text-gray-500">Hang tight while we save your chamber and redirect you.</div>
               </div>
             </div>
           </div>
@@ -1589,7 +1589,7 @@ export function CommunitiesView({ mode = 'default' }: { mode?: CommunitiesPageMo
                 <form className="space-y-3" onSubmit={handlePostalLookupSubmit}>
                   <div>
                     <div className="text-sm font-semibold text-gray-900">Postal code</div>
-                    <p className="text-xs text-gray-500">Enter the first six characters (e.g., M5V-2T6) to reveal matching communities.</p>
+                    <p className="text-xs text-gray-500">Enter the first six characters (e.g., M5V-2T6) to reveal matching chambers of citizens.</p>
                   </div>
                   <div className="flex flex-col gap-3 sm:flex-row">
                     <label className="sr-only" htmlFor="postal-code-input">
@@ -1664,7 +1664,7 @@ export function CommunitiesView({ mode = 'default' }: { mode?: CommunitiesPageMo
               <div className="grid gap-4 md:grid-cols-2">
                 <div className="rounded-2xl border border-[var(--cc-border)] bg-white/85 p-4 shadow-subtle h-full flex flex-col justify-between">
                   <div>
-                    <div className="text-sm font-semibold text-gray-900">Let Civil detect your community</div>
+                    <div className="text-sm font-semibold text-gray-900">Let Civil detect your chamber</div>
                     <p className="text-xs text-gray-500">Allow a one-time location lookup to match the closest electoral district automatically.</p>
                   </div>
                   <div className="mt-4">
@@ -1704,7 +1704,7 @@ export function CommunitiesView({ mode = 'default' }: { mode?: CommunitiesPageMo
           {(showAssistPanel || suggestionMatches.length > 0) && (
             <div className="border border-dashed border-[var(--cc-border)] bg-slate-50/60 px-3 py-3 text-sm">
               <div className="text-xs text-gray-500">
-                Need another city? Search by province/community below or use the postal lookup to surface more matches.
+                Need another chamber? Search by province/chamber below or use the postal lookup to surface more matches.
               </div>
             </div>
           )}
@@ -1730,14 +1730,14 @@ export function CommunitiesView({ mode = 'default' }: { mode?: CommunitiesPageMo
               </div>
 
               <div>
-                <label className="text-sm font-medium text-gray-700">City</label>
+                <label className="text-sm font-medium text-gray-700">Chamber</label>
                 <select
                   className="mt-1 w-full border border-[var(--cc-border)] px-3 py-2 focus:border-[var(--cc-primary)] focus:outline-none focus:ring-2 focus:ring-red-200"
                   value={selectedCityKey}
                   onChange={handleCityChange}
                   disabled={welcomePickerView === 'assist' ? !assistUnlocked : !selectedProvince || loadingCities}
                 >
-                  <option value="">{loadingCities ? 'Loading cities…' : 'Select your city'}</option>
+                  <option value="">{loadingCities ? 'Loading chambers…' : 'Select your chamber'}</option>
                   {communityOptions.map((ch) => {
                     const optionValue = buildCityOptionValue(ch)
                     return (
@@ -1773,7 +1773,7 @@ export function CommunitiesView({ mode = 'default' }: { mode?: CommunitiesPageMo
                   onClick={handleFollowSelected}
                   disabled={!selectedProvince || !selectedCommunitySlug || followSaving || alreadyFollowingSelected}
                 >
-                  {alreadyFollowingSelected ? 'Following' : followSaving ? 'Following…' : 'Follow this city'}
+                  {alreadyFollowingSelected ? 'Following' : followSaving ? 'Following…' : 'Follow this chamber'}
                 </button>
               ) : null}
               <button
@@ -1782,17 +1782,17 @@ export function CommunitiesView({ mode = 'default' }: { mode?: CommunitiesPageMo
                 onClick={() => setHomeCommunity(selectedProvince, selectedCommunitySlug, 'picker')}
                 disabled={!canSave || savingHome}
               >
-                {savingHome ? 'Saving…' : homeCommunity ? 'Set as home city' : 'Set home city & follow'}
+                {savingHome ? 'Saving…' : homeCommunity ? 'Set as home chamber' : 'Set home chamber & follow'}
               </button>
               {homeCommunity && !canSave && (
-                <span className="text-xs text-gray-500">This city is already set as your home.</span>
+                <span className="text-xs text-gray-500">This chamber is already set as your home.</span>
               )}
             </div>
           ) : null}
 
           {isWelcome && suggestionMatches.length > 0 ? (
             <div className="rounded-2xl border border-[var(--cc-border)] bg-white/80 p-4 shadow-subtle">
-              <div className="text-sm font-semibold text-gray-900">Detected communities</div>
+              <div className="text-sm font-semibold text-gray-900">Detected chambers of citizens</div>
               <p className="text-xs text-gray-500">Pick the best match if the automatic selection isn’t perfect.</p>
               <div className="mt-3 space-y-3">
                 {suggestionMatches.map((match) => {
@@ -1817,7 +1817,7 @@ export function CommunitiesView({ mode = 'default' }: { mode?: CommunitiesPageMo
                           onClick={() => handleSuggestionSelect(match)}
                           disabled={isLocked || geoBusy}
                         >
-                          Choose this community
+                          Choose this chamber
                         </button>
                         {isPostal ? <span className="text-[10px] font-semibold uppercase tracking-wide text-[var(--cc-primary)]">Postal match</span> : null}
                       </div>
@@ -2000,9 +2000,9 @@ export function CommunitiesView({ mode = 'default' }: { mode?: CommunitiesPageMo
     <section ref={districtExplorerSectionRef} className="surface-card space-y-5 px-6 py-5 shadow-subtle">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h2 className="text-2xl font-bold text-gray-900">Community Explorer</h2>
+          <h2 className="text-2xl font-bold text-gray-900">Chamber Explorer</h2>
           <p className="mt-2 text-sm text-gray-600">
-            Join your local community paired by Electoral District Association by Elections Canada.
+            Join your local chamber of citizens paired by Electoral District Association data from Elections Canada.
           </p>
         </div>
         {districtBrowserBusy ? <span className="text-xs font-semibold uppercase tracking-wide text-[var(--cc-primary)]">Loading Civil Maps</span> : null}
@@ -2057,9 +2057,9 @@ export function CommunitiesView({ mode = 'default' }: { mode?: CommunitiesPageMo
     <div className="space-y-4">
       <section className="surface-card space-y-4 p-5 shadow-subtle">
         <div>
-          <p className="text-xs font-semibold uppercase tracking-[0.3em] text-slate-400">Community Lens</p>
+          <p className="text-xs font-semibold uppercase tracking-[0.3em] text-slate-400">Chamber Lens</p>
           <h2 className="mt-1 text-base font-semibold text-slate-900">Province Filter</h2>
-          <p className="mt-2 text-sm text-slate-600">Browse nearby communities and district boundaries within a single province.</p>
+          <p className="mt-2 text-sm text-slate-600">Browse nearby chambers of citizens and district boundaries within a single province.</p>
         </div>
 
         <div>
@@ -2229,11 +2229,11 @@ export function CommunitiesView({ mode = 'default' }: { mode?: CommunitiesPageMo
 
       {!districtBrowser?.districts.length ? (
         <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-500">
-          No communities are available for this province yet.
+          No chambers of citizens are available for this province yet.
         </div>
       ) : filteredProvinceDistrictCards.length === 0 ? (
         <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-500">
-          No communities match that filter.
+          No chambers of citizens match that filter.
         </div>
       ) : (
         <div className="space-y-3">
@@ -2307,7 +2307,7 @@ export function CommunitiesView({ mode = 'default' }: { mode?: CommunitiesPageMo
                 aria-hidden="true"
                 className="h-4 w-4 animate-spin rounded-full border-2 border-[var(--cc-primary)] border-t-transparent"
               />
-              <div className="text-sm font-semibold text-gray-900">Locating your city…</div>
+              <div className="text-sm font-semibold text-gray-900">Locating your chamber…</div>
             </div>
             <div className="mt-2 text-xs text-gray-500">Please allow location detection when asked!</div>
           </div>
@@ -2320,7 +2320,7 @@ export function CommunitiesView({ mode = 'default' }: { mode?: CommunitiesPageMo
         <div className="w-full max-w-3xl rounded-[28px] border border-white/15 bg-white shadow-[0_32px_120px_rgba(15,23,42,0.38)]">
           <div className="border-b border-slate-200 px-6 py-5 sm:px-8">
             <h2 className="text-2xl font-bold text-slate-950">
-              Your Home Community Is: <span className="text-slate-900">{formatMatchCityLabel(welcomeHomeConfirmation.match)}</span>
+              Your Home Chamber Is: <span className="text-slate-900">{formatMatchCityLabel(welcomeHomeConfirmation.match)}</span>
             </h2>
           </div>
 
@@ -2331,13 +2331,13 @@ export function CommunitiesView({ mode = 'default' }: { mode?: CommunitiesPageMo
               </div>
             ) : districtPreview?.district ? (
               <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-4 text-sm text-amber-900">
-                The district map is available in the database, but the tile server is not configured for secure browser use yet. Confirm the community name above, or switch communities.
+                The district map is available in the database, but the tile server is not configured for secure browser use yet. Confirm the chamber name above, or switch chambers.
               </div>
             ) : districtBusy ? (
               <CivilMapLoadingState className="min-h-[240px]" />
             ) : (
               <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-4 text-sm text-amber-900">
-                We matched your community, but the district map is not ready yet. Confirm only if the community name above looks correct.
+                We matched your chamber, but the district map is not ready yet. Confirm only if the chamber name above looks correct.
               </div>
             )}
 
@@ -2441,13 +2441,13 @@ export function CommunitiesView({ mode = 'default' }: { mode?: CommunitiesPageMo
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/65 px-4 py-6 backdrop-blur-sm" aria-modal="true" role="dialog">
       <div className="w-full max-w-lg rounded-[28px] border border-white/15 bg-white shadow-[0_32px_120px_rgba(15,23,42,0.38)]">
         <div className="border-b border-slate-200 px-6 py-5 sm:px-8">
-          <h2 className="text-2xl font-bold text-slate-950">Unfollow community?</h2>
+          <h2 className="text-2xl font-bold text-slate-950">Unfollow chamber?</h2>
         </div>
 
         <div className="space-y-5 px-6 py-6 sm:px-8">
           <div className="space-y-3 text-sm leading-6 text-slate-700">
             <p>
-              You will no longer see posts in <span className="font-semibold text-slate-900">{pendingUnfollowConfirmation.communityName}</span>.
+              You will no longer see posts from <span className="font-semibold text-slate-900">{pendingUnfollowConfirmation.communityName}</span>.
             </p>
           </div>
 
