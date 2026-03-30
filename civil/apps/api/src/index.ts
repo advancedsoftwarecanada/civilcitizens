@@ -11568,6 +11568,7 @@ async function loadAdminUserOrReply(req: FastifyRequest, reply: FastifyReply) {
 }
 
 registerAnalyticsNotificationRoutes(app, {
+  CONNECTION_NOTIFICATION_TYPES,
   DELIVERY_NOTIFICATION_TYPES,
   EVENT_NOTIFICATION_TYPES,
   FAMILY_NOTIFICATION_TYPES,
@@ -11584,11 +11585,14 @@ registerAnalyticsNotificationRoutes(app, {
   createNotificationRecord,
   dispatchRealtimeEvent,
   ensureCitizenMarketplaceTables,
+  findConnectionById,
   formatMessage,
   getStoredFamilyFriendRequests,
   getStoredFamilyFriendships,
   getStoredProfileFamilyRelationships,
+  isConnectionTableMissingError,
   mergeOrganizationSystemStateIntoMetadata,
+  notifyConnectionAcceptance,
   notifyProfileFamilyInviteResponse,
   parseCommunityMeta,
   readBaseCommunityMeta,

@@ -232,6 +232,73 @@ export function registerAnalyticsNotificationRoutes(app: FastifyInstance, deps: 
       })
       if (!notification) return reply.code(404).send({ error: 'notification_not_found' })
 
+      if (notification.type === deps.CONNECTION_NOTIFICATION_TYPES?.REQUEST) {
+        const payload = notification.payload && typeof notification.payload === 'object' && !Array.isArray(notification.payload)
+          ? (notification.payload as Record<string, unknown>)
+          : null
+        if (!payload) return reply.code(400).send({ error: 'invalid_notification_payload' })
+
+        const statusRaw = typeof payload.status === 'string' ? payload.status.trim().toLowerCase() : 'pending'
+        if (statusRaw !== 'pending') return reply.code(409).send({ error: 'invitation_not_pending' })
+
+        const connectionId = typeof payload.connectionId === 'string' ? payload.connectionId.trim() : ''
+        if (!connectionId) return reply.code(400).send({ error: 'invalid_notification_payload' })
+
+        try {
+          const connection = await deps.findConnectionById(connectionId)
+          if (!connection) return reply.code(404).send({ error: 'connection_not_found' })
+          if (connection.addresseeId !== userId) return reply.code(403).send({ error: 'not_addressee' })
+          if (connection.status !== 'PENDING') return reply.code(409).send({ error: 'invitation_not_pending' })
+
+          const now = new Date()
+          const nextStatus = body.data.action === 'accept' ? 'accepted' : 'rejected'
+          const nextPayload: Prisma.InputJsonValue = {
+            ...payload,
+            status: nextStatus,
+            respondedAt: now.toISOString(),
+          }
+
+          await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
+            if (body.data.action === 'accept') {
+              await tx.$executeRaw`
+                UPDATE "Connection"
+                SET "status" = 'ACCEPTED',
+                    "respondedAt" = ${now}
+                WHERE "id" = ${connection.id}
+              `
+            } else {
+              await tx.$executeRaw`
+                UPDATE "Connection"
+                SET "status" = 'REJECTED',
+                    "respondedAt" = ${now}
+                WHERE "id" = ${connection.id}
+              `
+            }
+
+            await tx.notification.update({
+              where: { id: notification.id },
+              data: {
+                payload: nextPayload,
+                readAt: notification.readAt ?? now,
+              },
+            })
+          })
+
+          if (body.data.action === 'accept') {
+            await deps.notifyConnectionAcceptance(connection.id, connection.requesterId, connection.addresseeId)
+          }
+
+          return reply.send({ ok: true, status: nextStatus })
+        } catch (error) {
+          if (deps.isConnectionTableMissingError?.(error)) {
+            return reply
+              .code(503)
+              .send({ error: 'connections_unavailable', message: 'Connections table is missing. Apply the latest DB migration.' })
+          }
+          throw error
+        }
+      }
+
       if (notification.type === deps.PROFILE_INVITE_NOTIFICATION_TYPES.FAMILY) {
         const payload = notification.payload && typeof notification.payload === 'object' && !Array.isArray(notification.payload)
           ? (notification.payload as Record<string, unknown>)

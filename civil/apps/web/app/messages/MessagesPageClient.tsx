@@ -18,6 +18,7 @@ import { redirectToAuthModal } from '../_lib/authModal'
 import { buildFamilyAvatarDataUrl } from '../_lib/familyIdentity'
 import {
   DEFAULT_MESSAGES_NAV_SECTION,
+  isMessagesNavSection,
   readStoredMessagesNavSection,
   writeStoredMessagesNavSection,
   type MessagesNavSection,
@@ -515,18 +516,29 @@ function isMobileMessagesViewport() {
   return window.matchMedia('(max-width: 1023px)').matches
 }
 
-function resolveThreadIdFromPushUrl(rawUrl: string | null | undefined) {
-  if (typeof rawUrl !== 'string') return null
+function resolveMessagesTargetFromUrl(rawUrl: string | null | undefined): {
+  threadId: string | null
+  inboxSection: MessagesNavSection | null
+} {
+  if (typeof rawUrl !== 'string') return { threadId: null, inboxSection: null }
   const trimmed = rawUrl.trim()
-  if (!trimmed) return null
+  if (!trimmed) return { threadId: null, inboxSection: null }
 
   try {
     const parsed = new URL(trimmed, typeof window !== 'undefined' ? window.location.origin : 'https://civilcitizens.ca')
-    if (parsed.pathname !== '/messages') return null
+    if (parsed.pathname !== '/messages') return { threadId: null, inboxSection: null }
     const threadId = parsed.searchParams.get('thread')?.trim()
-    return threadId || null
+    const inboxParam = parsed.searchParams.get('inbox')?.trim()
+    let inboxSection: MessagesNavSection | null = null
+    if (inboxParam && isMessagesNavSection(inboxParam)) {
+      inboxSection = inboxParam
+    }
+    return {
+      threadId: threadId || null,
+      inboxSection,
+    }
   } catch {
-    return null
+    return { threadId: null, inboxSection: null }
   }
 }
 
@@ -791,7 +803,7 @@ function FamilyMemberMessagesShell({ viewer }: { viewer: MeResponse }) {
     if (typeof window === 'undefined' || !selectedThreadId) return undefined
 
     const handlePushNavigation = (event: Event) => {
-      const pushedThreadId = resolveThreadIdFromPushUrl((event as CustomEvent<{ url?: string }>).detail?.url ?? null)
+      const pushedThreadId = resolveMessagesTargetFromUrl((event as CustomEvent<{ url?: string }>).detail?.url ?? null).threadId
       if (!pushedThreadId || pushedThreadId !== selectedThreadId) return
       void loadThreads()
       void loadSelectedThread()
@@ -1256,6 +1268,7 @@ function FamilyMemberMessagesShell({ viewer }: { viewer: MeResponse }) {
 
 function StandardMessagesPageClient({ initialThreadId, initialInboxSection, viewer }: MessagesPageClientProps & { viewer?: MeResponse | null }) {
   const router = useRouter()
+  const routeSearchParams = useSearchParams()
   const isFamilySession = viewer?.accountType === 'family_member'
   const showFamilyInbox = !isFamilySession && hasFamilyProfilesAvailable(viewer)
   const familySession = viewer?.familyMemberSession ?? null
@@ -1268,6 +1281,7 @@ function StandardMessagesPageClient({ initialThreadId, initialInboxSection, view
   }
   const tokenRef = useRef<string | null>(null)
   const eventSourceRef = useRef<EventSource | null>(null)
+  const syncedRouteThreadRef = useRef<string | null>(null)
   const mobileComposerLastTouchAtRef = useRef(0)
   const threadPanelRef = useRef<HTMLDivElement | null>(null)
   const threadHeaderRef = useRef<HTMLElement | null>(null)
@@ -1426,6 +1440,14 @@ function StandardMessagesPageClient({ initialThreadId, initialInboxSection, view
   const [mobileMessagesViewportHeight, setMobileMessagesViewportHeight] = useState<string | null>(null)
   const [mobileDockDrawerOpen, setMobileDockDrawerOpen] = useState(false)
   const mobileKeyboard = useMobileKeyboardState()
+  const routeThreadId = useMemo(() => {
+    const value = routeSearchParams?.get('thread')?.trim()
+    return value ? value : null
+  }, [routeSearchParams])
+  const routeInboxSection = useMemo(() => {
+    const value = routeSearchParams?.get('inbox')?.trim()
+    return isMessagesNavSection(value) ? value : null
+  }, [routeSearchParams])
 
   useEffect(() => {
     if (typeof window === 'undefined') return
@@ -1484,17 +1506,20 @@ function StandardMessagesPageClient({ initialThreadId, initialInboxSection, view
   }, [mobileDockDrawerOpen])
 
   useEffect(() => {
+    const stored = readStoredMessagesNavSection()
     if (initialInboxSection && (initialInboxSection !== 'family' || showFamilyInbox)) {
       setActiveInboxSection(initialInboxSection)
       writeStoredMessagesNavSection(initialInboxSection)
       return
     }
     if (initialThreadId) {
+      if (stored && (stored !== 'family' || showFamilyInbox)) {
+        setActiveInboxSection(stored)
+        return
+      }
       setActiveInboxSection(DEFAULT_MESSAGES_NAV_SECTION)
-      writeStoredMessagesNavSection(DEFAULT_MESSAGES_NAV_SECTION)
       return
     }
-    const stored = readStoredMessagesNavSection()
     if (!stored) {
       setActiveInboxSection(DEFAULT_MESSAGES_NAV_SECTION)
       return
@@ -1808,7 +1833,14 @@ function StandardMessagesPageClient({ initialThreadId, initialInboxSection, view
         const payload = (await response.json()) as ThreadListResponse
         setThreadCursor(payload.nextCursor ?? null)
         setThreads((prev) => {
-          const base = append ? [...prev] : prev.filter((thread) => thread.contextType === 'market_listing')
+          const preservedThreadIds = new Set(
+            [selectedThreadRef.current, initialThreadIdRef.current, explicitThreadOpenRef.current].filter(
+              (value): value is string => typeof value === 'string' && value.length > 0,
+            ),
+          )
+          const base = append
+            ? [...prev]
+            : prev.filter((thread) => thread.contextType === 'market_listing' || preservedThreadIds.has(thread.id))
           payload.items.forEach((thread) => {
             const index = base.findIndex((item) => item.id === thread.id)
             if (index >= 0) {
@@ -1953,6 +1985,9 @@ function StandardMessagesPageClient({ initialThreadId, initialInboxSection, view
         upsertThread({ ...payload.thread, lastMessage, lastMessageAt: lastMessage?.createdAt ?? payload.thread.lastMessageAt })
         forceBottomScrollThreadRef.current = threadId
         smoothScrollPendingRef.current = false
+        if (selectedThreadRef.current !== threadId) {
+          setSelectedThreadId(threadId)
+        }
         setMessagesByThread((prev) => ({ ...prev, [threadId]: normalizedMessages }))
         setMessageCursors((prev) => ({ ...prev, [threadId]: payload.nextCursor ?? null }))
         if (selectedThreadRef.current === threadId) {
@@ -1961,6 +1996,9 @@ function StandardMessagesPageClient({ initialThreadId, initialInboxSection, view
         if (lastMessage && explicitThreadOpenRef.current === threadId) {
           markThreadReadLocally(threadId, lastMessage.createdAt)
           void markThreadRead(threadId, lastMessage.id)
+        }
+        if (initialThreadIdRef.current === threadId) {
+          initialThreadIdRef.current = null
         }
         if (explicitThreadOpenRef.current === threadId) {
           explicitThreadOpenRef.current = null
@@ -2000,12 +2038,50 @@ function StandardMessagesPageClient({ initialThreadId, initialInboxSection, view
   }, [authReady, fetchThreadDetail, initialThreadId])
 
   useEffect(() => {
+    if (!routeInboxSection) return
+    if (routeInboxSection === 'family' && !showFamilyInbox) return
+    if (routeInboxSection === activeInboxSection) return
+    setActiveInboxSection(routeInboxSection)
+    writeStoredMessagesNavSection(routeInboxSection)
+  }, [activeInboxSection, routeInboxSection, showFamilyInbox])
+
+  useEffect(() => {
+    if (!routeThreadId) {
+      syncedRouteThreadRef.current = null
+      return
+    }
+    const routeChanged = syncedRouteThreadRef.current !== routeThreadId
+    const threadMissing = !messagesByThread[routeThreadId]
+    if (!routeChanged && (!authReady || !threadMissing)) {
+      return
+    }
+    syncedRouteThreadRef.current = routeThreadId
+    initialThreadIdRef.current = routeThreadId
+    failedThreadDetailRef.current.delete(routeThreadId)
+    shownThreadDetailErrorRef.current.delete(routeThreadId)
+    forceBottomScrollThreadRef.current = routeThreadId
+    smoothScrollPendingRef.current = false
+    explicitThreadOpenRef.current = routeThreadId
+    if (selectedThreadRef.current !== routeThreadId) {
+      setSelectedThreadId(routeThreadId)
+    }
+    if (authReady) {
+      void fetchThreadDetail(routeThreadId)
+    }
+  }, [authReady, fetchThreadDetail, messagesByThread, routeThreadId])
+
+  useEffect(() => {
     if (typeof window === 'undefined') return undefined
 
     const handlePushNavigation = (event: Event) => {
-      const pushedThreadId = resolveThreadIdFromPushUrl((event as CustomEvent<{ url?: string }>).detail?.url ?? null)
+      const target = resolveMessagesTargetFromUrl((event as CustomEvent<{ url?: string }>).detail?.url ?? null)
+      const pushedThreadId = target.threadId
       if (!pushedThreadId) return
       if (selectedThreadRef.current && pushedThreadId !== selectedThreadRef.current) return
+      if (target.inboxSection && (target.inboxSection !== 'family' || showFamilyInbox)) {
+        setActiveInboxSection(target.inboxSection)
+        writeStoredMessagesNavSection(target.inboxSection)
+      }
 
       failedThreadDetailRef.current.delete(pushedThreadId)
       shownThreadDetailErrorRef.current.delete(pushedThreadId)
@@ -2430,6 +2506,20 @@ function StandardMessagesPageClient({ initialThreadId, initialInboxSection, view
     if (activeInboxSection === 'groups') return categorizedThreads.groups
     return categorizedThreads.friends
   }, [activeInboxSection, categorizedThreads.drivers, categorizedThreads.family, categorizedThreads.friends, categorizedThreads.groups, categorizedThreads.network])
+  const threadInboxSectionById = useMemo(() => {
+    const next = new Map<string, MessagesNavSection>()
+
+    categorizedThreads.friends.forEach((thread) => next.set(thread.id, 'friends'))
+    categorizedThreads.family.forEach((thread) => next.set(thread.id, 'family'))
+    categorizedThreads.groups.forEach((thread) => next.set(thread.id, 'groups'))
+    categorizedThreads.network.forEach((thread) => next.set(thread.id, 'network'))
+    categorizedThreads.drivers.forEach((thread) => next.set(thread.id, 'drivers'))
+    threads
+      .filter((thread) => thread.contextType === 'market_listing')
+      .forEach((thread) => next.set(thread.id, 'market'))
+
+    return next
+  }, [categorizedThreads.drivers, categorizedThreads.family, categorizedThreads.friends, categorizedThreads.groups, categorizedThreads.network, threads])
   const familyContactsWithoutThreads = useMemo(() => {
     if (!showFamilyInbox) return []
     const threadedUserIds = new Set(
@@ -2442,8 +2532,17 @@ function StandardMessagesPageClient({ initialThreadId, initialInboxSection, view
     if (activeInboxSection === 'market') {
       return threads.find((thread) => thread.id === selectedThreadId) ?? null
     }
-    return filteredOrderedThreads.find((thread) => thread.id === selectedThreadId) ?? null
+    return filteredOrderedThreads.find((thread) => thread.id === selectedThreadId) ?? threads.find((thread) => thread.id === selectedThreadId) ?? null
   }, [activeInboxSection, filteredOrderedThreads, selectedThreadId, threads])
+  const pendingExplicitThreadOpen = useMemo(
+    () =>
+      selectedThreadId
+        ? explicitThreadOpenRef.current === selectedThreadId ||
+          initialThreadIdRef.current === selectedThreadId ||
+          loadingThreadId === selectedThreadId
+        : false,
+    [loadingThreadId, selectedThreadId],
+  )
   const isFamilyParentThreadSelected = Boolean(familyParentThreadId && selectedThreadId === familyParentThreadId)
   const marketThreads = useMemo(
     () => sortThreadsForInbox(threads.filter((thread) => thread.contextType === 'market_listing')),
@@ -2632,6 +2731,19 @@ function StandardMessagesPageClient({ initialThreadId, initialInboxSection, view
   }, [syncMobileThreadLayout])
 
   useEffect(() => {
+    if (!selectedThreadId) return
+    const matchedSection = threadInboxSectionById.get(selectedThreadId) ?? null
+    if (!matchedSection) return
+    if (matchedSection === activeInboxSection) return
+    if (matchedSection === 'family' && !showFamilyInbox) return
+    setActiveInboxSection(matchedSection)
+    writeStoredMessagesNavSection(matchedSection)
+  }, [activeInboxSection, selectedThreadId, showFamilyInbox, threadInboxSectionById])
+
+  useEffect(() => {
+    if (selectedThreadId && pendingExplicitThreadOpen) {
+      return
+    }
     if (activeInboxSection === 'market') {
       return
     }
@@ -2649,13 +2761,24 @@ function StandardMessagesPageClient({ initialThreadId, initialInboxSection, view
     if (familyParentThreadId && selectedThreadId === familyParentThreadId) {
       return
     }
+    const matchedSection = selectedThreadId ? threadInboxSectionById.get(selectedThreadId) ?? null : null
+    if (matchedSection) {
+      if (matchedSection !== activeInboxSection) {
+        setActiveInboxSection(matchedSection)
+        writeStoredMessagesNavSection(matchedSection)
+      }
+      return
+    }
+    if (selectedThreadId && threads.some((thread) => thread.id === selectedThreadId)) {
+      return
+    }
     if (selectedThreadId && filteredOrderedThreads.some((thread) => thread.id === selectedThreadId)) {
       return
     }
     if (selectedThreadId) {
       setSelectedThreadId(null)
     }
-  }, [activeInboxSection, contactsBucketReady, familyParentThreadId, filteredOrderedThreads, isFamilySession, selectedThreadId, threads.length, threadsLoading])
+  }, [activeInboxSection, contactsBucketReady, familyParentThreadId, filteredOrderedThreads, isFamilySession, pendingExplicitThreadOpen, selectedThreadId, threadInboxSectionById, threads, threadsLoading])
 
   useEffect(() => {
     if (!selectedThreadId) return
