@@ -1,11 +1,13 @@
 {
-  "defaultServerId": "dev-lm-studio",
+  "defaultServerId": "azure-civil-ai",
   "servers": [
     {
-      "id": "dev-lm-studio",
-      "name": "Dev LM Studio",
-      "baseUrl": "http://192.168.2.10:1234",
-      "provider": "lm-studio",
+      "id": "azure-civil-ai",
+      "name": "Azure Foundry Civil AI",
+      "baseUrl": "https://civil-mnci8etp-eastus2.cognitiveservices.azure.com/openai",
+      "provider": "azure-openai",
+      "defaultModel": "gpt-5.4-mini",
+      "apiVersion": "2025-04-01-preview",
       "enabled": true,
       "default": true
     }

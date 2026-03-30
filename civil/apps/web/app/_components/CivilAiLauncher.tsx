@@ -19,7 +19,7 @@ type AiMessage = {
 }
 
 type CivilAiReference = {
-  kind: 'community' | 'event' | 'job' | 'market' | 'organization' | 'post'
+  kind: 'cause' | 'community' | 'event' | 'feature' | 'job' | 'market' | 'organization' | 'post' | 'topic'
   id: string
   title: string
   subtitle: string | null

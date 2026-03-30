@@ -109,10 +109,12 @@ import {
 } from './civilAiCore.js'
 import {
   createCivilAiSources,
+  type CivilAiCauseDataItem,
   type CivilAiEventDataItem,
   type CivilAiJobDataItem,
   type CivilAiOrganizationDataItem,
   type CivilAiPostDataItem,
+  type CivilAiTopicDataItem,
 } from './civilAiSources.js'
 import {
   applyCauseContributionFromPaymentIntent,
@@ -201,11 +203,13 @@ type CivilAiGroundingBundle = {
     provinceCode: string
     href: string
   }>
+  causes: CivilAiCauseDataItem[]
   events: CivilAiEventDataItem[]
   jobs: CivilAiJobDataItem[]
   market: MarketSearchResultPayload[]
   organizations: CivilAiOrganizationDataItem[]
   posts: CivilAiPostDataItem[]
+  topics: CivilAiTopicDataItem[]
 }
 
 type CivilAiMarketSearchScope = {
@@ -216,19 +220,24 @@ type CivilAiMarketSearchScope = {
 
 type CivilAiRetrievalPlan = {
   wantsProfile: boolean
+  wantsCauses: boolean
+  wantsDrive: boolean
   wantsEvents: boolean
   wantsJobs: boolean
   wantsMarket: boolean
   wantsCommunities: boolean
   wantsOrganizations: boolean
   wantsPosts: boolean
+  wantsTopics: boolean
   todayOnly: boolean
   topicQuery: string
+  causeLimit: number
   eventLimit: number
   jobLimit: number
   marketLimit: number
   organizationLimit: number
   postLimit: number
+  topicLimit: number
   includeViewerOrganizations: boolean
   reasons: string[]
 }
@@ -283,14 +292,21 @@ const resolveCivilAiServer = civilAiCoreHelpers.resolveCivilAiServer
 const truncateCivilAiText = civilAiCoreHelpers.truncateCivilAiText
 
 function selectCivilAiActiveMessages(messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>): Array<{ role: 'user' | 'assistant'; content: string }> {
-  const latestQuestion = buildCivilAiEffectiveQuestion(messages)
-  const latestUser = [...messages].reverse().find((message) => message.role === 'user')
-  if (!latestUser || latestQuestion.trim() === latestUser.content.trim()) {
-    return latestQuestion.trim() ? [{ role: 'user', content: latestQuestion.trim() }] : []
+  const nonSystemMessages = messages.filter((message): message is { role: 'user' | 'assistant'; content: string } => message.role !== 'system')
+  const next: Array<{ role: 'user' | 'assistant'; content: string }> = []
+  let userTurnsSeen = 0
+
+  for (let index = nonSystemMessages.length - 1; index >= 0; index -= 1) {
+    const entry = nonSystemMessages[index]
+    if (!entry) continue
+    next.unshift(entry)
+    if (entry.role === 'user') {
+      userTurnsSeen += 1
+      if (userTurnsSeen >= 5) break
+    }
   }
 
-  const nonSystemMessages = messages.filter((message): message is { role: 'user' | 'assistant'; content: string } => message.role !== 'system')
-  return nonSystemMessages.slice(-4)
+  return next
 }
 
 const civilAiSources = createCivilAiSources({
@@ -311,18 +327,23 @@ const civilAiSources = createCivilAiSources({
   buildSearchableText,
   formatPost: (post) => formatPost(post as any),
   getCanonicalPaths: (post) => getCanonicalPaths(post as any),
+  loadCauseSummariesByPostIds,
 })
 
+const loadCivilAiCommunityCauses = civilAiSources.loadCivilAiCommunityCauses
 const loadCivilAiCommunityEvents = civilAiSources.loadCivilAiCommunityEvents
 const loadCivilAiCommunityJobs = civilAiSources.loadCivilAiCommunityJobs
 const loadCivilAiCommunityOrganizations = civilAiSources.loadCivilAiCommunityOrganizations
 const loadCivilAiCommunityPosts = civilAiSources.loadCivilAiCommunityPosts
+const loadCivilAiCommunityTopics = civilAiSources.loadCivilAiCommunityTopics
+const toCivilAiCauseReference = civilAiSources.toCivilAiCauseReference
 const toCivilAiCommunityReference = civilAiSources.toCivilAiCommunityReference
 const toCivilAiEventReference = civilAiSources.toCivilAiEventReference
 const toCivilAiJobReference = civilAiSources.toCivilAiJobReference
 const toCivilAiMarketReference = civilAiSources.toCivilAiMarketReference
 const toCivilAiOrganizationReference = civilAiSources.toCivilAiOrganizationReference
 const toCivilAiPostReference = civilAiSources.toCivilAiPostReference
+const toCivilAiTopicReference = civilAiSources.toCivilAiTopicReference
 
 const civilAiPlanningHelpers = createCivilAiPlanningHelpers({
   maxReferenceCards: CIVIL_AI_MAX_REFERENCE_CARDS,
@@ -330,11 +351,13 @@ const civilAiPlanningHelpers = createCivilAiPlanningHelpers({
   truncateCivilAiText,
   normalizeSearchTerm,
   normalizeProvinceCode,
+  toCivilAiCauseReference: (item) => toCivilAiCauseReference(item as any),
   toCivilAiEventReference: (item) => toCivilAiEventReference(item as any),
   toCivilAiJobReference: (item) => toCivilAiJobReference(item as any),
   toCivilAiMarketReference: (item) => toCivilAiMarketReference(item as any),
   toCivilAiOrganizationReference: (item) => toCivilAiOrganizationReference(item as any),
   toCivilAiPostReference: (item) => toCivilAiPostReference(item as any),
+  toCivilAiTopicReference: (item) => toCivilAiTopicReference(item as any),
 })
 
 const buildCivilAiApiCatalog = civilAiPlanningHelpers.buildCivilAiApiCatalog as (viewerContext: CivilAiViewerContext | null) => Array<{ name: string; endpoint: string; purpose: string }>
@@ -5664,10 +5687,12 @@ const civilAiExecutionHelpers = createCivilAiExecutionHelpers({
   extractCivilAiMessageContent,
   finalizeCivilAiReferences,
   formatCivilAiShortDateTime,
+  loadCivilAiCommunityCauses,
   loadCivilAiCommunityEvents,
   loadCivilAiCommunityJobs,
   loadCivilAiCommunityOrganizations,
   loadCivilAiCommunityPosts: (communityId, limit, query, viewerFeedContext) => loadCivilAiCommunityPosts(communityId, limit, query, viewerFeedContext as any) as any,
+  loadCivilAiCommunityTopics,
   loadCivilAiChatJob: (jobId) => loadCivilAiChatJob(jobId),
   loadCivilAiViewerContext,
   loadCivilAiInstructions: readCivilAiInstructions,
@@ -5684,12 +5709,14 @@ const civilAiExecutionHelpers = createCivilAiExecutionHelpers({
   selectCivilAiActiveMessages,
   serializeError,
   shouldCivilAiRunSecondSearch: (question, bundle) => shouldCivilAiRunSecondSearch(question, bundle as any),
+  toCivilAiCauseReference: (item) => toCivilAiCauseReference(item as any),
   toCivilAiCommunityReference: (community) => toCivilAiCommunityReference(community as any),
   toCivilAiEventReference: (item) => toCivilAiEventReference(item as any),
   toCivilAiJobReference: (item) => toCivilAiJobReference(item as any),
   toCivilAiMarketReference: (item) => toCivilAiMarketReference(item as any),
   toCivilAiOrganizationReference: (item) => toCivilAiOrganizationReference(item as any),
   toCivilAiPostReference: (item) => toCivilAiPostReference(item as any),
+  toCivilAiTopicReference: (item) => toCivilAiTopicReference(item as any),
   truncateCivilAiText,
 })
 
@@ -5711,10 +5738,12 @@ registerAiRoutes(app, {
   formatCivilAiChatJobPayload: (job) => formatCivilAiChatJobPayload(job as any),
   loadActiveCivilAiChatJobForUser,
   loadCivilAiChatJob,
+  loadCivilAiCommunityCauses,
   loadCivilAiCommunityEvents,
   loadCivilAiCommunityJobs,
   loadCivilAiCommunityOrganizations,
   loadCivilAiCommunityPosts: (communityId, limit, query, viewerFeedContext) => loadCivilAiCommunityPosts(communityId, limit, query, viewerFeedContext as any),
+  loadCivilAiCommunityTopics,
   loadCivilAiServersConfig,
   loadCivilAiViewerContext,
   loadViewerAuthContext,
@@ -5726,12 +5755,14 @@ registerAiRoutes(app, {
   resolveUserId,
   scheduleCivilAiChatJob,
   searchMarketListingsForQuery: (query, limit) => searchMarketListingsForQuery(normalizeSearchTerm(query), limit),
+  toCivilAiCauseReference: (item) => toCivilAiCauseReference(item as any),
   toCivilAiCommunityReference: (community) => toCivilAiCommunityReference(community as any),
   toCivilAiEventReference: (item) => toCivilAiEventReference(item as any),
   toCivilAiJobReference: (item) => toCivilAiJobReference(item as any),
   toCivilAiMarketReference: (item) => toCivilAiMarketReference(item as any),
   toCivilAiOrganizationReference: (item) => toCivilAiOrganizationReference(item as any),
   toCivilAiPostReference: (item) => toCivilAiPostReference(item as any),
+  toCivilAiTopicReference: (item) => toCivilAiTopicReference(item as any),
   withSchemaGuard,
 })
 

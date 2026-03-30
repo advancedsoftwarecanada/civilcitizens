@@ -30,6 +30,48 @@ const CIVIL_AI_TASK_TIMEOUT_MS = Math.max(
   15_000,
 )
 
+function isAzureResponsesServer(server: CivilAiServerConfig) {
+  const normalizedProvider = (server.provider || '').trim().toLowerCase()
+  return (normalizedProvider === 'azure-openai' || normalizedProvider.includes('azure')) && Boolean(server.apiVersion?.trim())
+}
+
+function getCivilAiTaskPaths(server: CivilAiServerConfig) {
+  if (isAzureResponsesServer(server)) {
+    const apiVersion = encodeURIComponent(server.apiVersion!.trim())
+    return [`/responses?api-version=${apiVersion}`, `/chat/completions?api-version=${apiVersion}`]
+  }
+  return ['/v1/responses', '/api/v1/chat']
+}
+
+function buildCivilAiTaskBody(args: {
+  server: CivilAiServerConfig
+  model: string
+  input: string
+  temperature?: number
+  topP?: number
+  maxTokens?: number
+}) {
+  if (isAzureResponsesServer(args.server)) {
+    return {
+      model: args.model,
+      input: args.input,
+      temperature: args.temperature,
+      top_p: args.topP,
+      max_output_tokens: args.maxTokens,
+      stream: false,
+    }
+  }
+
+  return {
+    model: args.model,
+    input: args.input,
+    temperature: args.temperature,
+    top_p: args.topP,
+    max_tokens: args.maxTokens,
+    stream: false,
+  }
+}
+
 export function registerAiTaskRoutes(app: FastifyInstance, deps: AiTaskRoutesDeps) {
   app.get('/ai/tasks', async (req: FastifyRequest, reply: FastifyReply) =>
     deps.withSchemaGuard(req, reply, async () => {
@@ -66,24 +108,31 @@ export function registerAiTaskRoutes(app: FastifyInstance, deps: AiTaskRoutesDep
       if (!resolved.server) return reply.code(503).send({ error: 'no_ai_server_available' })
 
       const resolvedModel = await deps.resolveCivilAiModel(resolved.server, body.data.model)
-      if (!resolvedModel) return reply.code(503).send({ error: 'no_ai_model_available' })
+      if (!resolvedModel) {
+        const normalizedProvider = (resolved.server.provider || '').trim().toLowerCase()
+        const error =
+          normalizedProvider === 'azure-openai' || normalizedProvider.includes('azure')
+            ? 'azure_ai_deployment_not_configured'
+            : 'no_ai_model_available'
+        return reply.code(503).send({ error })
+      }
 
       const prompt = await loadAiTaskPrompt(definition)
       const userInput = definition.buildInputText(parsedInput.data)
       const upstreamInput = deps.buildCivilAiPromptInput(prompt, [{ role: 'user', content: userInput }])
       const upstream = await deps.callCivilAiServerWithPathFallback({
         server: resolved.server,
-        paths: ['/v1/responses', '/api/v1/chat'],
+        paths: getCivilAiTaskPaths(resolved.server),
         method: 'POST',
         timeoutMs: CIVIL_AI_TASK_TIMEOUT_MS,
-        body: {
+        body: buildCivilAiTaskBody({
+          server: resolved.server,
           model: resolvedModel,
           input: upstreamInput,
           temperature: body.data.temperature,
-          top_p: body.data.topP,
-          max_tokens: body.data.maxTokens,
-          stream: false,
-        },
+          topP: body.data.topP,
+          maxTokens: body.data.maxTokens,
+        }),
       })
 
       if (!upstream.ok) {

@@ -18,23 +18,70 @@ const CIVIL_AI_JOB_TIMEOUT_MS = Math.max(
   Number(process.env.CIVIL_AI_JOB_TIMEOUT_MS || 10 * 60 * 1000) || 10 * 60 * 1000,
 )
 
+function isAzureResponsesServer(server: CivilAiServerConfig) {
+  const normalizedProvider = (server.provider || '').trim().toLowerCase()
+  return (normalizedProvider === 'azure-openai' || normalizedProvider.includes('azure')) && Boolean(server.apiVersion?.trim())
+}
+
+function getCivilAiChatPaths(server: CivilAiServerConfig) {
+  if (isAzureResponsesServer(server)) {
+    const apiVersion = encodeURIComponent(server.apiVersion!.trim())
+    return [`/responses?api-version=${apiVersion}`, `/chat/completions?api-version=${apiVersion}`]
+  }
+  return ['/v1/responses', '/api/v1/chat']
+}
+
+function buildCivilAiUpstreamBody(args: {
+  server: CivilAiServerConfig
+  model: string
+  input: string
+  temperature?: number
+  topP?: number
+  maxTokens?: number
+}) {
+  if (isAzureResponsesServer(args.server)) {
+    return {
+      model: args.model,
+      input: args.input,
+      temperature: args.temperature,
+      top_p: args.topP,
+      max_output_tokens: args.maxTokens,
+      stream: false,
+    }
+  }
+
+  return {
+    model: args.model,
+    input: args.input,
+    temperature: args.temperature,
+    top_p: args.topP,
+    max_tokens: args.maxTokens,
+    stream: false,
+  }
+}
+
 type CivilAiExecutionLogger = {
   error: (payload: unknown, message?: string) => void
 }
 
 type CivilAiRetrievalPlanLike = {
+  wantsCauses: boolean
+  wantsDrive: boolean
   wantsEvents: boolean
   wantsJobs: boolean
   wantsMarket: boolean
   wantsOrganizations: boolean
   wantsPosts: boolean
+  wantsTopics: boolean
   todayOnly: boolean
   topicQuery: string
+  causeLimit: number
   eventLimit: number
   jobLimit: number
   marketLimit: number
   organizationLimit: number
   postLimit: number
+  topicLimit: number
   includeViewerOrganizations: boolean
   reasons: string[]
 }
@@ -51,6 +98,12 @@ type CivilAiEventDataItemLike = {
   title: string
   startsAt: string
   organization: { name: string }
+}
+
+type CivilAiCauseDataItemLike = {
+  title: string | null
+  status: 'active' | 'funded' | 'closed' | null
+  progressPercent: number | null
 }
 
 type CivilAiJobDataItemLike = {
@@ -76,15 +129,22 @@ type CivilAiMarketResultLike = {
   locationLabel: string | null
 }
 
+type CivilAiTopicDataItemLike = {
+  slug: string
+  recentPostCount: number
+}
+
 type CivilAiGroundingBundleLike = {
   retrievalPlan: CivilAiRetrievalPlanLike
   searchPass: 1 | 2
   targetCommunities: CivilAiCommunityLike[]
+  causes: CivilAiCauseDataItemLike[]
   events: CivilAiEventDataItemLike[]
   jobs: CivilAiJobDataItemLike[]
   market: CivilAiMarketResultLike[]
   organizations: CivilAiOrganizationDataItemLike[]
   posts: CivilAiPostDataItemLike[]
+  topics: CivilAiTopicDataItemLike[]
 }
 
 type CivilAiRetrievalBundleLike = {
@@ -122,10 +182,12 @@ type CivilAiExecutionDeps = {
   extractCivilAiMessageContent: (payload: unknown) => string
   finalizeCivilAiReferences: (question: string, references: CivilAiCardReference[]) => CivilAiCardReference[]
   formatCivilAiShortDateTime: (value: string) => string
+  loadCivilAiCommunityCauses: (communityId: string, limit: number, query?: string) => Promise<{ items?: CivilAiCauseDataItemLike[] }>
   loadCivilAiCommunityEvents: (communityId: string, when: 'today' | 'upcoming', limit: number) => Promise<{ items?: CivilAiEventDataItemLike[] }>
   loadCivilAiCommunityJobs: (communityId: string, limit: number) => Promise<{ items?: CivilAiJobDataItemLike[] }>
   loadCivilAiCommunityOrganizations: (communityId: string, limit: number, query?: string) => Promise<{ items?: CivilAiOrganizationDataItemLike[] }>
   loadCivilAiCommunityPosts: (communityId: string, limit: number, query?: string, viewerFeedContext?: CivilAiViewerContext['feedContext'] | null) => Promise<{ items?: CivilAiPostDataItemLike[] }>
+  loadCivilAiCommunityTopics: (communityId: string, limit: number, query?: string) => Promise<{ items?: CivilAiTopicDataItemLike[] }>
   loadCivilAiChatJob: (jobId: string) => Promise<CivilAiJobRow | null>
   loadCivilAiViewerContext: (userId: string) => Promise<CivilAiViewerContext | null>
   loadCivilAiInstructions: () => Promise<{ instructionsPath: string; content: string }>
@@ -162,12 +224,14 @@ type CivilAiExecutionDeps = {
   selectCivilAiActiveMessages: (messages: Array<{ role: 'system' | 'user' | 'assistant'; content: string }>) => Array<{ role: 'user' | 'assistant'; content: string }>
   serializeError: (error: unknown) => string
   shouldCivilAiRunSecondSearch: (question: string, bundle: CivilAiRetrievalBundleLike) => boolean
+  toCivilAiCauseReference: (item: CivilAiCauseDataItemLike) => CivilAiCardReference
   toCivilAiCommunityReference: (community: CivilAiCommunityLike) => CivilAiCardReference
   toCivilAiEventReference: (item: CivilAiEventDataItemLike) => CivilAiCardReference
   toCivilAiJobReference: (item: CivilAiJobDataItemLike) => CivilAiCardReference | null
   toCivilAiMarketReference: (item: CivilAiMarketResultLike) => CivilAiCardReference
   toCivilAiOrganizationReference: (item: CivilAiOrganizationDataItemLike & Record<string, unknown>) => CivilAiCardReference | null
   toCivilAiPostReference: (item: CivilAiPostDataItemLike) => CivilAiCardReference
+  toCivilAiTopicReference: (item: CivilAiTopicDataItemLike) => CivilAiCardReference
   truncateCivilAiText: (value: string, maxChars: number, keepTail?: boolean) => string
 }
 
@@ -177,7 +241,9 @@ export function createCivilAiExecutionHelpers(deps: CivilAiExecutionDeps) {
     const searchPass = options?.searchPass ?? 1
     const retrieval = deps.planCivilAiRetrieval(latestQuestion)
     const topicQuery = searchPass === 1 ? retrieval.topicQuery : ''
+    const causeQuery = topicQuery
     const marketQuery = retrieval.topicQuery || deps.normalizeSearchTerm(latestQuestion)
+    const topicSearchQuery = topicQuery
     const requestedCommunities = deps.matchCivilAiRequestedCommunities(latestQuestion, viewerContext)
     const nearbyCommunities = viewerContext ? viewerContext.nearbyCommunities.slice(0, searchPass === 1 ? 2 : 8) : []
     const followedCommunities = viewerContext ? viewerContext.followedCommunities.slice(0, searchPass === 1 ? 3 : 8) : []
@@ -193,6 +259,9 @@ export function createCivilAiExecutionHelpers(deps: CivilAiExecutionDeps) {
       defaultCommunities,
     })
 
+    const causeResults = retrieval.wantsCauses && targetCommunities.length
+      ? await Promise.all(targetCommunities.map((community) => deps.loadCivilAiCommunityCauses(community.id, retrieval.causeLimit, causeQuery || undefined)))
+      : []
     const eventResults = retrieval.wantsEvents && targetCommunities.length
       ? await Promise.all(targetCommunities.map((community) => deps.loadCivilAiCommunityEvents(community.id, retrieval.todayOnly ? 'today' : 'upcoming', retrieval.eventLimit)))
       : []
@@ -211,14 +280,20 @@ export function createCivilAiExecutionHelpers(deps: CivilAiExecutionDeps) {
     const postResults = retrieval.wantsPosts && targetCommunities.length
       ? await Promise.all(targetCommunities.map((community) => deps.loadCivilAiCommunityPosts(community.id, retrieval.postLimit, topicQuery || undefined, viewerContext?.feedContext ?? null)))
       : []
+    const topicResults = retrieval.wantsTopics && targetCommunities.length
+      ? await Promise.all(targetCommunities.map((community) => deps.loadCivilAiCommunityTopics(community.id, retrieval.topicLimit, topicSearchQuery || undefined)))
+      : []
 
+    const usableCauses = causeResults.flatMap((result) => (Array.isArray(result.items) ? result.items : []))
     const usableEvents = eventResults.flatMap((result) => (Array.isArray(result.items) ? result.items : []))
     const usableJobs = jobResults.flatMap((result) => (Array.isArray(result.items) ? result.items : []))
     const usableOrganizations = organizationResults.flatMap((result) => (Array.isArray(result.items) ? result.items : []))
     const usablePosts = postResults.flatMap((result) => (Array.isArray(result.items) ? result.items : []))
+    const usableTopics = topicResults.flatMap((result) => (Array.isArray(result.items) ? result.items : []))
 
     const references: CivilAiCardReference[] = []
     for (const community of targetCommunities.slice(0, 3)) references.push(deps.toCivilAiCommunityReference(community))
+    for (const cause of usableCauses.slice(0, 4)) references.push(deps.toCivilAiCauseReference(cause))
     for (const event of usableEvents.slice(0, 4)) references.push(deps.toCivilAiEventReference(event))
     for (const job of usableJobs.slice(0, 4)) {
       const reference = deps.toCivilAiJobReference(job)
@@ -226,6 +301,7 @@ export function createCivilAiExecutionHelpers(deps: CivilAiExecutionDeps) {
     }
     for (const listing of marketResults.slice(0, 4)) references.push(deps.toCivilAiMarketReference(listing))
     for (const post of usablePosts.slice(0, 4)) references.push(deps.toCivilAiPostReference(post))
+    for (const topic of usableTopics.slice(0, 4)) references.push(deps.toCivilAiTopicReference(topic))
     for (const org of usableOrganizations.slice(0, 4)) {
       const reference = deps.toCivilAiOrganizationReference(org as CivilAiOrganizationDataItemLike & Record<string, unknown>)
       if (reference) references.push(reference)
@@ -237,11 +313,15 @@ export function createCivilAiExecutionHelpers(deps: CivilAiExecutionDeps) {
       }
     }
 
+    const summarizedCauses = usableCauses
+      .slice(0, 6)
+      .map((cause) => `- ${cause.title || 'Untitled cause'} | ${cause.status ?? 'active'} | ${cause.progressPercent ?? 0}% funded`)
     const summarizedEvents = usableEvents.slice(0, 6).map((event) => `- ${event.title} | ${deps.formatCivilAiShortDateTime(event.startsAt)} | ${event.organization.name}`)
     const summarizedJobs = usableJobs.slice(0, 6).map((job) => `- ${job.title} | ${job.organization.name} | ${deps.truncateCivilAiText(job.location || 'location unavailable', 80)}`)
     const summarizedMarket = marketResults.slice(0, 6).map((listing) => `- ${listing.title} | ${listing.priceLabel} | ${deps.truncateCivilAiText(listing.locationLabel ?? 'location unavailable', 80)}`)
     const summarizedOrganizations = usableOrganizations.slice(0, 6).map((organization) => `- ${organization.name} | ${deps.truncateCivilAiText(organization.description ?? 'No description', 120)}`)
     const summarizedPosts = usablePosts.slice(0, 6).map((post) => `- ${post.title} | ${post.author.name || `@${post.author.handle}`} | ${deps.truncateCivilAiText(post.excerpt ?? 'No excerpt', 140)}`)
+    const summarizedTopics = usableTopics.slice(0, 6).map((topic) => `- #${topic.slug} | ${topic.recentPostCount} recent local posts`)
 
     const promptSections = [deps.buildCivilAiContextPrompt(viewerContext)]
     if (viewerContext) {
@@ -253,12 +333,14 @@ export function createCivilAiExecutionHelpers(deps: CivilAiExecutionDeps) {
         `- Retrieval reasons: ${retrieval.reasons.length ? retrieval.reasons.join('; ') : 'none'}`,
         `- Target communities: ${deps.buildCivilAiCompactList(targetCommunities.map((community) => community.communityName), 'none', 4)}`,
         `- Market scope: ${marketScope.mode}`,
-        `- Result counts: events=${usableEvents.length}; jobs=${usableJobs.length}; market=${marketResults.length}; organizations=${usableOrganizations.length}; posts=${usablePosts.length}`,
+        `- Result counts: causes=${usableCauses.length}; events=${usableEvents.length}; jobs=${usableJobs.length}; market=${marketResults.length}; organizations=${usableOrganizations.length}; posts=${usablePosts.length}; topics=${usableTopics.length}`,
+        ...(summarizedCauses.length ? ['- Causes:', ...summarizedCauses] : []),
         ...(summarizedEvents.length ? ['- Events:', ...summarizedEvents] : []),
         ...(summarizedJobs.length ? ['- Jobs:', ...summarizedJobs] : []),
         ...(summarizedMarket.length ? ['- Marketplace:', ...summarizedMarket] : []),
         ...(summarizedOrganizations.length ? ['- Organizations:', ...summarizedOrganizations] : []),
         ...(summarizedPosts.length ? ['- Posts:', ...summarizedPosts] : []),
+        ...(summarizedTopics.length ? ['- Topics:', ...summarizedTopics] : []),
         '',
         'Answering rules for fetched Civil data:',
         '- Use the fetched Civil data when it answers the user directly.',
@@ -280,11 +362,13 @@ export function createCivilAiExecutionHelpers(deps: CivilAiExecutionDeps) {
         retrievalPlan: retrieval,
         searchPass,
         targetCommunities,
+        causes: usableCauses.slice(0, 8),
         events: usableEvents.slice(0, 8),
         jobs: usableJobs.slice(0, 8),
         market: marketResults.slice(0, 8),
         organizations: usableOrganizations.slice(0, 8),
         posts: usablePosts.slice(0, 8),
+        topics: usableTopics.slice(0, 8),
       },
       debug: {
         latestQuestion,
@@ -296,11 +380,13 @@ export function createCivilAiExecutionHelpers(deps: CivilAiExecutionDeps) {
         searchPass,
         topicQueryUsed: topicQuery || null,
         resultCounts: {
+          causes: usableCauses.length,
           events: usableEvents.length,
           jobs: usableJobs.length,
           market: marketResults.length,
           organizations: usableOrganizations.length,
           posts: usablePosts.length,
+          topics: usableTopics.length,
         },
         includedViewerOrganizations: retrieval.includeViewerOrganizations && Boolean(viewerContext?.organizations.length),
       },
@@ -416,9 +502,14 @@ export function createCivilAiExecutionHelpers(deps: CivilAiExecutionDeps) {
       }
       resolvedModel = await deps.resolveCivilAiModel(resolved.server, args.body.model)
       if (!resolvedModel) {
-        status = 'no_ai_model_available'
-        errorMessage = 'no_ai_model_available'
-        throw new Error('no_ai_model_available')
+        const normalizedProvider = (resolved.server.provider || '').trim().toLowerCase()
+        const azureModelError =
+          normalizedProvider === 'azure-openai' || normalizedProvider.includes('azure')
+            ? 'azure_ai_deployment_not_configured'
+            : 'no_ai_model_available'
+        status = azureModelError
+        errorMessage = azureModelError
+        throw new Error(azureModelError)
       }
 
       const instructions = await deps.loadCivilAiInstructions()
@@ -434,18 +525,18 @@ export function createCivilAiExecutionHelpers(deps: CivilAiExecutionDeps) {
 
       const upstream = await deps.callCivilAiServerWithPathFallback({
         server: resolved.server,
-        paths: ['/v1/responses', '/api/v1/chat'],
+        paths: getCivilAiChatPaths(resolved.server),
         method: 'POST',
         timeoutMs: args.upstreamTimeoutMs,
         signal: args.signal,
-        body: {
+        body: buildCivilAiUpstreamBody({
+          server: resolved.server,
           model: resolvedModel,
           input: upstreamInput,
           temperature: args.body.temperature,
-          top_p: args.body.topP,
-          max_tokens: args.body.maxTokens,
-          stream: false,
-        },
+          topP: args.body.topP,
+          maxTokens: args.body.maxTokens,
+        }),
       })
 
       rawResponse = upstream.json ?? upstream.text?.trim() ?? null
@@ -525,11 +616,13 @@ export function createCivilAiExecutionHelpers(deps: CivilAiExecutionDeps) {
                     retrievalPlan: deps.planCivilAiRetrieval(latestUserMessage),
                     searchPass: 1,
                     targetCommunities: [],
+                    causes: [],
                     events: [],
                     jobs: [],
                     market: [],
                     organizations: [],
                     posts: [],
+                    topics: [],
                   })?.references ?? []
                 : retrievalBundle?.references ?? [],
           serverName: resolvedServer?.name ?? null,

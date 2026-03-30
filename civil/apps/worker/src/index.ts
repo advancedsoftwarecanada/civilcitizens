@@ -21,6 +21,9 @@ const MEDIA_BUCKET_ORIGINAL = process.env.MEDIA_BUCKET_ORIGINAL || 'civil-media-
 const CIVIL_PUBLIC_HOST = process.env.CIVIL_PUBLIC_HOST || 'dev.civilcitizens.ca'
 const MEDIA_PUBLIC_BASE_URL = (process.env.MEDIA_PUBLIC_BASE_URL || `https://${CIVIL_PUBLIC_HOST}/media`).replace(/\/$/, '')
 const CIVIL_AI_VISION_MODEL = (process.env.CIVIL_AI_VISION_MODEL || '').trim()
+const CIVIL_AI_API_KEY = (process.env.CIVIL_AI_API_KEY || '').trim()
+const CIVIL_AI_MODEL = (process.env.CIVIL_AI_MODEL || '').trim()
+const CIVIL_AI_API_VERSION = (process.env.CIVIL_AI_API_VERSION || '').trim()
 const REDDIT_EPOCH_SECONDS = 1134028003
 const REACTION_HOT_WINDOW_HOURS = 48
 const OUR_COMMONS_XML_TIMEOUT_MS = 20_000
@@ -243,6 +246,9 @@ type CivilAiServerConfig = {
   name: string
   baseUrl: string
   provider: string | null
+  apiKey: string | null
+  defaultModel: string | null
+  apiVersion: string | null
   enabled: boolean
   default: boolean
 }
@@ -279,6 +285,9 @@ function resolveCivilAiEnvServerConfig(): CivilAiServerConfig | null {
     name: (process.env.CIVIL_AI_SERVER_NAME || '').trim() || 'Civil AI Env Server',
     baseUrl,
     provider: (process.env.CIVIL_AI_PROVIDER || '').trim() || 'lm-studio',
+    apiKey: CIVIL_AI_API_KEY || null,
+    defaultModel: CIVIL_AI_MODEL || null,
+    apiVersion: CIVIL_AI_API_VERSION || null,
     enabled: true,
     default: true,
   }
@@ -300,6 +309,9 @@ async function loadCivilAiServerConfig() {
     name: 'Local LM Studio',
     baseUrl: 'http://127.0.0.1:1234',
     provider: 'lm-studio',
+    apiKey: CIVIL_AI_API_KEY || null,
+    defaultModel: CIVIL_AI_MODEL || null,
+    apiVersion: CIVIL_AI_API_VERSION || null,
     enabled: true,
     default: true,
   }
@@ -320,6 +332,17 @@ async function loadCivilAiServerConfig() {
         name,
         baseUrl,
         provider: typeof entry.provider === 'string' ? entry.provider.trim() : null,
+        apiKey: typeof entry.apiKey === 'string' && entry.apiKey.trim() ? entry.apiKey.trim() : CIVIL_AI_API_KEY || null,
+        defaultModel:
+          typeof entry.defaultModel === 'string' && entry.defaultModel.trim()
+            ? entry.defaultModel.trim()
+            : typeof entry.model === 'string' && entry.model.trim()
+              ? entry.model.trim()
+              : CIVIL_AI_MODEL || null,
+        apiVersion:
+          typeof entry.apiVersion === 'string' && entry.apiVersion.trim()
+            ? entry.apiVersion.trim()
+            : CIVIL_AI_API_VERSION || null,
         enabled: entry.enabled !== false,
         default: entry.default === true || defaultServerId === id,
       }
@@ -387,6 +410,39 @@ function normalizeSearchText(...parts: Array<string | null | undefined>) {
     .replace(/[^a-z0-9\s-]/g, ' ')
     .replace(/\s+/g, ' ')
     .trim()
+}
+
+function buildCivilAiHeaders(server: CivilAiServerConfig, hasJsonBody = false) {
+  const headers: Record<string, string> = {}
+  if (hasJsonBody) headers['content-type'] = 'application/json'
+  if (server.apiKey) {
+    const normalizedProvider = (server.provider || '').trim().toLowerCase()
+    if (normalizedProvider === 'azure-openai' || normalizedProvider.includes('azure')) {
+      headers['api-key'] = server.apiKey
+    } else {
+      headers.authorization = server.apiKey.startsWith('Bearer ') ? server.apiKey : `Bearer ${server.apiKey}`
+    }
+  }
+  return headers
+}
+
+function isAzureResponsesServer(server: CivilAiServerConfig) {
+  const normalizedProvider = (server.provider || '').trim().toLowerCase()
+  return (normalizedProvider === 'azure-openai' || normalizedProvider.includes('azure')) && Boolean(server.apiVersion?.trim())
+}
+
+function getCivilAiModelsUrl(server: CivilAiServerConfig) {
+  if (isAzureResponsesServer(server)) {
+    return `${server.baseUrl}/models?api-version=${encodeURIComponent(server.apiVersion!.trim())}`
+  }
+  return `${server.baseUrl}/v1/models`
+}
+
+function getCivilAiChatCompletionsUrl(server: CivilAiServerConfig) {
+  if (isAzureResponsesServer(server)) {
+    return `${server.baseUrl}/chat/completions?api-version=${encodeURIComponent(server.apiVersion!.trim())}`
+  }
+  return `${server.baseUrl}/v1/chat/completions`
 }
 
 function extractChatCompletionText(payload: unknown): string {
@@ -488,8 +544,15 @@ async function toVisionImageUrl(url: string) {
 
 async function resolveVisionModel(server: CivilAiServerConfig) {
   if (CIVIL_AI_VISION_MODEL) return CIVIL_AI_VISION_MODEL
+  if (server.defaultModel?.trim()) return server.defaultModel.trim()
   try {
-    const response = await fetch(`${server.baseUrl}/v1/models`)
+    const normalizedProvider = (server.provider || '').trim().toLowerCase()
+    if (normalizedProvider === 'azure-openai' || normalizedProvider.includes('azure')) {
+      return null
+    }
+    const response = await fetch(getCivilAiModelsUrl(server), {
+      headers: Object.keys(buildCivilAiHeaders(server)).length ? buildCivilAiHeaders(server) : undefined,
+    })
     if (!response.ok) return null
     const payload = (await response.json()) as { data?: Array<{ id?: unknown }> }
     const models = Array.isArray(payload.data) ? payload.data : []
@@ -545,9 +608,9 @@ async function analyzeImagesWithVision(args: { server: CivilAiServerConfig; mode
     ],
   }
 
-  const response = await fetch(`${args.server.baseUrl}/v1/chat/completions`, {
+  const response = await fetch(getCivilAiChatCompletionsUrl(args.server), {
     method: 'POST',
-    headers: { 'content-type': 'application/json' },
+    headers: buildCivilAiHeaders(args.server, true),
     body: JSON.stringify(body),
   })
 

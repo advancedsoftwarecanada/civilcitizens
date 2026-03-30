@@ -62,19 +62,24 @@ type CivilAiViewerContextLike = {
 
 type CivilAiRetrievalPlanLike = {
   wantsProfile: boolean
+  wantsCauses: boolean
+  wantsDrive: boolean
   wantsEvents: boolean
   wantsJobs: boolean
   wantsMarket: boolean
   wantsCommunities: boolean
   wantsOrganizations: boolean
   wantsPosts: boolean
+  wantsTopics: boolean
   todayOnly: boolean
   topicQuery: string
+  causeLimit: number
   eventLimit: number
   jobLimit: number
   marketLimit: number
   organizationLimit: number
   postLimit: number
+  topicLimit: number
   includeViewerOrganizations: boolean
   reasons: string[]
 }
@@ -83,22 +88,26 @@ type CivilAiGroundingBundleLike = {
   retrievalPlan: CivilAiRetrievalPlanLike
   searchPass: 1 | 2
   targetCommunities: CivilAiCommunityLike[]
+  causes: unknown[]
   events: unknown[]
   jobs: unknown[]
   market: unknown[]
   organizations: unknown[]
   posts: unknown[]
+  topics: unknown[]
 }
 
 type CivilAiSecondSearchBundleLike = {
   grounding: { searchPass: 1 | 2 }
   debug: {
     resultCounts: {
+      causes: number
       events: number
       jobs: number
       market: number
       organizations: number
       posts: number
+      topics: number
     }
     retrievalPlan: CivilAiRetrievalPlanLike
     availableCommunityCount: number
@@ -113,11 +122,13 @@ type CivilAiPlanningDeps = {
   truncateCivilAiText: (value: string, maxChars: number, keepTail?: boolean) => string
   normalizeSearchTerm: (value: string) => string
   normalizeProvinceCode: (value: string) => string | null
+  toCivilAiCauseReference: (item: unknown) => CivilAiCardReferenceLike
   toCivilAiEventReference: (item: unknown) => CivilAiCardReferenceLike
   toCivilAiJobReference: (item: unknown) => CivilAiCardReferenceLike | null
   toCivilAiMarketReference: (item: unknown) => CivilAiCardReferenceLike
   toCivilAiOrganizationReference: (item: unknown) => CivilAiCardReferenceLike | null
   toCivilAiPostReference: (item: unknown) => CivilAiCardReferenceLike
+  toCivilAiTopicReference: (item: unknown) => CivilAiCardReferenceLike
 }
 
 const CIVIL_AI_TOPIC_STOPWORDS = new Set([
@@ -216,6 +227,26 @@ function formatCivilAiSearchScopeLabel(communities: Array<{ communityName: strin
   return communities.length > 1 ? 'your searched Civil communities' : formatCivilAiCommunityNames(communities)
 }
 
+function createCivilAiFeatureReference(args: {
+  id: string
+  title: string
+  subtitle: string
+  summary: string
+  href: string
+  badge: string
+}) {
+  return {
+    kind: 'feature',
+    id: args.id,
+    title: args.title,
+    subtitle: args.subtitle,
+    summary: args.summary,
+    href: args.href,
+    imageUrl: null,
+    badge: args.badge,
+  } satisfies CivilAiCardReferenceLike
+}
+
 function detectCivilAiProfileIntent(question: string) {
   const normalized = question.trim().toLowerCase()
   const asksName = /(what is my name|what'?s my name|do you know my name|who am i|my first name|what is my first name|what'?s my first name|my last name|what is my last name|what'?s my last name|surname|family name|given name)/.test(normalized)
@@ -248,28 +279,168 @@ export function createCivilAiPlanningHelpers(deps: CivilAiPlanningDeps) {
   function buildCivilAiGroundedAnswer(question: string, bundle: CivilAiGroundingBundleLike) {
     const normalized = question.trim().toLowerCase()
     const profileIntent = detectCivilAiProfileIntent(question)
+    const asksCauses = bundle.retrievalPlan.wantsCauses
+    const asksDrive = bundle.retrievalPlan.wantsDrive
     const asksEvents = bundle.retrievalPlan.wantsEvents
     const asksJobs = bundle.retrievalPlan.wantsJobs
     const asksMarket = bundle.retrievalPlan.wantsMarket
     const asksOrganizations = bundle.retrievalPlan.wantsOrganizations
     const asksPosts = bundle.retrievalPlan.wantsPosts
+    const asksTopics = bundle.retrievalPlan.wantsTopics
+    const causeIntent = /(cause|causes|donate|donation|fundraiser|fundraisers|funding|support a cause|civil causes)/.test(normalized)
+    const driveIntent = /(drive|ride|rides|driver|drivers|delivery|deliveries|deliver|pickup|drop ?off|trip|trips|route me|take me)/.test(normalized)
     const eventIntent = /(what(?:'s| is) happening|going on|anything happening|event|events|meetup|meetups|metup|metups|networking|networking event|networking events|today|tonight|this afternoon|this evening|near me|nearby|attend)/.test(normalized)
-    const jobIntent = /(job|jobs|hiring|employment|position|positions|open role|open roles|work near me|jobs near me)/.test(normalized)
+    const jobIntent = /(job|jobs|hiring|employment|position|positions|open role|open roles|work|career|careers)/.test(normalized)
     const marketIntent = /(buy|buying|looking for|looking to buy|where can i buy|shopping|shop for|for sale|marketplace|listing|listings|purchase)/.test(normalized)
     const organizationIntent = /(organization|organizations|group|groups|association|associations|who should i talk to|who is working on|which org|which organization|which organizations|which groups)/.test(normalized)
     const postIntent = /(post|posts|discussion|discussions|conversation|conversations|debate|debates|people saying|talking about|discussing|buzz)/.test(normalized)
+    const topicIntent = /(topic|topics|hashtag|hashtags|tag|tags|issue area|issues)/.test(normalized)
+    const driveNeedsRide = /(ride request|request a ride|request ride|need a ride|book a ride|find me a ride|ride home|ride to|pickup me|get me to)/.test(normalized)
+    const driveNeedsDriverMode = /(driver mode|be a driver|drive for civil|offer rides|open ride requests|earn driving|earn by driving|deliver for civil|delivery jobs|drive jobs)/.test(normalized)
+    const driveNeedsDelivery = /(delivery|deliveries|deliver|package|pickup|drop ?off)/.test(normalized)
     const targetLabel = formatCivilAiCommunityNames(bundle.targetCommunities)
     const scopeLabel = formatCivilAiSearchScopeLabel(bundle.targetCommunities)
     const requestedSources = [
+      bundle.retrievalPlan.wantsCauses,
+      bundle.retrievalPlan.wantsDrive,
       bundle.retrievalPlan.wantsEvents,
       bundle.retrievalPlan.wantsJobs,
       bundle.retrievalPlan.wantsMarket,
       bundle.retrievalPlan.wantsOrganizations,
       bundle.retrievalPlan.wantsPosts,
+      bundle.retrievalPlan.wantsTopics,
     ].filter(Boolean).length
-    const totalMatches = bundle.events.length + bundle.jobs.length + bundle.market.length + bundle.organizations.length + bundle.posts.length
+    const totalMatches = bundle.causes.length + bundle.events.length + bundle.jobs.length + bundle.market.length + bundle.organizations.length + bundle.posts.length + bundle.topics.length
 
     const formatCountLabel = (count: number, singular: string, plural: string) => (count === 1 ? `1 ${singular}` : `${count} ${plural}`)
+    const workBrowseReference = createCivilAiFeatureReference({
+      id: 'work-board',
+      title: 'Civil Work',
+      subtitle: 'Browse jobs and applications',
+      summary: 'Open Civil Work to browse active jobs near you.',
+      href: '/work',
+      badge: 'Work',
+    })
+    const eventsBrowseReference = createCivilAiFeatureReference({
+      id: 'events-board',
+      title: 'Civil Events',
+      subtitle: 'Upcoming events',
+      summary: 'Open Civil Events to browse nearby events and RSVPs.',
+      href: '/events',
+      badge: 'Events',
+    })
+    const marketBrowseReference = createCivilAiFeatureReference({
+      id: 'market-board',
+      title: 'Civil Market',
+      subtitle: 'Marketplace listings',
+      summary: 'Open Civil Market to browse active listings and sellers.',
+      href: '/market',
+      badge: 'Market',
+    })
+    const causesBrowseReference = createCivilAiFeatureReference({
+      id: 'causes-board',
+      title: 'Civil Causes',
+      subtitle: 'Discover causes',
+      summary: 'Open Civil Causes to discover active causes and support community fundraising.',
+      href: '/causes',
+      badge: 'Cause',
+    })
+    const topicsBrowseReference = createCivilAiFeatureReference({
+      id: 'topics-board',
+      title: 'Civil Topics',
+      subtitle: 'Browse local topics',
+      summary: 'Open Civil Topics to explore hashtags and issue areas people are posting about.',
+      href: '/topics',
+      badge: 'Topic',
+    })
+
+    if (asksDrive && driveIntent) {
+      const references = driveNeedsDriverMode
+        ? [
+            createCivilAiFeatureReference({
+              id: 'drive-open-rides',
+              title: 'Open Ride Requests',
+              subtitle: 'Driver mode',
+              summary: 'Browse live ride requests and make offers as a Civil driver.',
+              href: '/drive/ride',
+              badge: 'Drive',
+            }),
+            createCivilAiFeatureReference({
+              id: 'drive-home',
+              title: 'Civil Drive',
+              subtitle: 'Rides and deliveries',
+              summary: 'Open Civil Drive to manage ride, driver, and delivery activity.',
+              href: '/drive',
+              badge: 'Drive',
+            }),
+          ]
+        : driveNeedsDelivery
+          ? [
+              createCivilAiFeatureReference({
+                id: 'drive-deliveries',
+                title: 'My Deliveries',
+                subtitle: 'Delivery contracts',
+                summary: 'Open your Civil delivery contracts and driver delivery activity.',
+                href: '/delivery/my',
+                badge: 'Drive',
+              }),
+              createCivilAiFeatureReference({
+                id: 'drive-home',
+                title: 'Civil Drive',
+                subtitle: 'Rides and deliveries',
+                summary: 'Open Civil Drive to manage ride, driver, and delivery activity.',
+                href: '/drive',
+                badge: 'Drive',
+              }),
+            ]
+          : [
+              createCivilAiFeatureReference({
+                id: 'drive-request-ride',
+                title: 'Request a Ride',
+                subtitle: 'Civil Drive',
+                summary: 'Start a new ride request and collect driver offers.',
+                href: '/drive/ride/request',
+                badge: 'Drive',
+              }),
+              createCivilAiFeatureReference({
+                id: 'drive-home',
+                title: 'Civil Drive',
+                subtitle: 'Rides and deliveries',
+                summary: 'Open Civil Drive to manage ride, driver, and delivery activity.',
+                href: '/drive',
+                badge: 'Drive',
+              }),
+            ]
+
+      return {
+        content: driveNeedsRide
+          ? 'The best place to start is Civil Drive. Use the ride request flow below to post the trip, or open Drive for the full rides and deliveries area.'
+          : driveNeedsDriverMode
+            ? 'Civil Drive is the right place for that. The best driver-mode entry points are linked below.'
+            : 'Civil Drive is the right place for that. The best entry points are linked below.',
+        references,
+      }
+    }
+
+    if (asksCauses && causeIntent) {
+      const references = bundle.causes.slice(0, 4).map((cause) => deps.toCivilAiCauseReference(cause))
+      if (!bundle.causes.length) {
+        return {
+          content: [
+            `I could not find any matching causes for ${targetLabel} right now.`,
+            'You can still browse Civil Causes from the card below.',
+          ].join('\n\n'),
+          references: [causesBrowseReference],
+        }
+      }
+
+      return {
+        content: bundle.causes.length === 1
+          ? `I found 1 matching cause for ${targetLabel}. It is linked below.`
+          : `I found ${bundle.causes.length} matching causes for ${targetLabel}. The best matches are linked below.`,
+        references,
+      }
+    }
 
     if (asksMarket && marketIntent) {
       const references = bundle.market.slice(0, 4).map((listing) => deps.toCivilAiMarketReference(listing))
@@ -277,9 +448,9 @@ export function createCivilAiPlanningHelpers(deps: CivilAiPlanningDeps) {
         return {
           content: [
             'I could not find any active marketplace listings that match that search right now.',
-            'If you want, I can try a broader item keyword or a different product search.',
+            'You can still browse Civil Market from the card below, or I can try a broader item keyword.',
           ].join('\n\n'),
-          references: [] as CivilAiCardReferenceLike[],
+          references: [marketBrowseReference],
         }
       }
 
@@ -298,9 +469,9 @@ export function createCivilAiPlanningHelpers(deps: CivilAiPlanningDeps) {
             `I could not find any events for ${targetLabel} ${timing}.`,
             bundle.organizations.length || bundle.posts.length
               ? 'If helpful, I can still summarize the local organizations or recent posts tied to that area.'
-              : 'If you want, I can check local organizations, posts, or another nearby community instead.',
+              : 'You can still browse Civil Events from the card below, or I can check another nearby community instead.',
           ].join('\n\n'),
-          references: [] as CivilAiCardReferenceLike[],
+          references: [eventsBrowseReference],
         }
       }
 
@@ -316,8 +487,8 @@ export function createCivilAiPlanningHelpers(deps: CivilAiPlanningDeps) {
       const references = bundle.jobs.slice(0, 4).map((job) => deps.toCivilAiJobReference(job)).filter((entry): entry is CivilAiCardReferenceLike => Boolean(entry))
       if (!bundle.jobs.length) {
         return {
-          content: [`I could not find any active jobs for ${targetLabel} right now.`].join('\n\n'),
-          references: [] as CivilAiCardReferenceLike[],
+          content: [`I could not find any active jobs for ${targetLabel} right now. You can still browse Civil Work from the card below.`].join('\n\n'),
+          references: [workBrowseReference],
         }
       }
 
@@ -346,6 +517,23 @@ export function createCivilAiPlanningHelpers(deps: CivilAiPlanningDeps) {
       }
     }
 
+    if (asksTopics && topicIntent) {
+      const references = bundle.topics.slice(0, 4).map((topic) => deps.toCivilAiTopicReference(topic))
+      if (!bundle.topics.length) {
+        return {
+          content: [`I could not find any matching topics for ${targetLabel}. You can still browse Civil Topics from the card below.`].join('\n\n'),
+          references: [topicsBrowseReference],
+        }
+      }
+
+      return {
+        content: bundle.topics.length === 1
+          ? `I found 1 matching topic for ${targetLabel}. It is linked below.`
+          : `I found ${bundle.topics.length} matching topics for ${targetLabel}. The best matches are linked below.`,
+        references,
+      }
+    }
+
     if (asksPosts && postIntent) {
       const references = bundle.posts.slice(0, 4).map((post) => deps.toCivilAiPostReference(post))
       if (!bundle.posts.length) {
@@ -366,7 +554,13 @@ export function createCivilAiPlanningHelpers(deps: CivilAiPlanningDeps) {
     if (!profileIntent.wantsProfile && requestedSources > 0 && totalMatches === 0) {
       return {
         content: [`I could not find matching results for ${targetLabel}.`].join('\n\n'),
-        references: [] as CivilAiCardReferenceLike[],
+        references: [
+          ...(asksCauses ? [causesBrowseReference] : []),
+          ...(asksJobs ? [workBrowseReference] : []),
+          ...(asksMarket ? [marketBrowseReference] : []),
+          ...(asksEvents ? [eventsBrowseReference] : []),
+          ...(asksTopics ? [topicsBrowseReference] : []),
+        ].slice(0, deps.maxReferenceCards),
       }
     }
 
@@ -389,7 +583,7 @@ export function createCivilAiPlanningHelpers(deps: CivilAiPlanningDeps) {
     }
 
     next = next
-      .replace(/^view\s+(event|job|community|organization|post):\s*$/gim, '')
+      .replace(/^view\s+(cause|event|feature|job|community|organization|post|topic):\s*$/gim, '')
       .replace(/here:\s*the Civil card below/gi, 'in the Civil card below')
       .replace(/details\s+about\s+it\s+the Civil card below/gi, 'details in the Civil card below')
       .replace(/\(\s*the Civil card below\s*\)/gi, 'the Civil card below')
@@ -510,6 +704,11 @@ export function createCivilAiPlanningHelpers(deps: CivilAiPlanningDeps) {
         purpose: 'Active jobs in a community from local organizations or local job locations.',
       },
       {
+        name: 'Community Causes',
+        endpoint: `${apiBaseUrl}/ai/causes/${encodeURIComponent(suggestedCommunityId)}`,
+        purpose: 'Active cause posts in a specific community, optionally filtered by a cause or donation query.',
+      },
+      {
         name: 'Marketplace Listings',
         endpoint: `${apiBaseUrl}/ai/market?q=skateboard`,
         purpose: 'Active marketplace listings that match a shopping or buying query.',
@@ -523,6 +722,11 @@ export function createCivilAiPlanningHelpers(deps: CivilAiPlanningDeps) {
         name: 'Community Posts',
         endpoint: `${apiBaseUrl}/ai/posts/${encodeURIComponent(suggestedCommunityId)}`,
         purpose: 'Recent public posts in a specific community, optionally filtered by a topic query.',
+      },
+      {
+        name: 'Community Topics',
+        endpoint: `${apiBaseUrl}/ai/topics/${encodeURIComponent(suggestedCommunityId)}`,
+        purpose: 'Topics and hashtags with recent public post activity in a specific community.',
       },
     ]
   }
@@ -604,7 +808,7 @@ export function createCivilAiPlanningHelpers(deps: CivilAiPlanningDeps) {
     const normalized = question.trim().toLowerCase()
     if (!normalized) return false
 
-    return /(community|communities|local|near me|nearby|my area|my city|my town|riding|event|events|meeting|meetup|job|jobs|hiring|employment|marketplace|listing|listings|buy|organization|organizations|group|groups|association|associations|post|posts|discussion|discussions|civic|council|mayor|bylaw|permit|housing|transit|school|election|vote|voting|policy|policies|government)/.test(normalized)
+    return /(community|communities|local|near me|nearby|my area|my city|my town|riding|event|events|meeting|meetup|job|jobs|hiring|employment|work|marketplace|listing|listings|buy|organization|organizations|group|groups|association|associations|post|posts|discussion|discussions|cause|causes|donate|donation|topic|topics|hashtag|drive|ride|rides|driver|delivery|deliveries|civic|council|mayor|bylaw|permit|housing|transit|school|election|vote|voting|policy|policies|government)/.test(normalized)
   }
 
   function extractCivilAiReferenceKeywords(question: string) {
@@ -656,16 +860,22 @@ export function createCivilAiPlanningHelpers(deps: CivilAiPlanningDeps) {
     const explicitEventIntent = /(event|events|festival|meeting|meetup|meetups|networking|rally|parade|attend)/.test(normalizedQuestion)
     const explicitJobIntent = /(job|jobs|hiring|employment|position|positions|open role|open roles|work)/.test(normalizedQuestion)
     const explicitMarketIntent = /(buy|buying|shopping|shop for|for sale|marketplace|listing|listings|purchase)/.test(normalizedQuestion)
+    const explicitCauseIntent = /(cause|causes|donate|donation|fundraiser|fundraisers|funding)/.test(normalizedQuestion)
+    const explicitDriveIntent = /(drive|ride|rides|driver|drivers|delivery|deliveries|deliver|pickup|drop ?off|trip|trips)/.test(normalizedQuestion)
     const explicitOrganizationIntent = /(organization|organizations|group|groups|association|associations|who should i talk to|who is working on|which org|which organization|which organizations|which groups)/.test(normalizedQuestion)
     const explicitPostIntent = /(post|posts|article|articles|discussion|discussions|conversation|conversations|debate|debates|people saying|talking about|discussing|buzz)/.test(normalizedQuestion)
+    const explicitTopicIntent = /(topic|topics|hashtag|hashtags|tag|tags|issue area|issues)/.test(normalizedQuestion)
     const explicitCommunityIntent = /(community|communities|riding|municipality|city|town|district|area|neighbourhood|neighborhood)/.test(normalizedQuestion)
     const asksAboutOwnPost = /(i wrote|i posted|my post|my posts|my article|my articles|article i wrote|post i wrote)/.test(normalizedQuestion)
 
+    if (explicitCauseIntent && reference.kind === 'cause') score += 4
+    if (explicitDriveIntent && reference.kind === 'feature' && reference.href.startsWith('/drive')) score += 5
     if (explicitEventIntent && reference.kind === 'event') score += 4
     if (explicitJobIntent && reference.kind === 'job') score += 4
     if (explicitMarketIntent && reference.kind === 'market') score += 4
     if (explicitOrganizationIntent && reference.kind === 'organization') score += 4
     if (explicitPostIntent && reference.kind === 'post') score += 4
+    if (explicitTopicIntent && reference.kind === 'topic') score += 4
     if (explicitCommunityIntent && reference.kind === 'community') score += 3
     if (asksAboutOwnPost) score += reference.kind === 'post' ? 5 : -3
 
@@ -709,11 +919,14 @@ export function createCivilAiPlanningHelpers(deps: CivilAiPlanningDeps) {
     const generalChatIntent = isCivilAiGeneralChatQuestion(question)
     const civicSignal = hasCivilAiCivicSignal(question)
 
+    const explicitCauses = /(cause|causes|donate|donation|fundraiser|fundraisers|funding|support a cause)/.test(normalized)
+    const explicitDrive = /(drive|ride|rides|driver|drivers|delivery|deliveries|deliver|pickup|drop ?off|trip|trips)/.test(normalized)
     const explicitEvents = /(event|events|festival|meeting|meetup|meetups|metup|metups|networking|networking event|networking events|parade|rally|attend)/.test(normalized)
-    const explicitJobs = /(job|jobs|hiring|employment|position|positions|open role|open roles)/.test(normalized)
+    const explicitJobs = /(job|jobs|hiring|employment|position|positions|open role|open roles|work|career|careers)/.test(normalized)
     const explicitMarket = /(buy|buying|looking for|looking to buy|where can i buy|shopping|shop for|for sale|marketplace|listing|listings|purchase)/.test(normalized)
     const explicitOrganizations = /(organization|organizations|group|groups|association|associations)/.test(normalized)
     const explicitPosts = /(post|posts|discussion|discussions|conversation|conversations|debate|debates)/.test(normalized)
+    const explicitTopics = /(topic|topics|hashtag|hashtags|tag|tags|issue area|issues)/.test(normalized)
     const asksWhatIsHappening = /(what(?:'s| is) happening|going on|anything happening|what(?:'s| is) going on)/.test(normalized)
     const asksWhatPeopleAreSaying = /(people saying|what are people saying|talking about|discussing|buzz)/.test(normalized)
     const asksWhichGroupsMatter = /(who should i talk to|who is working on|which org|which organization|which organizations|which groups|groups working on|organizations working on)/.test(normalized)
@@ -725,83 +938,105 @@ export function createCivilAiPlanningHelpers(deps: CivilAiPlanningDeps) {
     if (!profileIntent.wantsProfile && generalChatIntent && !civicSignal) {
       return {
         wantsProfile: false,
+        wantsCauses: false,
+        wantsDrive: false,
         wantsEvents: false,
         wantsJobs: false,
         wantsMarket: false,
         wantsCommunities: false,
         wantsOrganizations: false,
         wantsPosts: false,
+        wantsTopics: false,
         todayOnly: false,
         topicQuery: '',
+        causeLimit: 0,
         eventLimit: 0,
         jobLimit: 0,
         marketLimit: 0,
         organizationLimit: 0,
         postLimit: 0,
+        topicLimit: 0,
         includeViewerOrganizations: false,
         reasons: ['general chat request detected'],
       }
     }
 
+    let wantsCauses = explicitCauses
+    let wantsDrive = explicitDrive
     let wantsEvents = explicitEvents || asksWhatIsHappening || todayOnly
     let wantsJobs = explicitJobs
     let wantsMarket = explicitMarket
     let wantsOrganizations = explicitOrganizations || asksWhichGroupsMatter
     let wantsPosts = explicitPosts || asksWhatPeopleAreSaying
+    let wantsTopics = explicitTopics
     const wantsCommunities = asksLocalContext
 
     if (profileIntent.wantsProfile) {
+      wantsCauses = false
+      wantsDrive = false
       wantsEvents = false
       wantsJobs = false
       wantsMarket = false
       wantsOrganizations = false
       wantsPosts = false
+      wantsTopics = false
     }
 
     if (!profileIntent.wantsProfile) {
       if (hasIssueTopic && asksWhatPeopleAreSaying) wantsPosts = true
       if (hasIssueTopic && asksWhichGroupsMatter) wantsOrganizations = true
+      if (hasIssueTopic && explicitTopics) wantsTopics = true
 
-      if (hasIssueTopic && !wantsEvents && !wantsJobs && !wantsMarket && !wantsOrganizations && !wantsPosts) {
+      if (hasIssueTopic && !wantsCauses && !wantsDrive && !wantsEvents && !wantsJobs && !wantsMarket && !wantsOrganizations && !wantsPosts && !wantsTopics) {
         wantsPosts = true
         wantsOrganizations = true
+        wantsTopics = true
       }
 
-      if ((asksOverview || asksLocalContext) && !wantsEvents && !wantsJobs && !wantsMarket && !wantsOrganizations && !wantsPosts) {
+      if ((asksOverview || asksLocalContext) && !wantsCauses && !wantsDrive && !wantsEvents && !wantsJobs && !wantsMarket && !wantsOrganizations && !wantsPosts && !wantsTopics) {
         wantsEvents = true
         wantsPosts = true
         wantsOrganizations = true
       }
 
-      if (!wantsEvents && !wantsJobs && !wantsMarket && !wantsOrganizations && !wantsPosts) {
+      if (!wantsCauses && !wantsDrive && !wantsEvents && !wantsJobs && !wantsMarket && !wantsOrganizations && !wantsPosts && !wantsTopics) {
         wantsPosts = true
         wantsOrganizations = hasIssueTopic
+        wantsTopics = hasIssueTopic
       }
     }
 
     const reasons: string[] = []
     if (profileIntent.wantsProfile) reasons.push('profile or identity intent detected')
+    if (wantsCauses) reasons.push('cause or donation intent detected')
+    if (wantsDrive) reasons.push('drive or delivery intent detected')
     if (wantsEvents) reasons.push(todayOnly ? 'time-sensitive local activity requested' : 'activity or happenings requested')
     if (wantsJobs) reasons.push('employment intent detected')
     if (wantsMarket) reasons.push('shopping or marketplace intent detected')
     if (wantsPosts) reasons.push(asksWhatPeopleAreSaying ? 'public conversation intent detected' : 'local discussion context may help answer')
     if (wantsOrganizations) reasons.push(asksWhichGroupsMatter ? 'organization discovery intent detected' : 'local groups may help answer')
+    if (wantsTopics) reasons.push('topic or hashtag discovery intent detected')
 
     return {
       wantsProfile: profileIntent.wantsProfile,
+      wantsCauses,
+      wantsDrive,
       wantsEvents,
       wantsJobs,
       wantsMarket,
       wantsCommunities,
       wantsOrganizations,
       wantsPosts,
+      wantsTopics,
       todayOnly,
       topicQuery,
+      causeLimit: wantsCauses ? (hasIssueTopic ? 5 : 4) : 0,
       eventLimit: wantsEvents ? (todayOnly || asksWhatIsHappening ? 6 : 4) : 0,
       jobLimit: wantsJobs ? 4 : 0,
       marketLimit: wantsMarket ? 4 : 0,
       organizationLimit: wantsOrganizations ? (asksWhichGroupsMatter || hasIssueTopic ? 4 : 3) : 0,
       postLimit: wantsPosts ? (asksWhatPeopleAreSaying || hasIssueTopic ? 5 : 3) : 0,
+      topicLimit: wantsTopics ? (hasIssueTopic ? 5 : 4) : 0,
       includeViewerOrganizations: wantsOrganizations || asksWhichGroupsMatter,
       reasons,
     }
@@ -871,13 +1106,13 @@ export function createCivilAiPlanningHelpers(deps: CivilAiPlanningDeps) {
     if (bundle.grounding.searchPass >= 2) return false
 
     const resultCounts = bundle.debug.resultCounts
-    const totalMatches = resultCounts.events + resultCounts.jobs + resultCounts.market + resultCounts.organizations + resultCounts.posts
+    const totalMatches = resultCounts.causes + resultCounts.events + resultCounts.jobs + resultCounts.market + resultCounts.organizations + resultCounts.posts + resultCounts.topics
     if (totalMatches > 0) return false
 
     const retrievalPlan = bundle.debug.retrievalPlan
     const hasBroaderCommunities = !retrievalPlan.wantsMarket && bundle.debug.availableCommunityCount > bundle.debug.targetCommunities.length
     const canBroadenMarketScope = retrievalPlan.wantsMarket && bundle.debug.marketScopeMode === 'community'
-    const canRelaxTopicQuery = Boolean(retrievalPlan.topicQuery && (retrievalPlan.wantsOrganizations || retrievalPlan.wantsPosts))
+    const canRelaxTopicQuery = Boolean(retrievalPlan.topicQuery && (retrievalPlan.wantsCauses || retrievalPlan.wantsOrganizations || retrievalPlan.wantsPosts || retrievalPlan.wantsTopics))
     return hasBroaderCommunities || canBroadenMarketScope || canRelaxTopicQuery
   }
 
