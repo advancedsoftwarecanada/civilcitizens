@@ -288,6 +288,8 @@ export default function NotificationsClient() {
           pushToast(action === 'accept' ? 'Delivery bid accepted.' : 'Delivery bid declined.', action === 'accept' ? 'success' : 'info')
         } else if (notification.type === 'drive_ride_complete_confirmation') {
           pushToast(action === 'accept' ? 'Ride completion confirmed.' : 'Ride issue reported to support.', action === 'accept' ? 'success' : 'info')
+        } else if (notification.type === 'connection_request') {
+          pushToast(action === 'accept' ? 'Connection request accepted.' : 'Connection request declined.', action === 'accept' ? 'success' : 'info')
         } else if (notification.type === 'profile_family_invite') {
           pushToast(action === 'accept' ? 'Family relationship accepted.' : 'Family relationship declined.', action === 'accept' ? 'success' : 'info')
         } else if (notification.type === 'family_child_friend_request') {
@@ -316,7 +318,7 @@ export default function NotificationsClient() {
           <div>
             <p className="text-xs font-semibold uppercase tracking-[0.3em] text-slate-400">Inbox</p>
             <h1 className="text-2xl font-semibold text-slate-900 sm:text-3xl">Notifications</h1>
-            <p className="mt-2 text-sm text-slate-500">Stay on top of friend requests and civic activity.</p>
+            <p className="mt-2 text-sm text-slate-500">Stay on top of relationship requests and civic activity.</p>
           </div>
         </div>
 
