@@ -908,6 +908,12 @@ export default function UserPostsPage({ params }: PageProps) {
     Boolean(currentProfileFamilyRelationship) ||
     resolvedRelationship.friendshipStatus === 'friends' ||
     resolvedRelationship.connectionStatus === 'connected'
+  const preferredDirectMessageInbox =
+    currentProfileFamilyRelationship
+      ? 'family'
+      : resolvedRelationship.connectionStatus === 'connected'
+        ? 'network'
+        : 'friends'
 
   const normalizeRelationshipState = useCallback(
     (prev?: ProfileRelationship | null): ProfileRelationship => ({
@@ -2296,7 +2302,7 @@ export default function UserPostsPage({ params }: PageProps) {
     try {
       const threadId = await ensureDirectThread(token)
       if (!threadId) return
-      router.push(`/messages?thread=${threadId}`)
+      router.push(`/messages?inbox=${encodeURIComponent(preferredDirectMessageInbox)}&thread=${encodeURIComponent(threadId)}`)
     } catch (err) {
       console.error('Failed to start direct message', err)
       pushToast('Unable to start a conversation right now.', 'error')

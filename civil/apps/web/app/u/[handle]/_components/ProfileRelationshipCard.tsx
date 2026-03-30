@@ -74,6 +74,7 @@ export default function ProfileRelationshipCard({
   const sinceLabel = formatSinceLabel(since)
   const secondarySubtitle = subtitle?.trim() || (handle ? `@${handle}` : null)
   const canContact = Boolean(userId && handle)
+  const preferredInboxSection = contextLabel === 'Network' ? 'network' : contextLabel === 'Family' ? 'family' : 'friends'
 
   const actionButtonClassName = 'inline-flex items-center justify-center rounded-full border border-white/35 bg-white/12 px-4 py-2 text-sm font-semibold text-white transition hover:bg-white/20 disabled:cursor-not-allowed disabled:opacity-60'
   const primaryActionButtonClassName = 'inline-flex items-center justify-center rounded-full bg-[var(--cc-primary)] px-4 py-2 text-sm font-semibold text-white transition hover:brightness-110 disabled:cursor-not-allowed disabled:opacity-60'
@@ -170,7 +171,7 @@ export default function ProfileRelationshipCard({
     try {
       const threadId = await ensureDirectThread()
       if (!threadId) return
-      router.push(`/messages?thread=${encodeURIComponent(threadId)}`)
+      router.push(`/messages?inbox=${encodeURIComponent(preferredInboxSection)}&thread=${encodeURIComponent(threadId)}`)
     } finally {
       setMessageLoading(false)
     }
