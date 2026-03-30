@@ -564,9 +564,9 @@ export default function SettingsPage() {
       },
       {
         key: 'communities',
-        label: 'Communities',
-        description: 'Set your home riding and manage the communities you follow.',
-        href: '/communities/settings',
+        label: 'Chambers of Citizens',
+        description: 'Set your home riding and manage the chambers of citizens you follow.',
+        href: '/chambers/settings',
         icon: HiOutlineBuildingOffice2,
       },
       {

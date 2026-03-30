@@ -493,7 +493,7 @@ export default function PostFeedItem({ post, onReact, onDelete, onUpdate, viewer
               <Link
                 href={communityUrl}
                 className="rounded-full border border-white/35 px-2 py-0.5 uppercase tracking-wide text-white/85 hover:border-white/60"
-                aria-label="Open community feed"
+                aria-label="Open chamber feed"
               >
                 {post.communityName ?? post.communitySlug}
               </Link>

@@ -864,7 +864,7 @@ export default function UserPostsPage({ params }: PageProps) {
           icon: <HiOutlineUsers className="h-5 w-5" aria-hidden="true" />,
         },
         {
-          label: 'Communities',
+          label: 'Chambers',
           value: formatCount(communityCount),
           href: `/u/${encodeURIComponent(profile.handle)}/communities`,
           icon: <HiOutlineMap className="h-5 w-5" aria-hidden="true" />,

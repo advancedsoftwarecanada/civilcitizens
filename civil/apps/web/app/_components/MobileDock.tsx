@@ -612,7 +612,7 @@ export default function MobileDock() {
         />
       )
     }
-    if (pathname?.startsWith('/communities')) {
+    if (pathname?.startsWith('/communities') || pathname?.startsWith('/chambers')) {
       return <RightRail mode="communitiesFeed" />
     }
     if (communityRoute) {
@@ -867,7 +867,7 @@ export default function MobileDock() {
             <div className="flex items-center justify-between gap-3">
               <div>
                 <p className="text-xs font-semibold uppercase tracking-[0.3em] text-slate-400">More</p>
-                <p className="text-sm font-semibold text-slate-900">Communities & shortcuts</p>
+                <p className="text-sm font-semibold text-slate-900">Chambers of Citizens & shortcuts</p>
               </div>
               <button
                 type="button"

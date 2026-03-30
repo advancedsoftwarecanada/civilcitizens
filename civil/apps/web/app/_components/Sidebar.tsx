@@ -56,7 +56,7 @@ export const PRIMARY_NAV: SidebarNavItem[] = [
   { key: 'messages', label: 'Messages', href: '/messages', icon: HiOutlineChatBubbleOvalLeft },
   { key: 'friends', label: 'Friends', href: '/friends', icon: HiOutlineUsers },
   { key: 'network', label: 'Network', href: '/network', icon: FaUserTie },
-  { key: 'communities', label: 'Communities', href: '/communities', icon: RiCommunityLine },
+  { key: 'communities', label: 'Chambers of Citizens', href: '/chambers', icon: RiCommunityLine },
   { key: 'organizations', label: 'Organizations', href: '/organizations', icon: VscOrganization },
   { key: 'topics', label: 'Topics', href: '/topics', icon: HiOutlineTag },
   { key: 'events', label: 'Events', href: '/events', icon: HiOutlineCalendarDays },

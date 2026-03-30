@@ -482,7 +482,7 @@ function measureMentionMenuPosition(
 function formatMentionHomeCommunity(
   homeCommunity: MentionSuggestion['homeCommunity'],
 ) {
-  if (!homeCommunity) return 'No home community yet'
+  if (!homeCommunity) return 'No home chamber yet'
   const provinceLabel = homeCommunity.provinceName ?? homeCommunity.provinceCode.toUpperCase()
   const communityLabel = homeCommunity.communityName ?? homeCommunity.communitySlug
   return `${provinceLabel} / ${communityLabel}`
@@ -1117,7 +1117,7 @@ export default function PostComposer({
     if (!canSubmit || submitting) return
 
     if (!communityTarget && audienceSelection.startsWith(COMMUNITY_PREFIX) && !activeCommunity) {
-      setError('Pick a community to publish to the community feed.')
+      setError('Pick a chamber of citizens to publish to the chamber feed.')
       return
     }
 
@@ -1447,7 +1447,7 @@ export default function PostComposer({
                   ) : null}
 
                   {selectableCommunityOptions.length || (!communityTarget && isPromptSelected) ? (
-                    <optgroup label="Communities">
+                    <optgroup label="Chambers of Citizens">
                       {!communityTarget && isPromptSelected ? (
                         <option value={COMMUNITY_PROMPT_VALUE} hidden disabled>
                           Select a community
@@ -1474,10 +1474,10 @@ export default function PostComposer({
               )}
             </select>
             {showCommunityWarning ? (
-              <p className="text-xs text-slate-500">Follow a community to publish in its public feed.</p>
+              <p className="text-xs text-slate-500">Follow a chamber of citizens to publish in its public feed.</p>
             ) : null}
             {!businessTarget?.businessId && isPromptSelected ? (
-              <p className="text-xs text-amber-600">Pick a community to share this post publicly.</p>
+              <p className="text-xs text-amber-600">Pick a chamber of citizens to share this post publicly.</p>
             ) : null}
           </div>
         ) : null}

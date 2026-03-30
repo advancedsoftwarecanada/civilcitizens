@@ -58,13 +58,13 @@ export default function CreateOrganizationPage() {
     >
       <OrganizationsAdminCreatePanel
         title="Create an organization"
-        description="Choose a community, then create an organization tied to it."
+        description="Choose a chamber of citizens, then create an organization tied to it."
         status={status}
         options={options}
         selectedKey={selectedKey}
         onSelectedKeyChange={setSelectedKey}
-        emptyMessage="Follow a community first to create an organization."
-        errorMessage="Unable to load your communities right now."
+        emptyMessage="Follow a chamber of citizens first to create an organization."
+        errorMessage="Unable to load your chambers of citizens right now."
       >
         {selected ? <OrganizationCreateButton province={selected.provinceCode} municipality={selected.communitySlug} /> : null}
         {selected ? (

@@ -31,7 +31,7 @@ function toCommunityLabel(item: CommunityFollowItem) {
   const fromApi = item.community?.name ?? item.community?.cityName
   if (fromApi && fromApi.trim()) return fromApi.trim()
   const slug = (item.communitySlug ?? item.community?.slug ?? '').trim()
-  if (!slug) return 'Community'
+  if (!slug) return 'Chamber'
   return slug
     .split('-')
     .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
@@ -78,14 +78,14 @@ export default function MarketCommunitiesPanel() {
   return (
     <section className="rounded-2xl border border-slate-200 bg-white p-4">
       <div className="flex items-center justify-between gap-2">
-        <h3 className="text-sm font-semibold text-slate-900">Communities</h3>
-        <Link href="/communities/settings" className="text-xs font-semibold text-slate-600 hover:text-slate-900">
+        <h3 className="text-sm font-semibold text-slate-900">Chambers of Citizens</h3>
+        <Link href="/chambers/settings" className="text-xs font-semibold text-slate-600 hover:text-slate-900">
           View all
         </Link>
       </div>
 
       {loading ? <p className="mt-3 text-xs text-slate-500">Loading…</p> : null}
-      {!loading && !hasCommunities ? <p className="mt-3 text-xs text-slate-500">No communities followed.</p> : null}
+      {!loading && !hasCommunities ? <p className="mt-3 text-xs text-slate-500">No chambers of citizens followed.</p> : null}
 
       {!loading && hasCommunities ? (
         <ul className="mt-3 space-y-2">

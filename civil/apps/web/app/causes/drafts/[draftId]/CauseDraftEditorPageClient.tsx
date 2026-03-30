@@ -835,7 +835,7 @@ export default function CauseDraftEditorPageClient({ draftId }: { draftId: strin
                   </option>
                 ))}
               </select>
-              {!followOptions.length ? <p className="text-xs text-amber-700">Follow or set a home community first before publishing causes into your community feed.</p> : null}
+              {!followOptions.length ? <p className="text-xs text-amber-700">Follow or set a home chamber first before publishing causes into your chamber feed.</p> : null}
             </div>
 
             <div className="grid gap-2">
@@ -1127,7 +1127,7 @@ export default function CauseDraftEditorPageClient({ draftId }: { draftId: strin
         maxWidthClassName="max-w-md"
       >
         <div className="space-y-4 p-6">
-          <p className="text-sm text-slate-600">This will publish the cause into the selected community feed and make it available for backing.</p>
+          <p className="text-sm text-slate-600">This will publish the cause into the selected chamber feed and make it available for backing.</p>
           <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-700">
             <p><span className="font-semibold text-slate-900">Total goal:</span> {formatCurrency(totalGoalCents)}</p>
             <p className="mt-1"><span className="font-semibold text-slate-900">Stage goals:</span> {formatCurrency(stageGoalTotalCents)}</p>

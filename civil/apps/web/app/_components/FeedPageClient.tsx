@@ -999,7 +999,7 @@ export default function FeedPageClient(props: FeedPageClientProps) {
         title: sortMode === 'hot' ? 'Posts, events, and jobs currently surfacing in your home feed.' : 'The newest posts, events, and jobs in your home feed.',
         cards: [
           { label: 'Posts', value: formatSnapshotValue(visiblePosts.length) },
-          { label: 'Communities', value: formatSnapshotValue(Math.max(uniquePostCommunityCount, communityOptions.length)) },
+          { label: 'Chambers', value: formatSnapshotValue(Math.max(uniquePostCommunityCount, communityOptions.length)) },
           { label: 'Events', value: formatSnapshotValue(activityEvents.length) },
           { label: 'Jobs', value: formatSnapshotValue(activityJobs.length) },
         ],
@@ -1008,10 +1008,10 @@ export default function FeedPageClient(props: FeedPageClientProps) {
 
     if (scope === 'communities') {
       return {
-        eyebrow: 'Community Snapshot',
-        title: 'Your local feed now tracks posts, public events, and jobs across the places you follow.',
+        eyebrow: 'Chambers Snapshot',
+        title: 'Your local feed now tracks posts, public events, and jobs across the chambers of citizens you follow.',
         cards: [
-          { label: 'Communities followed', value: formatSnapshotValue(communityOptions.length) },
+          { label: 'Chambers followed', value: formatSnapshotValue(communityOptions.length) },
           { label: 'Local posts loaded', value: formatSnapshotValue(visiblePosts.length) },
           { label: 'Upcoming events', value: formatSnapshotValue(activityEvents.length) },
           { label: 'Open roles', value: formatSnapshotValue(activityJobs.length) },
@@ -1027,7 +1027,7 @@ export default function FeedPageClient(props: FeedPageClientProps) {
           { label: 'Organizations in scope', value: formatSnapshotValue(Math.max(postableOrganizations.length, uniqueOrganizationCount)) },
           { label: 'Posts loaded', value: formatSnapshotValue(visiblePosts.length) },
           { label: 'New since visit', value: formatSnapshotValue(postsSinceLastVisit) },
-          { label: 'Communities touched', value: formatSnapshotValue(uniquePostCommunityCount) },
+          { label: 'Chambers touched', value: formatSnapshotValue(uniquePostCommunityCount) },
         ],
       }
     }
@@ -1035,12 +1035,12 @@ export default function FeedPageClient(props: FeedPageClientProps) {
     if (scope === 'causes') {
       return {
         eyebrow: 'Cause Snapshot',
-        title: 'Funding campaigns posted in the communities you follow.',
+        title: 'Funding campaigns posted in the chambers of citizens you follow.',
         cards: [
-          { label: 'Communities followed', value: formatSnapshotValue(communityOptions.length) },
+          { label: 'Chambers followed', value: formatSnapshotValue(communityOptions.length) },
           { label: 'Causes loaded', value: formatSnapshotValue(visiblePosts.length) },
           { label: 'New since visit', value: formatSnapshotValue(postsSinceLastVisit) },
-          { label: 'Communities represented', value: formatSnapshotValue(uniquePostCommunityCount) },
+          { label: 'Chambers represented', value: formatSnapshotValue(uniquePostCommunityCount) },
         ],
       }
     }
@@ -1053,7 +1053,7 @@ export default function FeedPageClient(props: FeedPageClientProps) {
           { label: 'Updates loaded', value: formatSnapshotValue(visiblePosts.length) },
           { label: 'New since visit', value: formatSnapshotValue(postsSinceLastVisit) },
           { label: 'Organizations represented', value: formatSnapshotValue(uniqueOrganizationCount) },
-          { label: 'Communities represented', value: formatSnapshotValue(uniquePostCommunityCount) },
+          { label: 'Chambers represented', value: formatSnapshotValue(uniquePostCommunityCount) },
         ],
       }
     }
@@ -1064,7 +1064,7 @@ export default function FeedPageClient(props: FeedPageClientProps) {
       cards: [
         { label: 'Updates loaded', value: formatSnapshotValue(visiblePosts.length) },
         { label: 'New since visit', value: formatSnapshotValue(postsSinceLastVisit) },
-        { label: 'Communities represented', value: formatSnapshotValue(uniquePostCommunityCount) },
+        { label: 'Chambers represented', value: formatSnapshotValue(uniquePostCommunityCount) },
         { label: 'Organizations represented', value: formatSnapshotValue(uniqueOrganizationCount) },
       ],
     }

@@ -135,7 +135,7 @@ export default function SharePostModal({ target, onClose, onShare, communityOpti
               onChange={(event) => setCommunityValue(event.target.value)}
               disabled={submitting || communityOptions.length === 0}
             >
-              {communityOptions.length === 0 ? <option value="">No communities available</option> : null}
+              {communityOptions.length === 0 ? <option value="">No chambers available</option> : null}
               {communityOptions.map((option) => (
                 <option key={`${option.provinceCode}:${option.communitySlug}`} value={buildCommunityValue(option)}>
                   {option.communityName || option.communitySlug}
@@ -143,7 +143,7 @@ export default function SharePostModal({ target, onClose, onShare, communityOpti
               ))}
             </select>
             {communityOptions.length === 0 ? (
-              <p className="mt-1 text-xs text-slate-500">Follow a community first to repost there.</p>
+              <p className="mt-1 text-xs text-slate-500">Follow a chamber of citizens first to repost there.</p>
             ) : null}
           </div>
         ) : null}

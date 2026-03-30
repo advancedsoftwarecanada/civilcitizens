@@ -307,7 +307,7 @@ export default function CommunityRightRailClient({
             <div className="flex items-center justify-between gap-3">
               <div>
                 <p className="font-semibold text-slate-600">Posts</p>
-                <p className="mt-1 text-slate-900">Open the local community feed.</p>
+                <p className="mt-1 text-slate-900">Open the local chamber feed.</p>
               </div>
               <Link
                 href={`/${encodeURIComponent(province.toLowerCase())}/${encodeURIComponent(municipality.toLowerCase())}`}

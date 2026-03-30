@@ -1369,8 +1369,8 @@ export function CommunitiesView({ mode = 'default' }: { mode?: CommunitiesPageMo
   const manageSection = (
     <section className="surface-card space-y-6 px-6 py-5 shadow-subtle">
       <div>
-          <h1 className="text-2xl font-bold text-gray-900">Communities you follow in {selectedBrowserProvinceName}</h1>
-        <p className="mt-2 text-sm text-gray-600">Stay connected to your home district and add nearby communities to your feed.</p>
+          <h1 className="text-2xl font-bold text-gray-900">Chambers of Citizens you follow in {selectedBrowserProvinceName}</h1>
+        <p className="mt-2 text-sm text-gray-600">Stay connected to your home district and add nearby chambers of citizens to your feed.</p>
       </div>
 
       <div>
@@ -1378,7 +1378,7 @@ export function CommunitiesView({ mode = 'default' }: { mode?: CommunitiesPageMo
           <div className="mt-3 text-sm text-gray-500">Loading your followed cities…</div>
           ) : visibleOrderedFollows.length === 0 ? (
           <div className="mt-3 rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-500">
-              You haven't followed any communities in this province yet.
+              You haven't followed any chambers of citizens in this province yet.
           </div>
         ) : (
           <div className="mt-3 space-y-3">
@@ -2086,19 +2086,19 @@ export function CommunitiesView({ mode = 'default' }: { mode?: CommunitiesPageMo
         <section className="surface-card space-y-4 p-5 shadow-subtle">
           <div className="flex items-center justify-between gap-3">
             <div>
-              <p className="text-xs font-semibold uppercase tracking-[0.3em] text-slate-400">Nearby Communities</p>
+              <p className="text-xs font-semibold uppercase tracking-[0.3em] text-slate-400">Nearby Chambers of Citizens</p>
               <p className="mt-2 text-sm text-slate-600">
-                Based on your home community, here are some communities around you based on distance:
+                Based on your home chamber, here are some chambers of citizens around you based on distance:
               </p>
             </div>
             {suggestionsLoading ? <span className="text-xs font-semibold uppercase tracking-wide text-slate-400">Loading</span> : null}
           </div>
 
           {suggestionsLoading ? (
-            <div className="text-sm text-slate-500">Loading nearby communities…</div>
+            <div className="text-sm text-slate-500">Loading nearby chambers of citizens…</div>
           ) : nearbyCommunities.length === 0 ? (
             <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-4 py-4 text-sm text-slate-600">
-              No nearby communities are available for this province yet.
+              No nearby chambers of citizens are available for this province yet.
             </div>
           ) : (
             <div className="space-y-3">
@@ -2186,19 +2186,19 @@ export function CommunitiesView({ mode = 'default' }: { mode?: CommunitiesPageMo
   const provinceCommunitiesSection = isWelcomeMode ? null : (
     <section className="surface-card space-y-6 px-6 py-5 shadow-subtle">
       <div>
-        <h2 className="text-2xl font-bold text-gray-900">All Communities in {selectedBrowserProvinceName}</h2>
-        <p className="mt-2 text-sm text-gray-600">Browse every community in the selected province and jump straight to the map or community page.</p>
+        <h2 className="text-2xl font-bold text-gray-900">All Chambers of Citizens in {selectedBrowserProvinceName}</h2>
+        <p className="mt-2 text-sm text-gray-600">Browse every chamber of citizens in the selected province and jump straight to the map or chamber page.</p>
       </div>
 
       <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-end">
         <div>
-          <label className="text-sm font-medium text-slate-700">Filter communities</label>
+          <label className="text-sm font-medium text-slate-700">Filter chambers of citizens</label>
           <input
             type="text"
             className="mt-1 w-full rounded-2xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 focus:border-[var(--cc-primary)] focus:outline-none focus:ring-2 focus:ring-red-200"
             value={provinceCommunityFilter}
             onChange={(event) => setProvinceCommunityFilter(event.target.value)}
-            placeholder={hasMounted ? 'Type a community name, for example Aur' : undefined}
+            placeholder={hasMounted ? 'Type a chamber name, for example Aur' : undefined}
           />
         </div>
 
@@ -2348,7 +2348,7 @@ export function CommunitiesView({ mode = 'default' }: { mode?: CommunitiesPageMo
                 onClick={resetWelcomeHomeConfirmation}
                 disabled={welcomeAutoSaving}
               >
-                Choose another community
+                Choose another chamber
               </button>
               <button
                 type="button"
@@ -2356,7 +2356,7 @@ export function CommunitiesView({ mode = 'default' }: { mode?: CommunitiesPageMo
                 onClick={() => void confirmWelcomeHomeCommunity()}
                 disabled={welcomeAutoSaving}
               >
-                {welcomeAutoSaving ? 'Saving…' : 'Confirm home community'}
+                {welcomeAutoSaving ? 'Saving…' : 'Confirm home chamber'}
               </button>
             </div>
           </div>
@@ -2374,7 +2374,7 @@ export function CommunitiesView({ mode = 'default' }: { mode?: CommunitiesPageMo
             />
             <div>
               <div className="text-sm font-semibold text-gray-900">Setting up your account…</div>
-              <div className="mt-0.5 text-xs text-gray-500">Saving your home community and preparing your feed.</div>
+              <div className="mt-0.5 text-xs text-gray-500">Saving your home chamber and preparing your feed.</div>
             </div>
           </div>
         </div>
@@ -2401,16 +2401,16 @@ export function CommunitiesView({ mode = 'default' }: { mode?: CommunitiesPageMo
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/65 px-4 py-6 backdrop-blur-sm" aria-modal="true" role="dialog">
       <div className="w-full max-w-2xl rounded-[28px] border border-white/15 bg-white shadow-[0_32px_120px_rgba(15,23,42,0.38)]">
         <div className="border-b border-slate-200 px-6 py-5 sm:px-8">
-          <h2 className="text-2xl font-bold text-slate-950">Change home community?</h2>
+          <h2 className="text-2xl font-bold text-slate-950">Change home chamber?</h2>
         </div>
 
         <div className="space-y-5 px-6 py-6 sm:px-8">
           <div className="space-y-3 text-sm leading-6 text-slate-700">
             <p>
-              Setting your home community will change your membership status, and set your current home community to following. You will still receive relatively the same feeds, but priority is given to your home community.
+              Setting your home chamber will change your membership status, and set your current home chamber to following. You will still receive relatively the same feeds, but priority is given to your home chamber.
             </p>
             <p>
-              Are you sure you wish to change your home community to <span className="font-semibold text-slate-900">{pendingHomeChangeConfirmation.communityName}</span>?
+              Are you sure you wish to change your home chamber to <span className="font-semibold text-slate-900">{pendingHomeChangeConfirmation.communityName}</span>?
             </p>
           </div>
 

@@ -31,7 +31,7 @@ export default function OrganizationsManagerPage() {
         options={communityOptions}
         selectedKey={selectedCommunityKey}
         onSelectedKeyChange={setSelectedCommunityKey}
-        emptyMessage="Follow a community first to create organizations."
+        emptyMessage="Follow a chamber of citizens first to create organizations."
         errorMessage="Unable to load organizations right now."
       >
         {selectedCommunity ? (
