@@ -12,6 +12,9 @@ export type CivilAiServerConfig = {
   name: string
   baseUrl: string
   provider: string | null
+  apiKey: string | null
+  defaultModel: string | null
+  apiVersion: string | null
   enabled: boolean
   default: boolean
 }
@@ -37,7 +40,7 @@ export const CivilAiChatInput = z.object({
 export type CivilAiChatInputPayload = z.infer<typeof CivilAiChatInput>
 
 export type CivilAiCardReference = {
-  kind: 'community' | 'event' | 'job' | 'market' | 'organization' | 'post'
+  kind: 'cause' | 'community' | 'event' | 'feature' | 'job' | 'market' | 'organization' | 'post' | 'topic'
   id: string
   title: string
   subtitle: string | null
@@ -205,12 +208,15 @@ export type CivilAiJobRow = {
   updated_at: Date
 }
 
-export const CIVIL_AI_MEMORY_USER_TURN_LIMIT = 6
+export const CIVIL_AI_MEMORY_USER_TURN_LIMIT = 5
 export const CIVIL_AI_HISTORY_LIMIT = CIVIL_AI_MEMORY_USER_TURN_LIMIT * 2
 export const CIVIL_AI_SERVER_TIMEOUT_MS = 45000
-export const CIVIL_AI_MAX_REFERENCE_CARDS = 3
+export const CIVIL_AI_MAX_REFERENCE_CARDS = 2
 
 const CIVIL_AI_DATA_KEY = (process.env.CIVIL_AI_DATA_KEY || '').trim()
+const CIVIL_AI_API_KEY = (process.env.CIVIL_AI_API_KEY || '').trim()
+const CIVIL_AI_MODEL = (process.env.CIVIL_AI_MODEL || '').trim()
+const CIVIL_AI_API_VERSION = (process.env.CIVIL_AI_API_VERSION || '').trim()
 const CIVIL_AI_MODEL_CACHE_TTL_MS = 5 * 60 * 1000
 const CIVIL_AI_MAX_PROMPT_CHARS = 12000
 const CIVIL_AI_MAX_SYSTEM_PROMPT_CHARS = 8500
@@ -319,6 +325,9 @@ export function createCivilAiCoreHelpers(deps: CivilAiRuntimeDeps) {
       name: (process.env.CIVIL_AI_SERVER_NAME || '').trim() || 'Civil AI Env Server',
       baseUrl,
       provider: (process.env.CIVIL_AI_PROVIDER || '').trim() || 'lm-studio',
+      apiKey: CIVIL_AI_API_KEY || null,
+      defaultModel: CIVIL_AI_MODEL || null,
+      apiVersion: CIVIL_AI_API_VERSION || null,
       enabled: true,
       default: true,
     }
@@ -385,15 +394,7 @@ export function createCivilAiCoreHelpers(deps: CivilAiRuntimeDeps) {
 
   function selectCivilAiActiveMessages(messages: CivilAiPromptMessage[]): CivilAiActivePromptMessage[] {
     const nonSystemMessages = messages.filter((message): message is CivilAiActivePromptMessage => message.role !== 'system')
-    const trimmed = trimCivilAiConversationEntries(nonSystemMessages, CIVIL_AI_MEMORY_USER_TURN_LIMIT)
-    const latestUser = getCivilAiLatestUserMessage(trimmed)
-    if (!latestUser) return trimmed
-
-    if (!isCivilAiContinuationMessage(latestUser.content)) {
-      return [{ role: 'user', content: latestUser.content }]
-    }
-
-    return trimmed.slice(-4)
+    return trimCivilAiConversationEntries(nonSystemMessages, CIVIL_AI_MEMORY_USER_TURN_LIMIT)
   }
 
   function buildCivilAiEffectiveQuestion(messages: CivilAiPromptMessage[]) {
@@ -426,12 +427,15 @@ export function createCivilAiCoreHelpers(deps: CivilAiRuntimeDeps) {
                 if (!reference || typeof reference !== 'object' || Array.isArray(reference)) return null
                 const candidate = reference as Record<string, unknown>
                 const kind =
+                  candidate.kind === 'cause' ||
                   candidate.kind === 'community' ||
                   candidate.kind === 'event' ||
+                  candidate.kind === 'feature' ||
                   candidate.kind === 'job' ||
                   candidate.kind === 'market' ||
                   candidate.kind === 'organization' ||
-                  candidate.kind === 'post'
+                  candidate.kind === 'post' ||
+                  candidate.kind === 'topic'
                     ? candidate.kind
                     : null
                 const id = typeof candidate.id === 'string' ? candidate.id.trim() : ''
@@ -488,6 +492,9 @@ export function createCivilAiCoreHelpers(deps: CivilAiRuntimeDeps) {
       name: 'Local LM Studio',
       baseUrl: 'http://127.0.0.1:1234',
       provider: 'lm-studio',
+      apiKey: CIVIL_AI_API_KEY || null,
+      defaultModel: CIVIL_AI_MODEL || null,
+      apiVersion: CIVIL_AI_API_VERSION || null,
       enabled: true,
       default: true,
     }
@@ -510,6 +517,17 @@ export function createCivilAiCoreHelpers(deps: CivilAiRuntimeDeps) {
           name,
           baseUrl,
           provider: typeof entry.provider === 'string' ? entry.provider.trim() : null,
+          apiKey: typeof entry.apiKey === 'string' && entry.apiKey.trim() ? entry.apiKey.trim() : CIVIL_AI_API_KEY || null,
+          defaultModel:
+            typeof entry.defaultModel === 'string' && entry.defaultModel.trim()
+              ? entry.defaultModel.trim()
+              : typeof entry.model === 'string' && entry.model.trim()
+                ? entry.model.trim()
+                : CIVIL_AI_MODEL || null,
+          apiVersion:
+            typeof entry.apiVersion === 'string' && entry.apiVersion.trim()
+              ? entry.apiVersion.trim()
+              : CIVIL_AI_API_VERSION || null,
           enabled: entry.enabled !== false,
           default: entry.default === true || defaultServerId === id,
         }
@@ -795,6 +813,19 @@ export function createCivilAiCoreHelpers(deps: CivilAiRuntimeDeps) {
     timeoutMs?: number | null
     signal?: AbortSignal
   }) {
+    const headers: Record<string, string> = {}
+    if (args.body) {
+      headers['content-type'] = 'application/json'
+    }
+    if (args.server.apiKey) {
+      const normalizedProvider = (args.server.provider || '').trim().toLowerCase()
+      if (normalizedProvider === 'azure-openai' || normalizedProvider.includes('azure')) {
+        headers['api-key'] = args.server.apiKey
+      } else {
+        headers.authorization = args.server.apiKey.startsWith('Bearer ') ? args.server.apiKey : `Bearer ${args.server.apiKey}`
+      }
+    }
+
     const timeoutMs = args.timeoutMs === undefined ? CIVIL_AI_SERVER_TIMEOUT_MS : args.timeoutMs
     const controller = new AbortController()
     const onAbort = () => controller.abort(args.signal?.reason)
@@ -811,7 +842,7 @@ export function createCivilAiCoreHelpers(deps: CivilAiRuntimeDeps) {
     try {
       response = await fetch(`${args.server.baseUrl}${args.path}`, {
         method: args.method ?? (args.body ? 'POST' : 'GET'),
-        headers: args.body ? { 'content-type': 'application/json' } : undefined,
+        headers: Object.keys(headers).length ? headers : undefined,
         body: args.body ? JSON.stringify(args.body) : undefined,
         signal: controller.signal,
       })
@@ -887,9 +918,17 @@ export function createCivilAiCoreHelpers(deps: CivilAiRuntimeDeps) {
 
   async function resolveCivilAiModel(server: CivilAiServerConfig, preferredModel?: string | null) {
     if (preferredModel?.trim()) return preferredModel.trim()
+    if (server.defaultModel?.trim()) return server.defaultModel.trim()
 
     const cached = civilAiResolvedModelCache.get(server.id)
     if (cached && cached.expiresAt > Date.now()) return cached.model
+
+    const normalizedProvider = (server.provider || '').trim().toLowerCase()
+    if (normalizedProvider === 'azure-openai' || normalizedProvider.includes('azure')) {
+      // Azure v1 model catalogs do not guarantee deployed model names; require an explicit deployment/model.
+      civilAiResolvedModelCache.set(server.id, { model: null, expiresAt: Date.now() + 10_000 })
+      return null
+    }
 
     const upstream = await callCivilAiServerWithPathFallback({ server, paths: ['/v1/models', '/api/v1/models'], method: 'GET' })
     if (!upstream.ok) {

@@ -1,6 +1,8 @@
 import { prisma } from '@civil/db'
-import { Prisma, BusinessStatus } from '@prisma/client'
+import { Prisma, BusinessStatus, ModerationStatus } from '@prisma/client'
+import { normalizeHashtagSlug } from '@civil/shared'
 import type { CivilAiCardReference } from './civilAiCore.js'
+import type { CauseSummary } from './causes.js'
 
 export type CivilAiOrganizationDataItem = {
   id: string
@@ -104,6 +106,34 @@ export type CivilAiMarketDataItem = {
   imageUrl: string | null
 }
 
+export type CivilAiCauseDataItem = {
+  id: string
+  title: string | null
+  excerpt: string | null
+  imageUrl: string | null
+  communityName: string | null
+  provinceName: string | null
+  href: string
+  author: {
+    handle: string
+    name: string | null
+    avatarUrl: string | null
+  }
+  goalAmountCents: number | null
+  raisedAmountCents: number | null
+  progressPercent: number | null
+  status: 'active' | 'funded' | 'closed' | null
+}
+
+export type CivilAiTopicDataItem = {
+  id: string
+  slug: string
+  href: string
+  recentPostCount: number
+  communityName: string | null
+  provinceName: string | null
+}
+
 type CivilAiCommunityLike = {
   id: string
   provinceCode: string
@@ -144,6 +174,7 @@ type CivilAiSourcesDeps = {
     organization: { name: string; slug: string; logoUrl: string | null; coverUrl?: string | null; isVerified: boolean } | null
   }
   getCanonicalPaths: (post: unknown) => { community: string | null }
+  loadCauseSummariesByPostIds: (postIds: string[]) => Promise<Record<string, CauseSummary>>
 }
 
 export function createCivilAiSources(deps: CivilAiSourcesDeps) {
@@ -164,6 +195,163 @@ export function createCivilAiSources(deps: CivilAiSourcesDeps) {
 
     const items = (await deps.loadFeedActivityJobs({ communityKeys: [parsed.id], organizationIds: [], limit: Math.max(limit * 2, 12) })).slice(0, limit)
     return { community: parsed, items }
+  }
+
+  async function loadCivilAiCommunityCauses(communityId: string, limit: number, query?: string) {
+    const parsed = deps.parseCivilAiCommunityId(communityId)
+    if (!parsed) return { error: 'community_not_found' as const }
+
+    const normalizedQuery = deps.normalizeSearchTerm(query ?? '')
+    type CivilAiCauseRow = Prisma.PostGetPayload<{
+      include: {
+        author: true
+        business: true
+      }
+    }>
+
+    const posts: CivilAiCauseRow[] = await prisma.post.findMany({
+      where: {
+        type: 'cause',
+        visibility: 'public',
+        moderationStatus: ModerationStatus.VISIBLE,
+        provinceCode: parsed.provinceCode,
+        communitySlug: parsed.communitySlug,
+      },
+      orderBy: [{ lastActivityAt: 'desc' }, { createdAt: 'desc' }],
+      take: Math.max(limit * 4, 24),
+      include: {
+        author: true,
+        business: true,
+      },
+    })
+
+    const causeByPost = await deps.loadCauseSummariesByPostIds(posts.map((post) => post.id))
+    const ranked: Array<{ item: CivilAiCauseDataItem; score: number; createdAt: number }> = []
+
+    for (const post of posts) {
+      const formatted = deps.formatPost(post as unknown)
+      const href = deps.buildCivilPostHref(deps.getCanonicalPaths(post as unknown).community)
+      if (!href) continue
+
+      const cause = causeByPost[post.id] ?? null
+      const item = {
+        id: post.id,
+        title: formatted.title,
+        excerpt: deps.truncatePreviewText(deps.stripHtmlToPlainText(post.body ?? ''), 220) || null,
+        imageUrl: formatted.images?.[0] ?? formatted.mediaUrl ?? formatted.organization?.coverUrl ?? formatted.organization?.logoUrl ?? null,
+        communityName: formatted.communityName,
+        provinceName: formatted.provinceName,
+        href,
+        author: {
+          handle: formatted.author.handle,
+          name: formatted.author.name,
+          avatarUrl: formatted.author.avatarUrl,
+        },
+        goalAmountCents: cause?.goalAmountCents ?? null,
+        raisedAmountCents: cause?.raisedAmountCents ?? null,
+        progressPercent: cause?.progressPercent ?? null,
+        status: cause?.status ?? null,
+      } satisfies CivilAiCauseDataItem
+
+      const textScore = normalizedQuery
+        ? deps.scoreSearchTextMatch(
+            deps.buildSearchableText(
+              post.title,
+              deps.stripHtmlToPlainText(post.body ?? ''),
+              post.author.name,
+              post.author.handle,
+              post.business?.name,
+              cause?.status ?? '',
+            ),
+            normalizedQuery,
+          )
+        : 0
+
+      const statusBoost = cause?.status === 'active' ? 24 : cause?.status === 'funded' ? 10 : 4
+      const progressBoost = Math.min(12, Math.round((cause?.progressPercent ?? 0) / 10))
+      const score = textScore + statusBoost + progressBoost
+      if (normalizedQuery && textScore <= 0) continue
+      ranked.push({ item, score, createdAt: post.createdAt.getTime() })
+    }
+
+    ranked.sort((a, b) => {
+      const scoreDelta = b.score - a.score
+      if (scoreDelta !== 0) return scoreDelta
+      return b.createdAt - a.createdAt
+    })
+
+    return {
+      community: parsed,
+      items: ranked.slice(0, limit).map((entry) => entry.item),
+    }
+  }
+
+  async function loadCivilAiCommunityTopics(communityId: string, limit: number, query?: string) {
+    const parsed = deps.parseCivilAiCommunityId(communityId)
+    if (!parsed) return { error: 'community_not_found' as const }
+
+    const normalizedQuery = deps.normalizeSearchTerm(query ?? '')
+    const posts = await prisma.post.findMany({
+      where: {
+        visibility: 'public',
+        moderationStatus: ModerationStatus.VISIBLE,
+        provinceCode: parsed.provinceCode,
+        communitySlug: parsed.communitySlug,
+        hashtags: {
+          some: {},
+        },
+      },
+      orderBy: [{ createdAt: 'desc' }],
+      take: 300,
+      select: {
+        hashtags: {
+          select: {
+            tag: true,
+          },
+        },
+      },
+    })
+
+    const counts = new Map<string, number>()
+    for (const post of posts) {
+      for (const hashtag of post.hashtags) {
+        const slug = normalizeHashtagSlug(hashtag.tag)
+        if (!slug) continue
+        counts.set(slug, (counts.get(slug) ?? 0) + 1)
+      }
+    }
+
+    const ranked: Array<{ item: CivilAiTopicDataItem; score: number }> = []
+    for (const [slug, recentPostCount] of counts.entries()) {
+      const searchableTopic = slug.replace(/-/g, ' ')
+      const textScore = normalizedQuery
+        ? deps.scoreSearchTextMatch(deps.buildSearchableText(slug, searchableTopic), normalizedQuery)
+        : 0
+      if (normalizedQuery && textScore <= 0) continue
+
+      ranked.push({
+        item: {
+          id: slug,
+          slug,
+          href: `/t/${encodeURIComponent(slug)}`,
+          recentPostCount,
+          communityName: parsed.communityName,
+          provinceName: parsed.provinceName,
+        },
+        score: textScore + recentPostCount,
+      })
+    }
+
+    ranked.sort((a, b) => {
+      const scoreDelta = b.score - a.score
+      if (scoreDelta !== 0) return scoreDelta
+      return a.item.slug.localeCompare(b.item.slug)
+    })
+
+    return {
+      community: parsed,
+      items: ranked.slice(0, limit).map((entry) => entry.item),
+    }
   }
 
   async function loadCivilAiCommunityOrganizations(communityId: string, limit: number, query?: string) {
@@ -416,6 +604,30 @@ export function createCivilAiSources(deps: CivilAiSourcesDeps) {
     }
   }
 
+  function toCivilAiCauseReference(cause: CivilAiCauseDataItem): CivilAiCardReference {
+    const fundingLabel = typeof cause.goalAmountCents === 'number' && cause.goalAmountCents > 0
+      ? `${Math.round(cause.progressPercent ?? 0)}% funded`
+      : cause.status === 'funded'
+        ? 'Funded'
+        : cause.status === 'closed'
+          ? 'Closed'
+          : 'Cause'
+    const raisedLabel = typeof cause.raisedAmountCents === 'number'
+      ? `$${(cause.raisedAmountCents / 100).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })} raised`
+      : null
+
+    return {
+      kind: 'cause',
+      id: cause.id,
+      title: cause.title || `Cause by ${cause.author.name || `@${cause.author.handle}`}`,
+      subtitle: [cause.communityName, cause.provinceName].filter(Boolean).join(', ') || `@${cause.author.handle}`,
+      summary: [fundingLabel, raisedLabel].filter(Boolean).join(' • ') || cause.excerpt,
+      href: cause.href,
+      imageUrl: cause.imageUrl ?? cause.author.avatarUrl ?? null,
+      badge: 'Cause',
+    }
+  }
+
   function toCivilAiOrganizationReference(org: {
     id: string
     name: string
@@ -462,16 +674,33 @@ export function createCivilAiSources(deps: CivilAiSourcesDeps) {
     }
   }
 
+  function toCivilAiTopicReference(topic: CivilAiTopicDataItem): CivilAiCardReference {
+    return {
+      kind: 'topic',
+      id: topic.id,
+      title: `#${topic.slug}`,
+      subtitle: [topic.communityName, topic.provinceName].filter(Boolean).join(', ') || 'Civil topic',
+      summary: topic.recentPostCount === 1 ? '1 recent local post' : `${topic.recentPostCount} recent local posts`,
+      href: topic.href,
+      imageUrl: null,
+      badge: 'Topic',
+    }
+  }
+
   return {
+    loadCivilAiCommunityCauses,
     loadCivilAiCommunityEvents,
     loadCivilAiCommunityJobs,
     loadCivilAiCommunityOrganizations,
     loadCivilAiCommunityPosts,
+    loadCivilAiCommunityTopics,
+    toCivilAiCauseReference,
     toCivilAiCommunityReference,
     toCivilAiEventReference,
     toCivilAiJobReference,
     toCivilAiMarketReference,
     toCivilAiOrganizationReference,
     toCivilAiPostReference,
+    toCivilAiTopicReference,
   }
 }

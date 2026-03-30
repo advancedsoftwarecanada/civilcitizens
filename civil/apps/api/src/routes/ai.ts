@@ -2,6 +2,7 @@ import { prisma } from '@civil/db'
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 import { randomUUID } from 'crypto'
 import { z } from 'zod'
+import type { CivilAiServerConfig } from '../civilAiCore.js'
 
 const CivilAiModelsQuery = z.object({
   serverId: z.string().trim().min(1).optional(),
@@ -76,13 +77,15 @@ type AiRoutesDeps = {
   formatCivilAiChatJobPayload: (job: CivilAiChatJobLike) => unknown
   loadActiveCivilAiChatJobForUser: (userId: string) => Promise<CivilAiChatJobLike | null>
   loadCivilAiChatJob: (jobId: string) => Promise<CivilAiChatJobLike | null>
+  loadCivilAiCommunityCauses: (communityId: string, limit: number, query?: string) => Promise<{ error: string } | { community: unknown; items: unknown[] }>
   loadCivilAiCommunityEvents: (communityId: string, when: 'today' | 'upcoming', limit: number) => Promise<{ error: string } | { community: unknown; items: unknown[] }>
   loadCivilAiCommunityJobs: (communityId: string, limit: number) => Promise<{ error: string } | { community: unknown; items: unknown[] }>
   loadCivilAiCommunityOrganizations: (communityId: string, limit: number, query?: string) => Promise<{ error: string } | { community: unknown; items: unknown[] }>
   loadCivilAiCommunityPosts: (communityId: string, limit: number, query?: string, viewerFeedContext?: unknown | null) => Promise<{ error: string } | { community: unknown; items: unknown[] }>
+  loadCivilAiCommunityTopics: (communityId: string, limit: number, query?: string) => Promise<{ error: string } | { community: unknown; items: unknown[] }>
   loadCivilAiServersConfig: () => Promise<{
     defaultServerId: string | null
-    servers: unknown[]
+    servers: CivilAiServerConfig[]
     configPath: string
   }>
   loadCivilAiViewerContext: (userId: string) => Promise<{ feedContext?: unknown | null } | null>
@@ -91,16 +94,18 @@ type AiRoutesDeps = {
   parseCivilAiCommunityId: (value: string) => unknown | null
   readCivilAiHistory: (meta: unknown) => unknown[]
   readCivilAiInstructions: () => Promise<{ instructionsPath: string }>
-  resolveCivilAiServer: (serverId?: string) => Promise<{ server: unknown | null }>
+  resolveCivilAiServer: (serverId?: string) => Promise<{ server: CivilAiServerConfig | null }>
   resolveUserId: (req: FastifyRequest) => Promise<string | null>
   scheduleCivilAiChatJob: (jobId: string) => void
   searchMarketListingsForQuery: (query: string, limit: number) => Promise<unknown[]>
+  toCivilAiCauseReference: (item: unknown) => CivilAiCardReferenceLike
   toCivilAiCommunityReference: (community: unknown) => unknown
   toCivilAiEventReference: (item: unknown) => CivilAiCardReferenceLike
   toCivilAiJobReference: (item: unknown) => CivilAiCardReferenceLike | null
   toCivilAiMarketReference: (item: unknown) => CivilAiCardReferenceLike
   toCivilAiOrganizationReference: (item: unknown) => CivilAiCardReferenceLike | null
   toCivilAiPostReference: (item: unknown) => CivilAiCardReferenceLike
+  toCivilAiTopicReference: (item: unknown) => CivilAiCardReferenceLike
   withSchemaGuard: (req: FastifyRequest, reply: FastifyReply, action: () => Promise<unknown>) => RouteActionResult
 }
 
@@ -218,6 +223,29 @@ export function registerAiRoutes(app: FastifyInstance, deps: AiRoutesDeps) {
     }),
   )
 
+  app.get('/ai/causes/:communityId', async (req: FastifyRequest, reply: FastifyReply) =>
+    deps.withSchemaGuard(req, reply, async () => {
+      const access = await deps.authorizeCivilAiDataRequest(req)
+      if (access && 'error' in access) return reply.code(403).send({ error: access.error })
+      if (!access) return reply.code(401).send({ error: 'unauthorized' })
+
+      const params = CivilAiCommunityIdParams.safeParse(req.params)
+      const query = CivilAiSearchableDataQuery.safeParse(req.query ?? {})
+      if (!params.success) return reply.code(400).send({ error: params.error.flatten() })
+      if (!query.success) return reply.code(400).send({ error: query.error.flatten() })
+
+      const result = await deps.loadCivilAiCommunityCauses(params.data.communityId, query.data.limit, query.data.q)
+      if ('error' in result) return reply.code(404).send({ error: result.error })
+
+      return reply.send({
+        community: result.community,
+        query: query.data.q ?? null,
+        items: result.items,
+        cards: result.items.map((item) => deps.toCivilAiCauseReference(item)),
+      })
+    }),
+  )
+
   app.get('/ai/market', async (req: FastifyRequest, reply: FastifyReply) =>
     deps.withSchemaGuard(req, reply, async () => {
       const access = await deps.authorizeCivilAiDataRequest(req)
@@ -292,6 +320,29 @@ export function registerAiRoutes(app: FastifyInstance, deps: AiRoutesDeps) {
     }),
   )
 
+  app.get('/ai/topics/:communityId', async (req: FastifyRequest, reply: FastifyReply) =>
+    deps.withSchemaGuard(req, reply, async () => {
+      const access = await deps.authorizeCivilAiDataRequest(req)
+      if (access && 'error' in access) return reply.code(403).send({ error: access.error })
+      if (!access) return reply.code(401).send({ error: 'unauthorized' })
+
+      const params = CivilAiCommunityIdParams.safeParse(req.params)
+      const query = CivilAiSearchableDataQuery.safeParse(req.query ?? {})
+      if (!params.success) return reply.code(400).send({ error: params.error.flatten() })
+      if (!query.success) return reply.code(400).send({ error: query.error.flatten() })
+
+      const result = await deps.loadCivilAiCommunityTopics(params.data.communityId, query.data.limit, query.data.q)
+      if ('error' in result) return reply.code(404).send({ error: result.error })
+
+      return reply.send({
+        community: result.community,
+        query: query.data.q ?? null,
+        items: result.items,
+        cards: result.items.map((item) => deps.toCivilAiTopicReference(item)),
+      })
+    }),
+  )
+
   app.get('/ai/models', async (req: FastifyRequest, reply: FastifyReply) =>
     deps.withSchemaGuard(req, reply, async () => {
       const query = CivilAiModelsQuery.safeParse(req.query ?? {})
@@ -299,6 +350,18 @@ export function registerAiRoutes(app: FastifyInstance, deps: AiRoutesDeps) {
 
       const resolved = await deps.resolveCivilAiServer(query.data.serverId)
       if (!resolved.server) return reply.code(503).send({ error: 'no_ai_server_available' })
+
+      if (resolved.server.defaultModel?.trim()) {
+        return reply.send({
+          items: [
+            {
+              id: resolved.server.defaultModel.trim(),
+              name: resolved.server.defaultModel.trim(),
+              loaded: true,
+            },
+          ],
+        })
+      }
 
       const upstream = await deps.callCivilAiServerWithPathFallback({ server: resolved.server, paths: ['/v1/models', '/api/v1/models'], method: 'GET' })
       if (!upstream.ok) {
