@@ -5,8 +5,11 @@ import { getAuthedEntryPath } from '../_lib/me'
 import { ensureViewerMe } from '../_lib/viewerMe'
 import { FAMILY_PARENT_TOKEN_KEY } from '../_lib/authSession'
 import { readStoredFamilyView } from '../_lib/familyView'
-import { resolvePendingPushRedirectOrFallback } from '../_lib/pendingPushRedirect'
+import { resolvePendingPushRedirectOrFallback, setPendingPushRedirect } from '../_lib/pendingPushRedirect'
 import { useViewerStore } from '../_lib/viewerStore'
+import { ensureNativeNotificationTapListener, getLastNativeNotificationTapUrl } from '../_lib/nativePush'
+import { normalizePushDeepLinkUrl } from '../_lib/pushDeepLink'
+import { emitPushUiReset } from '../_lib/pushNavigation'
 
 export default function AutoRedirect() {
   const router = useRouter()
@@ -33,36 +36,46 @@ export default function AutoRedirect() {
       return
     }
 
-    const storedFamilyView = readStoredFamilyView()
-    const storedParentToken = window.localStorage.getItem(FAMILY_PARENT_TOKEN_KEY)
-    if (storedFamilyView && storedParentToken) {
-      didNavigateRef.current = true
-      router.replace(storedFamilyView.suspended ? '/suspended' : '/home')
-      return
-    }
-
-    // Always resolve the active token before routing from the public landing page.
-    // Family locked sessions can swap tokens underneath an older cached viewer object.
-    if (!hydrated) return
-
     let cancelled = false
 
-    ensureViewerMe({ token, refresh: true, cache: 'no-store' })
-      .then((data) => {
-        if (cancelled) return
-        if (didNavigateRef.current) return
-        if (!data) {
-          document.documentElement.classList.remove('cc-launch-pending')
-          return
-        }
+    const redirectFromLanding = async () => {
+      await ensureNativeNotificationTapListener().catch(() => undefined)
+
+      const nextPushUrl = normalizePushDeepLinkUrl(await getLastNativeNotificationTapUrl().catch(() => null))
+      if (!cancelled && nextPushUrl) {
+        setPendingPushRedirect(nextPushUrl)
+        emitPushUiReset(nextPushUrl)
+      }
+
+      const storedFamilyView = readStoredFamilyView()
+      const storedParentToken = window.localStorage.getItem(FAMILY_PARENT_TOKEN_KEY)
+      if (storedFamilyView && storedParentToken) {
+        if (cancelled || didNavigateRef.current) return
         didNavigateRef.current = true
-        router.replace(resolvePendingPushRedirectOrFallback(getAuthedEntryPath(data)))
-      })
-      .catch(() => {
-        if (!cancelled) {
-          document.documentElement.classList.remove('cc-launch-pending')
-        }
-      })
+        router.replace(resolvePendingPushRedirectOrFallback(storedFamilyView.suspended ? '/suspended' : '/home'))
+        return
+      }
+
+      // Always resolve the active token before routing from the public landing page.
+      // Family locked sessions can swap tokens underneath an older cached viewer object.
+      if (!hydrated) return
+
+      const data = await ensureViewerMe({ token, refresh: true, cache: 'no-store' })
+      if (cancelled) return
+      if (didNavigateRef.current) return
+      if (!data) {
+        document.documentElement.classList.remove('cc-launch-pending')
+        return
+      }
+      didNavigateRef.current = true
+      router.replace(resolvePendingPushRedirectOrFallback(getAuthedEntryPath(data)))
+    }
+
+    void redirectFromLanding().catch(() => {
+      if (!cancelled) {
+        document.documentElement.classList.remove('cc-launch-pending')
+      }
+    })
 
     return () => {
       cancelled = true

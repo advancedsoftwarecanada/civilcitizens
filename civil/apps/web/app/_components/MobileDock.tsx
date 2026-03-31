@@ -37,6 +37,7 @@ import { hasFamilyProfilesAvailable } from '../_lib/me'
 import OrganizationRailCard from '../com/_components/OrganizationRailCard'
 import { clearFamilyView } from '../_lib/familyView'
 import { useMobileKeyboardState } from '../_lib/mobileKeyboard'
+import { PUSH_UI_RESET_EVENT } from '../_lib/pushNavigation'
 
 const DEFAULT_NAV_BUTTONS: Array<{
   key: 'home' | 'cart' | 'messages' | 'notifications' | 'ai' | 'more' | 'friends'
@@ -439,6 +440,17 @@ export default function MobileDock() {
     window.addEventListener(MOBILE_MORE_DRAWER_CLOSE_EVENT, handleCloseMoreEvent)
     return () => window.removeEventListener(MOBILE_MORE_DRAWER_CLOSE_EVENT, handleCloseMoreEvent)
   }, [handleCloseMore])
+
+  useEffect(() => {
+    const handlePushUiReset = () => {
+      setMenuSearchFocused(false)
+      if (menuMountedRef.current) handleCloseMenu()
+      if (moreMountedRef.current) handleCloseMore()
+    }
+
+    window.addEventListener(PUSH_UI_RESET_EVENT, handlePushUiReset)
+    return () => window.removeEventListener(PUSH_UI_RESET_EVENT, handlePushUiReset)
+  }, [handleCloseMenu, handleCloseMore])
 
   const handleMenuSearchFocus = useCallback(() => {
     if (menuSearchBlurTimeoutRef.current) {
