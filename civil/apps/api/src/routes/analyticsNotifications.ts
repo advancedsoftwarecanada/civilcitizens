@@ -135,6 +135,22 @@ function formatMoney(cents: number) {
   return new Intl.NumberFormat('en-CA', { style: 'currency', currency: 'CAD' }).format((Number(cents) || 0) / 100)
 }
 
+function readNotificationPayloadRecord(value: Prisma.JsonValue | null | undefined): Record<string, unknown> {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {}
+}
+
+function normalizeRequestResolutionStatus(value: unknown): 'pending' | 'accepted' | 'rejected' | null {
+  if (typeof value !== 'string') return null
+  const normalized = value.trim().toLowerCase()
+  if (!normalized) return null
+  if (normalized === 'pending') return 'pending'
+  if (['accepted', 'accept', 'approved', 'confirmed', 'completed'].includes(normalized)) return 'accepted'
+  if (['rejected', 'reject', 'declined', 'dismissed', 'denied', 'cancelled', 'canceled'].includes(normalized)) return 'rejected'
+  return null
+}
+
 async function ensureDeliveryGroupThread(args: {
   tx: Prisma.TransactionClient
   deps: AnalyticsNotificationDeps
@@ -196,6 +212,62 @@ async function ensureDeliveryGroupThread(args: {
 }
 
 export function registerAnalyticsNotificationRoutes(app: FastifyInstance, deps: AnalyticsNotificationDeps) {
+  const syncResolvedRequestNotifications = async (args: {
+    notificationType: string
+    notificationUserId: string
+    actorId: string | null
+    payloadIdKey?: string
+    entityId?: string | null
+    nextStatus: 'accepted' | 'rejected'
+    respondedAtIso: string
+    readAt?: Date
+    extraPayload?: Record<string, unknown>
+  }) => {
+    const candidateNotifications = await prisma.notification.findMany({
+      where: {
+        userId: args.notificationUserId,
+        actorId: args.actorId,
+        type: args.notificationType,
+      },
+      orderBy: { createdAt: 'desc' },
+      take: 50,
+      select: deps.NOTIFICATION_SELECT,
+    })
+
+    const matchingNotifications = candidateNotifications.filter((notification: any) => {
+      const payload = readNotificationPayloadRecord(notification.payload)
+      const status = normalizeRequestResolutionStatus(payload.status)
+      const entityId =
+        args.payloadIdKey && typeof payload[args.payloadIdKey] === 'string'
+          ? String(payload[args.payloadIdKey]).trim()
+          : ''
+
+      if (args.entityId && entityId && entityId === args.entityId) return true
+      return !entityId && (!status || status === 'pending')
+    })
+
+    if (!matchingNotifications.length) return
+
+    await prisma.$transaction(
+      matchingNotifications.map((notification: any) => {
+        const payload = readNotificationPayloadRecord(notification.payload)
+        return prisma.notification.update({
+          where: { id: notification.id },
+          data: {
+            payload: {
+              ...payload,
+              ...(args.payloadIdKey && args.entityId ? { [args.payloadIdKey]: args.entityId } : {}),
+              ...args.extraPayload,
+              status: args.nextStatus,
+              respondedAt: args.respondedAtIso,
+            } as Prisma.InputJsonValue,
+            readAt: notification.readAt ?? args.readAt ?? new Date(args.respondedAtIso),
+          },
+        })
+      }),
+    )
+  }
+
   app.post('/analytics/track', async (req: FastifyRequest, reply: FastifyReply) => {
     const parse = deps.TrackViewInput.safeParse(req.body)
     if (!parse.success) {
@@ -248,15 +320,24 @@ export function registerAnalyticsNotificationRoutes(app: FastifyInstance, deps: 
           const connection = await deps.findConnectionById(connectionId)
           if (!connection) return reply.code(404).send({ error: 'connection_not_found' })
           if (connection.addresseeId !== userId) return reply.code(403).send({ error: 'not_addressee' })
-          if (connection.status !== 'PENDING') return reply.code(409).send({ error: 'invitation_not_pending' })
+          if (connection.status !== 'PENDING') {
+            const syncedStatus: 'accepted' | 'rejected' = connection.status === 'ACCEPTED' ? 'accepted' : 'rejected'
+            const respondedAtIso = (connection.respondedAt ?? new Date()).toISOString()
+            await syncResolvedRequestNotifications({
+              notificationType: notification.type,
+              notificationUserId: userId,
+              actorId: connection.requesterId,
+              payloadIdKey: 'connectionId',
+              entityId: connection.id,
+              nextStatus: syncedStatus,
+              respondedAtIso,
+              readAt: notification.readAt ?? new Date(respondedAtIso),
+            })
+            return reply.send({ ok: true, status: syncedStatus })
+          }
 
           const now = new Date()
           const nextStatus = body.data.action === 'accept' ? 'accepted' : 'rejected'
-          const nextPayload: Prisma.InputJsonValue = {
-            ...payload,
-            status: nextStatus,
-            respondedAt: now.toISOString(),
-          }
 
           await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
             if (body.data.action === 'accept') {
@@ -274,14 +355,17 @@ export function registerAnalyticsNotificationRoutes(app: FastifyInstance, deps: 
                 WHERE "id" = ${connection.id}
               `
             }
+          })
 
-            await tx.notification.update({
-              where: { id: notification.id },
-              data: {
-                payload: nextPayload,
-                readAt: notification.readAt ?? now,
-              },
-            })
+          await syncResolvedRequestNotifications({
+            notificationType: notification.type,
+            notificationUserId: userId,
+            actorId: connection.requesterId,
+            payloadIdKey: 'connectionId',
+            entityId: connection.id,
+            nextStatus,
+            respondedAtIso: now.toISOString(),
+            readAt: notification.readAt ?? now,
           })
 
           if (body.data.action === 'accept') {
@@ -332,17 +416,7 @@ export function registerAnalyticsNotificationRoutes(app: FastifyInstance, deps: 
 
         const nowIso = new Date().toISOString()
         const nextStatus: 'accepted' | 'rejected' = body.data.action === 'accept' ? 'accepted' : 'rejected'
-        const nextPayload: Prisma.InputJsonValue = {
-          ...payload,
-          status: nextStatus,
-          respondedAt: nowIso,
-          reciprocalRelationship: body.data.action === 'accept' ? reciprocalRelationship ?? undefined : undefined,
-          reciprocalCompleted: body.data.action === 'accept' ? Boolean(reciprocalRelationship) : false,
-        }
-
-        const writes: Prisma.PrismaPromise<unknown>[] = [
-          prisma.notification.update({ where: { id: notification.id }, data: { payload: nextPayload, readAt: notification.readAt ?? new Date() } }),
-        ]
+        const writes: Prisma.PrismaPromise<unknown>[] = []
 
         if (body.data.action === 'accept') {
           const requesterRelationships = deps.getStoredProfileFamilyRelationships(requesterUser.communityMeta)
@@ -385,6 +459,20 @@ export function registerAnalyticsNotificationRoutes(app: FastifyInstance, deps: 
         }
 
         await prisma.$transaction(writes)
+
+        await syncResolvedRequestNotifications({
+          notificationType: notification.type,
+          notificationUserId: userId,
+          actorId: requesterUser.id,
+          nextStatus,
+          respondedAtIso: nowIso,
+          readAt: notification.readAt ?? new Date(nowIso),
+          extraPayload: {
+            relationship,
+            reciprocalRelationship: body.data.action === 'accept' ? reciprocalRelationship ?? undefined : undefined,
+            reciprocalCompleted: body.data.action === 'accept' ? Boolean(reciprocalRelationship) : false,
+          },
+        })
 
         if (requesterUser.id !== userId) {
           await deps.notifyProfileFamilyInviteResponse({
@@ -471,13 +559,21 @@ export function registerAnalyticsNotificationRoutes(app: FastifyInstance, deps: 
           )
         }
 
-        const nextPayload: Prisma.InputJsonValue = { ...payload, status: nextStatus, respondedAt: nowIso }
-
         await prisma.$transaction([
           prisma.user.update({ where: { id: requesterParentId }, data: { communityMeta: requesterBaseMeta as Prisma.InputJsonValue } }),
           prisma.user.update({ where: { id: userId }, data: { communityMeta: targetBaseMeta as Prisma.InputJsonValue } }),
-          prisma.notification.update({ where: { id: notification.id }, data: { payload: nextPayload, readAt: notification.readAt ?? new Date() } }),
         ])
+
+        await syncResolvedRequestNotifications({
+          notificationType: notification.type,
+          notificationUserId: userId,
+          actorId: requesterParentId,
+          payloadIdKey: 'requestId',
+          entityId: requestId,
+          nextStatus,
+          respondedAtIso: nowIso,
+          readAt: notification.readAt ?? new Date(nowIso),
+        })
 
         return reply.send({ ok: true, status: nextStatus })
       }

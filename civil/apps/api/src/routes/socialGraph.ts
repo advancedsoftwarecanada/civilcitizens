@@ -60,7 +60,77 @@ type ConnectionRow = {
   respondedAt: Date | null
 }
 
+function readNotificationPayloadRecord(value: Prisma.JsonValue | null | undefined): Record<string, unknown> {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {}
+}
+
+function normalizeNotificationRequestStatus(value: unknown): 'pending' | 'accepted' | 'rejected' | null {
+  if (typeof value !== 'string') return null
+  const normalized = value.trim().toLowerCase()
+  if (!normalized) return null
+  if (normalized === 'pending') return 'pending'
+  if (['accepted', 'accept', 'approved', 'confirmed', 'completed'].includes(normalized)) return 'accepted'
+  if (['rejected', 'reject', 'declined', 'dismissed', 'denied', 'cancelled', 'canceled'].includes(normalized)) return 'rejected'
+  return null
+}
+
 export function registerSocialGraphRoutes(app: FastifyInstance, deps: SocialGraphDeps) {
+  const syncResolvedRequestNotifications = async (args: {
+    userId: string
+    actorId: string
+    type: string
+    payloadIdKey: 'friendshipId' | 'connectionId'
+    entityId: string
+    nextStatus: 'accepted' | 'rejected'
+    respondedAt: Date
+  }) => {
+    const candidateNotifications = await prisma.notification.findMany({
+      where: {
+        userId: args.userId,
+        actorId: args.actorId,
+        type: args.type,
+      },
+      orderBy: { createdAt: 'desc' },
+      take: 50,
+      select: deps.notificationSelect,
+    })
+
+    const matchingNotifications = candidateNotifications.filter((notification: any) => {
+      const payload = readNotificationPayloadRecord(notification.payload)
+      const payloadEntityId = payload[args.payloadIdKey]
+      const entityId = typeof payloadEntityId === 'string' ? payloadEntityId.trim() : ''
+      const status = normalizeNotificationRequestStatus(payload.status)
+      if (entityId && entityId === args.entityId) return true
+      return !entityId && (!status || status === 'pending')
+    })
+
+    if (!matchingNotifications.length) return
+
+    const respondedAtIso = args.respondedAt.toISOString()
+    const updatedNotifications = await prisma.$transaction(
+      matchingNotifications.map((notification: any) => {
+        const payload = readNotificationPayloadRecord(notification.payload)
+        return prisma.notification.update({
+          where: { id: notification.id },
+          data: {
+            payload: {
+              ...payload,
+              [args.payloadIdKey]: args.entityId,
+              status: args.nextStatus,
+              respondedAt: respondedAtIso,
+            } as Prisma.InputJsonValue,
+            readAt: notification.readAt ?? args.respondedAt,
+          },
+          select: deps.notificationSelect,
+        })
+      }),
+    )
+
+    await Promise.all(updatedNotifications.map((notification: any) => deps.dispatchNotification(notification).catch(() => undefined)))
+  }
+
   app.get('/friends', async (req: FastifyRequest, reply: FastifyReply) =>
     deps.withSchemaGuard(req, reply, async () => {
       const authContext = await deps.loadViewerAuthContext(req)
@@ -200,44 +270,15 @@ export function registerSocialGraphRoutes(app: FastifyInstance, deps: SocialGrap
         data: { status: FriendshipStatus.ACCEPTED, respondedAt: new Date() },
         include: deps.friendshipWithUsersInclude,
       })
-
-      const candidateNotifications = await prisma.notification.findMany({
-        where: {
-          userId: updated.addresseeId,
-          type: deps.friendNotificationTypes.REQUEST,
-        },
-        orderBy: { createdAt: 'desc' },
-        take: 50,
-        select: deps.notificationSelect,
+      await syncResolvedRequestNotifications({
+        userId: updated.addresseeId,
+        actorId: updated.requesterId,
+        type: deps.friendNotificationTypes.REQUEST,
+        payloadIdKey: 'friendshipId',
+        entityId: updated.id,
+        nextStatus: 'accepted',
+        respondedAt: updated.respondedAt ?? new Date(),
       })
-
-      const existingNotification =
-        candidateNotifications.find((notification: any) => {
-          const payload = notification.payload as Record<string, unknown> | null
-          return payload?.friendshipId === updated.id
-        }) ?? candidateNotifications.find((notification: any) => notification.actorId === updated.requesterId)
-
-      if (existingNotification) {
-        const basePayload: Record<string, unknown> = (() => {
-          const raw = existingNotification.payload
-          if (raw && typeof raw === 'object' && !Array.isArray(raw)) return raw as Record<string, unknown>
-          return {}
-        })()
-        const nextPayload: Record<string, unknown> = {
-          ...basePayload,
-          friendshipId: updated.id,
-          status: 'accepted',
-        }
-        const refreshed = await prisma.notification.update({
-          where: { id: existingNotification.id },
-          data: {
-            payload: nextPayload as Prisma.InputJsonValue,
-            readAt: new Date(),
-          },
-          select: deps.notificationSelect,
-        })
-        await deps.dispatchNotification(refreshed)
-      }
 
       await deps.notifyFriendAcceptance(updated.id, updated.requesterId, updated.addresseeId)
 
@@ -266,44 +307,15 @@ export function registerSocialGraphRoutes(app: FastifyInstance, deps: SocialGrap
         data: { status: FriendshipStatus.REJECTED, respondedAt: new Date() },
         include: deps.friendshipWithUsersInclude,
       })
-
-      const candidateNotifications = await prisma.notification.findMany({
-        where: {
-          userId: updated.addresseeId,
-          type: deps.friendNotificationTypes.REQUEST,
-        },
-        orderBy: { createdAt: 'desc' },
-        take: 50,
-        select: deps.notificationSelect,
+      await syncResolvedRequestNotifications({
+        userId: updated.addresseeId,
+        actorId: updated.requesterId,
+        type: deps.friendNotificationTypes.REQUEST,
+        payloadIdKey: 'friendshipId',
+        entityId: updated.id,
+        nextStatus: 'rejected',
+        respondedAt: updated.respondedAt ?? new Date(),
       })
-
-      const existingNotification =
-        candidateNotifications.find((notification: any) => {
-          const payload = notification.payload as Record<string, unknown> | null
-          return payload?.friendshipId === updated.id
-        }) ?? candidateNotifications.find((notification: any) => notification.actorId === updated.requesterId)
-
-      if (existingNotification) {
-        const basePayload: Record<string, unknown> = (() => {
-          const raw = existingNotification.payload
-          if (raw && typeof raw === 'object' && !Array.isArray(raw)) return raw as Record<string, unknown>
-          return {}
-        })()
-        const nextPayload: Record<string, unknown> = {
-          ...basePayload,
-          friendshipId: updated.id,
-          status: 'rejected',
-        }
-        const refreshed = await prisma.notification.update({
-          where: { id: existingNotification.id },
-          data: {
-            payload: nextPayload as Prisma.InputJsonValue,
-            readAt: new Date(),
-          },
-          select: deps.notificationSelect,
-        })
-        await deps.dispatchNotification(refreshed)
-      }
 
       return reply.send({ request: deps.formatFriendRequest(updated, userId) })
     }),
@@ -563,6 +575,16 @@ export function registerSocialGraphRoutes(app: FastifyInstance, deps: SocialGrap
           WHERE "id" = ${connection.id}
         `
 
+        await syncResolvedRequestNotifications({
+          userId: connection.addresseeId,
+          actorId: connection.requesterId,
+          type: 'connection_request',
+          payloadIdKey: 'connectionId',
+          entityId: connection.id,
+          nextStatus: 'accepted',
+          respondedAt: now,
+        })
+
         await deps.notifyConnectionAcceptance(connection.id, connection.requesterId, connection.addresseeId)
 
         return reply.send({
@@ -602,6 +624,16 @@ export function registerSocialGraphRoutes(app: FastifyInstance, deps: SocialGrap
           SET "status" = 'REJECTED', "respondedAt" = ${new Date()}
           WHERE "id" = ${connection.id}
         `
+
+        await syncResolvedRequestNotifications({
+          userId: connection.addresseeId,
+          actorId: connection.requesterId,
+          type: 'connection_request',
+          payloadIdKey: 'connectionId',
+          entityId: connection.id,
+          nextStatus: 'rejected',
+          respondedAt: new Date(),
+        })
 
         return reply.send({ request: { id: connection.id, status: 'REJECTED' } })
       } catch (error) {
