@@ -4,33 +4,10 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { usePathname, useRouter, useSearchParams } from 'next/navigation'
 import { clearLastNativeNotificationTapUrl, ensureNativeNotificationTapListener, getLastNativeNotificationTapUrl, getNativePlatformName } from '../_lib/nativePush'
 import { acknowledgePendingPushRedirect, markPendingPushRedirectAttempt, setPendingPushRedirect } from '../_lib/pendingPushRedirect'
-import { emitPushNavigation } from '../_lib/pushNavigation'
+import { emitPushNavigation, emitPushUiReset } from '../_lib/pushNavigation'
+import { normalizePushDeepLinkUrl } from '../_lib/pushDeepLink'
 
-function normalizeDeepLinkUrl(raw: string): string | null {
-  const trimmed = raw.trim()
-  if (!trimmed) return null
-
-  // Prefer relative in-app URLs.
-  if (trimmed.startsWith('/')) return trimmed
-
-  // Accept path-style links that omitted the leading slash (e.g. `messages?thread=...`).
-  if (/^[a-zA-Z0-9_-]+(\/|\?|#|$)/.test(trimmed)) {
-    return `/${trimmed}`
-  }
-
-  // If we receive an absolute URL (http(s) or custom scheme), strip it to a safe relative path.
-  if (/^[a-z][a-z0-9+.-]*:\/\//i.test(trimmed)) {
-    try {
-      const u = new URL(trimmed)
-      const relative = `${u.pathname}${u.search}${u.hash}`
-      return relative.startsWith('/') ? relative : null
-    } catch {
-      return null
-    }
-  }
-
-  return null
-}
+const ROUTER_REPLACE_FALLBACK_MS = 900
 
 export default function NotificationTapRouter() {
   const router = useRouter()
@@ -39,7 +16,16 @@ export default function NotificationTapRouter() {
   const currentUrl = useMemo(() => `${pathname}${searchParams ? `?${searchParams.toString()}` : ''}`, [pathname, searchParams])
 
   const isHandlingRef = useRef(false)
+  const replaceFallbackTimeoutRef = useRef<number | null>(null)
   const [nativePlatform, setNativePlatform] = useState<string | null>(() => getNativePlatformName())
+
+  useEffect(() => {
+    return () => {
+      if (replaceFallbackTimeoutRef.current) {
+        window.clearTimeout(replaceFallbackTimeoutRef.current)
+      }
+    }
+  }, [])
 
   useEffect(() => {
     if (nativePlatform) return undefined
@@ -60,6 +46,22 @@ export default function NotificationTapRouter() {
   useEffect(() => {
     if (!nativePlatform) return
 
+    const clearReplaceFallback = () => {
+      if (!replaceFallbackTimeoutRef.current) return
+      window.clearTimeout(replaceFallbackTimeoutRef.current)
+      replaceFallbackTimeoutRef.current = null
+    }
+
+    const scheduleReplaceFallback = (nextUrl: string) => {
+      clearReplaceFallback()
+      replaceFallbackTimeoutRef.current = window.setTimeout(() => {
+        replaceFallbackTimeoutRef.current = null
+        const liveUrl = `${window.location.pathname}${window.location.search}${window.location.hash}`
+        if (liveUrl === nextUrl) return
+        window.location.replace(nextUrl)
+      }, ROUTER_REPLACE_FALLBACK_MS)
+    }
+
     const handle = async () => {
       if (isHandlingRef.current) return
       isHandlingRef.current = true
@@ -67,16 +69,18 @@ export default function NotificationTapRouter() {
         const rawUrl = await getLastNativeNotificationTapUrl()
         if (!rawUrl) return
 
-        const nextUrl = normalizeDeepLinkUrl(rawUrl)
+        const nextUrl = normalizePushDeepLinkUrl(rawUrl)
         if (!nextUrl) {
           await clearLastNativeNotificationTapUrl()
           return
         }
 
         setPendingPushRedirect(nextUrl)
+        emitPushUiReset(nextUrl)
 
         // If we're already there, just clear and stop.
         if (nextUrl === currentUrl) {
+          clearReplaceFallback()
           emitPushNavigation(nextUrl)
           acknowledgePendingPushRedirect(currentUrl)
           await clearLastNativeNotificationTapUrl()
@@ -88,6 +92,7 @@ export default function NotificationTapRouter() {
         }
 
         router.replace(nextUrl)
+        scheduleReplaceFallback(nextUrl)
       } finally {
         isHandlingRef.current = false
       }
@@ -104,6 +109,7 @@ export default function NotificationTapRouter() {
     window.addEventListener('focus', handle)
 
     return () => {
+      clearReplaceFallback()
       document.removeEventListener('visibilitychange', onVisible)
       window.removeEventListener('focus', handle)
     }
