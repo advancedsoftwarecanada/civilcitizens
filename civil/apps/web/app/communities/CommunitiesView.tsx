@@ -301,6 +301,8 @@ export function CommunitiesView({ mode = 'default' }: { mode?: CommunitiesPageMo
   const [selectedBrowserDistrictCode, setSelectedBrowserDistrictCode] = useState<number | null>(null)
   const [mapFocusRequestToken, setMapFocusRequestToken] = useState(0)
   const [pendingBrowserMapFocus, setPendingBrowserMapFocus] = useState<{ provinceCode: string; communitySlug: string } | null>(null)
+  const [showActiveSeatsLayer, setShowActiveSeatsLayer] = useState(true)
+  const [showRegisteredSeatsLayer, setShowRegisteredSeatsLayer] = useState(true)
   const [provinceCommunityFilter, setProvinceCommunityFilter] = useState('')
   const [provinceCommunitySort, setProvinceCommunitySort] = useState<'alphabetical' | 'distance'>('alphabetical')
   const [hasMounted, setHasMounted] = useState(false)
@@ -1972,6 +1974,14 @@ export function CommunitiesView({ mode = 'default' }: { mode?: CommunitiesPageMo
 
   const canSortProvinceCommunitiesByDistance = Boolean(homeProvinceDistrict)
   const activeProvinceCommunitySort = provinceCommunitySort === 'distance' && canSortProvinceCommunitiesByDistance ? 'distance' : 'alphabetical'
+  const hasBrowserActiveSeats = useMemo(
+    () => Boolean(districtBrowser?.districts.some((district) => district.partyStatus === 'seat')),
+    [districtBrowser],
+  )
+  const hasBrowserRegisteredSeats = useMemo(
+    () => Boolean(districtBrowser?.districts.some((district) => district.partyStatus === 'registered')),
+    [districtBrowser],
+  )
 
   const filteredProvinceDistrictCards = useMemo(() => {
     const normalizedFilter = provinceCommunityFilter.trim().toLowerCase()
@@ -2005,7 +2015,54 @@ export function CommunitiesView({ mode = 'default' }: { mode?: CommunitiesPageMo
             Join your local chamber of citizens paired by Electoral District Association data from Elections Canada.
           </p>
         </div>
-        {districtBrowserBusy ? <span className="text-xs font-semibold uppercase tracking-wide text-[var(--cc-primary)]">Loading Civil Maps</span> : null}
+        <div className="flex flex-col items-end gap-2">
+          {districtBrowserBusy ? <span className="text-xs font-semibold uppercase tracking-wide text-[var(--cc-primary)]">Loading Civil Maps</span> : null}
+          {hasBrowserActiveSeats || hasBrowserRegisteredSeats ? (
+            <div className="flex flex-wrap items-center justify-end gap-2">
+              {hasBrowserActiveSeats ? (
+                <button
+                  type="button"
+                  onClick={() => setShowActiveSeatsLayer((current) => !current)}
+                  aria-pressed={showActiveSeatsLayer}
+                  className={`inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-semibold transition ${
+                    showActiveSeatsLayer
+                      ? 'border-slate-300 bg-white text-slate-700 shadow-sm'
+                      : 'border-slate-200 bg-slate-100 text-slate-400'
+                  }`}
+                >
+                  <span
+                    aria-hidden="true"
+                    className="h-4 w-4 rounded-sm border border-transparent bg-slate-700"
+                    style={{ opacity: showActiveSeatsLayer ? 1 : 0.35 }}
+                  />
+                  <span>Active Seats</span>
+                </button>
+              ) : null}
+              {hasBrowserRegisteredSeats ? (
+                <button
+                  type="button"
+                  onClick={() => setShowRegisteredSeatsLayer((current) => !current)}
+                  aria-pressed={showRegisteredSeatsLayer}
+                  className={`inline-flex items-center gap-2 rounded-full border px-3 py-1.5 text-xs font-semibold transition ${
+                    showRegisteredSeatsLayer
+                      ? 'border-slate-300 bg-white text-slate-700 shadow-sm'
+                      : 'border-slate-200 bg-slate-100 text-slate-400'
+                  }`}
+                >
+                  <span
+                    aria-hidden="true"
+                    className="h-4 w-4 rounded-sm border border-slate-500 bg-slate-200"
+                    style={{
+                      backgroundImage: 'repeating-linear-gradient(135deg, #64748b 0 2px, transparent 2px 6px)',
+                      opacity: showRegisteredSeatsLayer ? 1 : 0.35,
+                    }}
+                  />
+                  <span>Registered Seats</span>
+                </button>
+              ) : null}
+            </div>
+          ) : null}
+        </div>
       </div>
 
       {districtBrowser?.districts.length && canUseMapStyle(districtBrowser.styleUrl) ? (
@@ -2036,6 +2093,8 @@ export function CommunitiesView({ mode = 'default' }: { mode?: CommunitiesPageMo
           }}
           allowEmptySelection={Boolean(pendingBrowserMapFocus)}
           animateByElections
+          showActiveSeatsLayer={showActiveSeatsLayer}
+          showRegisteredSeatsLayer={showRegisteredSeatsLayer}
         />
       ) : districtBrowser?.districts.length ? (
         <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-4 text-sm text-amber-900">

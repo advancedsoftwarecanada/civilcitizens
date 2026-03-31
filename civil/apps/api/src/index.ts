@@ -3761,10 +3761,23 @@ const RICH_TEXT_ALLOWED_TAGS = [
   'pre',
   'code',
   'a',
+  'table',
+  'thead',
+  'tbody',
+  'tfoot',
+  'tr',
+  'th',
+  'td',
+  'caption',
+  'colgroup',
+  'col',
 ]
 
 const RICH_TEXT_ALLOWED_ATTRIBUTES: sanitizeHtml.IOptions['allowedAttributes'] = {
   a: ['href', 'name', 'target', 'rel'],
+  th: ['colspan', 'rowspan', 'scope'],
+  td: ['colspan', 'rowspan'],
+  col: ['span'],
 }
 
 function sanitizeRichTextHtml(input: string) {

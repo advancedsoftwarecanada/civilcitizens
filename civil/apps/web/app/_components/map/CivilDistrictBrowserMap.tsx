@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { ElectoralDistrictBrowserResponse } from '@civil/shared'
 import { MapZoomControls } from './MapZoomControls'
 
@@ -37,7 +37,12 @@ type CivilDistrictBrowserMapProps = {
   popupMode?: PopupMode
   visitLabel?: string
   animateByElections?: boolean
+  showActiveSeatsLayer?: boolean
+  showRegisteredSeatsLayer?: boolean
+  visiblePartySlugs?: string[] | null
 }
+
+const HIDDEN_LAYER_SENTINEL_CODE = -999_999_999
 
 function collectBounds(browser: ElectoralDistrictBrowserResponse) {
   const bounds = browser.districts.reduce<[number, number, number, number] | null>((acc, district) => {
@@ -225,6 +230,17 @@ function buildFillColorExpression(selectedCode: number | null, pulseByElections:
   ]
 }
 
+function buildBaseFillColorExpression(selectedCode: number | null, pulseByElections: boolean) {
+  return [
+    'case',
+    ['all', ['==', ['get', 'hasByElection'], 1], pulseByElections],
+    '#ffffff',
+    ['==', ['get', 'code'], selectedCode ?? -1],
+    '#cbd5e1',
+    '#e2e8f0',
+  ]
+}
+
 function buildFillOpacityExpression(selectedCode: number | null) {
   return [
     'case',
@@ -234,9 +250,54 @@ function buildFillOpacityExpression(selectedCode: number | null) {
   ]
 }
 
-function buildPatternFilter(selectedCode: number | null, selectedOnly: boolean) {
+function buildBaseFillOpacityExpression(selectedCode: number | null) {
+  return [
+    'case',
+    ['==', ['get', 'code'], selectedCode ?? -1],
+    0.8,
+    0.58,
+  ]
+}
+
+function buildNoDistrictFilter(): any {
+  return ['==', ['get', 'code'], HIDDEN_LAYER_SENTINEL_CODE]
+}
+
+function buildPartySlugFilter(visiblePartySlugs: string[] | null): any {
+  if (visiblePartySlugs == null) return null
+  if (visiblePartySlugs.length === 0) return buildNoDistrictFilter()
+  if (visiblePartySlugs.length === 1) {
+    return ['==', ['get', 'partySlug'], visiblePartySlugs[0]]
+  }
+  return ['any', ...visiblePartySlugs.map((slug) => ['==', ['get', 'partySlug'], slug])]
+}
+
+function buildSeatOverlayFilter(showActiveSeatsLayer: boolean, visiblePartySlugs: string[] | null): any {
+  if (!showActiveSeatsLayer) return buildNoDistrictFilter()
+  const partySlugFilter = buildPartySlugFilter(visiblePartySlugs)
+  const filters: any[] = [['==', ['get', 'partyStatus'], 'seat']]
+  if (partySlugFilter) filters.push(partySlugFilter)
+  return ['all', ...filters]
+}
+
+function buildRegisteredOverlayFilter(showRegisteredSeatsLayer: boolean, visiblePartySlugs: string[] | null): any {
+  if (!showRegisteredSeatsLayer) return buildNoDistrictFilter()
+  const partySlugFilter = buildPartySlugFilter(visiblePartySlugs)
+  const filters: any[] = [['==', ['get', 'partyStatus'], 'registered']]
+  if (partySlugFilter) filters.push(partySlugFilter)
+  return ['all', ...filters]
+}
+
+function buildPatternFilter(
+  selectedCode: number | null,
+  selectedOnly: boolean,
+  showRegisteredSeatsLayer: boolean,
+  visiblePartySlugs: string[] | null,
+): any {
+  const registeredFilter = buildRegisteredOverlayFilter(showRegisteredSeatsLayer, visiblePartySlugs)
   return [
     'all',
+    registeredFilter,
     ['==', ['get', 'hasPattern'], 1],
     selectedOnly
       ? ['==', ['get', 'code'], selectedCode ?? -1]
@@ -262,6 +323,46 @@ function buildLineWidthExpression(selectedCode: number | null) {
     2.5,
     1.5,
   ]
+}
+
+function buildBaseLineColorExpression(selectedCode: number | null, pulseByElections: boolean) {
+  return [
+    'case',
+    ['all', ['==', ['get', 'hasByElection'], 1], pulseByElections],
+    '#ffffff',
+    ['==', ['get', 'code'], selectedCode ?? -1],
+    '#64748b',
+    '#94a3b8',
+  ]
+}
+
+function buildBaseLineWidthExpression(selectedCode: number | null) {
+  return [
+    'case',
+    ['==', ['get', 'code'], selectedCode ?? -1],
+    2,
+    1.1,
+  ]
+}
+
+function buildOverlayLineFilter(
+  showActiveSeatsLayer: boolean,
+  showRegisteredSeatsLayer: boolean,
+  visiblePartySlugs: string[] | null,
+): any {
+  const statusFilters: any[] = []
+
+  if (showActiveSeatsLayer) {
+    statusFilters.push(buildSeatOverlayFilter(true, visiblePartySlugs))
+  }
+
+  if (showRegisteredSeatsLayer) {
+    statusFilters.push(buildRegisteredOverlayFilter(true, visiblePartySlugs))
+  }
+
+  if (statusFilters.length === 0) return buildNoDistrictFilter()
+  if (statusFilters.length === 1) return statusFilters[0]
+  return ['any', ...statusFilters]
 }
 
 function buildPartyHref(slug: string) {
@@ -653,6 +754,9 @@ export function CivilDistrictBrowserMap({
   popupMode = 'default',
   visitLabel = 'Visit',
   animateByElections = false,
+  showActiveSeatsLayer = true,
+  showRegisteredSeatsLayer = true,
+  visiblePartySlugs = null,
 }: CivilDistrictBrowserMapProps) {
   const wrapperRef = useRef<HTMLDivElement | null>(null)
   const containerRef = useRef<HTMLDivElement | null>(null)
@@ -666,6 +770,10 @@ export function CivilDistrictBrowserMap({
   const onToggleSelectedDistrictFollowRef = useRef(onToggleSelectedDistrictFollow)
   const [isFullscreen, setIsFullscreen] = useState(false)
   const [pulsePhase, setPulsePhase] = useState(false)
+  const normalizedVisiblePartySlugs = useMemo(
+    () => visiblePartySlugs?.map((slug) => slug.trim().toLowerCase()).filter(Boolean) ?? null,
+    [visiblePartySlugs],
+  )
   const selectionStateRef = useRef({
     selectedDistrictCode,
     selectedDistrict,
@@ -771,8 +879,16 @@ export function CivilDistrictBrowserMap({
     const resolvedDistrict = resolveSelectedDistrict({ browser, selectedDistrictCode, selectedDistrict, allowEmptySelection })
     const selectedCode = resolvedDistrict?.code ?? null
 
+    if (map.getLayer('civil-district-browser-fill-base')) {
+      map.setPaintProperty('civil-district-browser-fill-base', 'fill-color', buildBaseFillColorExpression(selectedCode, animateByElections && pulsePhase))
+    }
+
     if (map.getLayer('civil-district-browser-fill')) {
       map.setPaintProperty('civil-district-browser-fill', 'fill-color', buildFillColorExpression(selectedCode, animateByElections && pulsePhase))
+    }
+
+    if (map.getLayer('civil-district-browser-line-base')) {
+      map.setPaintProperty('civil-district-browser-line-base', 'line-color', buildBaseLineColorExpression(selectedCode, animateByElections && pulsePhase))
     }
 
     if (map.getLayer('civil-district-browser-line')) {
@@ -795,19 +911,29 @@ export function CivilDistrictBrowserMap({
     const resolvedDistrict = resolveSelectedDistrict({ browser, selectedDistrictCode, selectedDistrict, allowEmptySelection })
     const selectedCode = resolvedDistrict?.code ?? null
 
+    if (map.getLayer('civil-district-browser-fill-base')) {
+      map.setPaintProperty('civil-district-browser-fill-base', 'fill-opacity', buildBaseFillOpacityExpression(selectedCode))
+    }
+
     if (map.getLayer('civil-district-browser-fill')) {
+      map.setFilter('civil-district-browser-fill', buildSeatOverlayFilter(showActiveSeatsLayer, normalizedVisiblePartySlugs) as any)
       map.setPaintProperty('civil-district-browser-fill', 'fill-opacity', buildFillOpacityExpression(selectedCode))
     }
 
     if (map.getLayer('civil-district-browser-pattern')) {
-      map.setFilter('civil-district-browser-pattern', buildPatternFilter(selectedCode, false) as any)
+      map.setFilter('civil-district-browser-pattern', buildPatternFilter(selectedCode, false, showRegisteredSeatsLayer, normalizedVisiblePartySlugs) as any)
     }
 
     if (map.getLayer('civil-district-browser-pattern-selected')) {
-      map.setFilter('civil-district-browser-pattern-selected', buildPatternFilter(selectedCode, true) as any)
+      map.setFilter('civil-district-browser-pattern-selected', buildPatternFilter(selectedCode, true, showRegisteredSeatsLayer, normalizedVisiblePartySlugs) as any)
+    }
+
+    if (map.getLayer('civil-district-browser-line-base')) {
+      map.setPaintProperty('civil-district-browser-line-base', 'line-width', buildBaseLineWidthExpression(selectedCode))
     }
 
     if (map.getLayer('civil-district-browser-line')) {
+      map.setFilter('civil-district-browser-line', buildOverlayLineFilter(showActiveSeatsLayer, showRegisteredSeatsLayer, normalizedVisiblePartySlugs) as any)
       map.setPaintProperty('civil-district-browser-line', 'line-width', buildLineWidthExpression(selectedCode))
     }
 
@@ -863,6 +989,9 @@ export function CivilDistrictBrowserMap({
     visitLabel,
     visitHrefBuilder,
     allowEmptySelection,
+    showActiveSeatsLayer,
+    showRegisteredSeatsLayer,
+    normalizedVisiblePartySlugs,
     runPopupMutation,
   ])
 
@@ -928,6 +1057,8 @@ export function CivilDistrictBrowserMap({
                 geometry: district.geometry,
                 properties: {
                   code: district.code,
+                  partyStatus: district.partyStatus ?? '',
+                  partySlug: district.party?.slug?.trim().toLowerCase() ?? '',
                   fillColor: palette.fillColor,
                   selectedFillColor: palette.selectedFillColor,
                   lineColor: palette.lineColor,
@@ -950,9 +1081,20 @@ export function CivilDistrictBrowserMap({
         })
 
         map.addLayer({
+          id: 'civil-district-browser-fill-base',
+          type: 'fill',
+          source: 'civil-district-browser',
+          paint: {
+            'fill-color': buildBaseFillColorExpression(selectedCode, animateByElections && pulsePhase) as any,
+            'fill-opacity': buildBaseFillOpacityExpression(selectedCode) as any,
+          },
+        })
+
+        map.addLayer({
           id: 'civil-district-browser-fill',
           type: 'fill',
           source: 'civil-district-browser',
+          filter: buildSeatOverlayFilter(showActiveSeatsLayer, normalizedVisiblePartySlugs) as any,
           paint: {
             'fill-color': buildFillColorExpression(selectedCode, animateByElections && pulsePhase) as any,
             'fill-opacity': buildFillOpacityExpression(selectedCode) as any,
@@ -963,7 +1105,7 @@ export function CivilDistrictBrowserMap({
           id: 'civil-district-browser-pattern',
           type: 'fill',
           source: 'civil-district-browser',
-          filter: buildPatternFilter(selectedCode, false) as any,
+          filter: buildPatternFilter(selectedCode, false, showRegisteredSeatsLayer, normalizedVisiblePartySlugs) as any,
           paint: {
             'fill-pattern': ['get', 'patternId'] as any,
           },
@@ -973,9 +1115,19 @@ export function CivilDistrictBrowserMap({
           id: 'civil-district-browser-pattern-selected',
           type: 'fill',
           source: 'civil-district-browser',
-          filter: buildPatternFilter(selectedCode, true) as any,
+          filter: buildPatternFilter(selectedCode, true, showRegisteredSeatsLayer, normalizedVisiblePartySlugs) as any,
           paint: {
             'fill-pattern': ['get', 'selectedPatternId'] as any,
+          },
+        })
+
+        map.addLayer({
+          id: 'civil-district-browser-line-base',
+          type: 'line',
+          source: 'civil-district-browser',
+          paint: {
+            'line-color': buildBaseLineColorExpression(selectedCode, animateByElections && pulsePhase) as any,
+            'line-width': buildBaseLineWidthExpression(selectedCode) as any,
           },
         })
 
@@ -983,6 +1135,7 @@ export function CivilDistrictBrowserMap({
           id: 'civil-district-browser-line',
           type: 'line',
           source: 'civil-district-browser',
+          filter: buildOverlayLineFilter(showActiveSeatsLayer, showRegisteredSeatsLayer, normalizedVisiblePartySlugs) as any,
           paint: {
             'line-color': buildLineColorExpression(selectedCode, animateByElections && pulsePhase) as any,
             'line-width': buildLineWidthExpression(selectedCode) as any,
@@ -1115,28 +1268,20 @@ export function CivilDistrictBrowserMap({
         }
       }
 
-      map.on('click', 'civil-district-browser-fill', handleDistrictClick)
-      map.on('click', 'civil-district-browser-pattern', handleDistrictClick)
-      map.on('click', 'civil-district-browser-pattern-selected', handleDistrictClick)
-      map.on('click', 'civil-district-browser-line', handleDistrictClick)
-      map.on('mouseenter', 'civil-district-browser-fill', () => {
-        map.getCanvas().style.cursor = 'pointer'
-      })
-      map.on('mouseenter', 'civil-district-browser-pattern', () => {
-        map.getCanvas().style.cursor = 'pointer'
-      })
-      map.on('mouseenter', 'civil-district-browser-pattern-selected', () => {
-        map.getCanvas().style.cursor = 'pointer'
-      })
-      map.on('mouseleave', 'civil-district-browser-fill', () => {
-        map.getCanvas().style.cursor = ''
-      })
-      map.on('mouseleave', 'civil-district-browser-pattern', () => {
-        map.getCanvas().style.cursor = ''
-      })
-      map.on('mouseleave', 'civil-district-browser-pattern-selected', () => {
-        map.getCanvas().style.cursor = ''
-      })
+      const interactiveLayerIds = [
+        'civil-district-browser-fill-base',
+        'civil-district-browser-line-base',
+      ]
+
+      for (const layerId of interactiveLayerIds) {
+        map.on('click', layerId, handleDistrictClick)
+        map.on('mouseenter', layerId, () => {
+          map.getCanvas().style.cursor = 'pointer'
+        })
+        map.on('mouseleave', layerId, () => {
+          map.getCanvas().style.cursor = ''
+        })
+      }
 
     })()
 
