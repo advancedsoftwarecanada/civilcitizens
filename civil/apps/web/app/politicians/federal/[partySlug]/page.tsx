@@ -113,6 +113,8 @@ export default function FederalPartyPage({ params }: PageProps) {
   const [pendingMapFocus, setPendingMapFocus] = useState<{ provinceCode: string; districtSlug: string } | null>(null)
   const [otherParties, setOtherParties] = useState<FederalExplorerPartyListItem[]>([])
   const [otherPartiesStatus, setOtherPartiesStatus] = useState<'idle' | 'loading' | 'ready' | 'error'>('idle')
+  const [showActiveSeatsLayer, setShowActiveSeatsLayer] = useState(true)
+  const [showRegisteredSeatsLayer, setShowRegisteredSeatsLayer] = useState(true)
   const mapSectionRef = useRef<HTMLElement | null>(null)
 
   useEffect(() => {
@@ -300,6 +302,14 @@ export default function FederalPartyPage({ params }: PageProps) {
     [payload?.party],
   )
   const currentPartyVisual = useMemo(() => resolvePartyVisual(currentParty), [currentParty])
+  const hasActiveSeatDistricts = useMemo(
+    () => Boolean(districtBrowser?.districts.some((district) => district.partyStatus === 'seat')),
+    [districtBrowser],
+  )
+  const hasRegisteredSeatDistricts = useMemo(
+    () => Boolean(districtBrowser?.districts.some((district) => district.partyStatus === 'registered')),
+    [districtBrowser],
+  )
   const activeAssociations = useMemo(
     () =>
       filteredAssociations
@@ -394,28 +404,54 @@ export default function FederalPartyPage({ params }: PageProps) {
             {selectedProvinceName ? <p className="mt-1 text-sm text-slate-600">{selectedProvinceName}</p> : null}
           </div>
           <div className="flex flex-wrap items-center justify-end gap-4">
-            {currentPartyVisual ? (
-              <div className="flex flex-wrap items-center gap-4 text-xs font-medium text-slate-600">
-                <div className="flex items-center gap-2">
-                  <span
-                    aria-hidden="true"
-                    className="h-4 w-4 rounded-sm border border-transparent"
-                    style={{ backgroundColor: currentPartyVisual.mapFillColor }}
-                  />
-                  <span>Active Seats</span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <span
-                    aria-hidden="true"
-                    className="h-4 w-4 rounded-sm border"
-                    style={{
-                      borderColor: currentPartyVisual.mapLineColor,
-                      backgroundColor: '#e2e8f0',
-                      backgroundImage: `repeating-linear-gradient(135deg, ${currentPartyVisual.mapFillColor} 0 2px, transparent 2px 6px)`,
-                    }}
-                  />
-                  <span>Registered Seats</span>
-                </div>
+            {currentPartyVisual && (hasActiveSeatDistricts || hasRegisteredSeatDistricts) ? (
+              <div className="flex flex-wrap items-center justify-end gap-2 text-xs font-medium text-slate-600">
+                {hasActiveSeatDistricts ? (
+                  <button
+                    type="button"
+                    onClick={() => setShowActiveSeatsLayer((current) => !current)}
+                    aria-pressed={showActiveSeatsLayer}
+                    className={`inline-flex items-center gap-2 rounded-full border px-3 py-1.5 font-semibold transition ${
+                      showActiveSeatsLayer
+                        ? 'border-slate-300 bg-white text-slate-700 shadow-sm'
+                        : 'border-slate-200 bg-slate-100 text-slate-400'
+                    }`}
+                  >
+                    <span
+                      aria-hidden="true"
+                      className="h-4 w-4 rounded-sm border border-transparent"
+                      style={{
+                        backgroundColor: currentPartyVisual.mapFillColor,
+                        opacity: showActiveSeatsLayer ? 1 : 0.35,
+                      }}
+                    />
+                    <span>Active Seats</span>
+                  </button>
+                ) : null}
+                {hasRegisteredSeatDistricts ? (
+                  <button
+                    type="button"
+                    onClick={() => setShowRegisteredSeatsLayer((current) => !current)}
+                    aria-pressed={showRegisteredSeatsLayer}
+                    className={`inline-flex items-center gap-2 rounded-full border px-3 py-1.5 font-semibold transition ${
+                      showRegisteredSeatsLayer
+                        ? 'border-slate-300 bg-white text-slate-700 shadow-sm'
+                        : 'border-slate-200 bg-slate-100 text-slate-400'
+                    }`}
+                  >
+                    <span
+                      aria-hidden="true"
+                      className="h-4 w-4 rounded-sm border"
+                      style={{
+                        borderColor: currentPartyVisual.mapLineColor,
+                        backgroundColor: '#e2e8f0',
+                        backgroundImage: `repeating-linear-gradient(135deg, ${currentPartyVisual.mapFillColor} 0 2px, transparent 2px 6px)`,
+                        opacity: showRegisteredSeatsLayer ? 1 : 0.35,
+                      }}
+                    />
+                    <span>Registered Seats</span>
+                  </button>
+                ) : null}
               </div>
             ) : null}
           </div>
@@ -441,6 +477,8 @@ export default function FederalPartyPage({ params }: PageProps) {
             allowEmptySelection={selectedProvince === ALL_CANADA_CODE}
             popupMode="politicalExplorer"
             visitLabel="Visit Community"
+            showActiveSeatsLayer={showActiveSeatsLayer}
+            showRegisteredSeatsLayer={showRegisteredSeatsLayer}
           />
         ) : districtBrowser?.districts.length ? (
           <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-4 text-sm text-amber-900">

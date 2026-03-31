@@ -520,6 +520,7 @@ html.cc-launch-pending #cc-app-root {
   line-height: 1.5rem;
   color: rgb(51 65 85);
   font-family: inherit;
+  overflow-x: auto;
 }
 
 .cc-rich-text-editor + .note-editor,
@@ -598,6 +599,58 @@ html.cc-launch-pending #cc-app-root {
 
 .cc-article-rich-content strong,
 .cc-rich-text-editor + .note-editor .note-editing-area .note-editable strong {
+  font-weight: 600;
+  color: rgb(15 23 42);
+}
+
+.cc-article-rich-content table,
+.cc-rich-text-editor + .note-editor .note-editing-area .note-editable table {
+  display: block;
+  width: max-content;
+  min-width: 100%;
+  max-width: 100%;
+  overflow-x: auto;
+  border-collapse: collapse;
+  border-spacing: 0;
+  margin: 0 0 1rem;
+  border: 1px solid rgb(226 232 240);
+  border-radius: 0.75rem;
+  background: white;
+}
+
+.cc-article-rich-content thead,
+.cc-article-rich-content tbody,
+.cc-article-rich-content tfoot,
+.cc-rich-text-editor + .note-editor .note-editing-area .note-editable thead,
+.cc-rich-text-editor + .note-editor .note-editing-area .note-editable tbody,
+.cc-rich-text-editor + .note-editor .note-editing-area .note-editable tfoot {
+  background: inherit;
+}
+
+.cc-article-rich-content th,
+.cc-article-rich-content td,
+.cc-rich-text-editor + .note-editor .note-editing-area .note-editable th,
+.cc-rich-text-editor + .note-editor .note-editing-area .note-editable td {
+  min-width: 8rem;
+  border: 1px solid rgb(226 232 240);
+  padding: 0.65rem 0.85rem;
+  vertical-align: top;
+  text-align: left;
+  white-space: normal;
+}
+
+.cc-article-rich-content th,
+.cc-rich-text-editor + .note-editor .note-editing-area .note-editable th {
+  background: rgb(248 250 252);
+  font-weight: 600;
+  color: rgb(15 23 42);
+}
+
+.cc-article-rich-content caption,
+.cc-rich-text-editor + .note-editor .note-editing-area .note-editable caption {
+  caption-side: top;
+  padding: 0.75rem 0.85rem;
+  text-align: left;
   font-weight: 600;
   color: rgb(15 23 42);
 }

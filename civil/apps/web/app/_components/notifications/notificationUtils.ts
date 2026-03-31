@@ -350,6 +350,7 @@ export function getNotificationMessage(notification: NotificationItem) {
   const inviteTitle = typeof notification.payload?.title === 'string' ? notification.payload.title.trim() : ''
   const deliveryListingTitle = typeof notification.payload?.listingTitle === 'string' ? notification.payload.listingTitle.trim() : ''
   const deliveryAmountCents = typeof notification.payload?.amountCents === 'number' ? notification.payload.amountCents : null
+  const requestStatus = getNotificationRequestStatus(notification)
   const deliveryAmountLabel =
     typeof deliveryAmountCents === 'number'
       ? new Intl.NumberFormat('en-CA', { style: 'currency', currency: 'CAD' }).format(deliveryAmountCents / 100)
@@ -359,10 +360,14 @@ export function getNotificationMessage(notification: NotificationItem) {
       return 'Backed your Cause'
     }
     case 'friend_request':
+      if (requestStatus === 'accepted') return 'You accepted the friend request'
+      if (requestStatus === 'rejected') return 'You declined the friend request'
       return 'Sent you a friend request'
     case 'friend_accept':
       return 'Accepted your friend request'
     case 'connection_request':
+      if (requestStatus === 'accepted') return 'You accepted the connection request'
+      if (requestStatus === 'rejected') return 'You declined the connection request'
       return 'Sent you a connection request'
     case 'connection_accept':
       return 'Accepted your connection request'
@@ -402,6 +407,12 @@ export function getNotificationMessage(notification: NotificationItem) {
       return inviteTitle ? `invited you to organization: ${inviteTitle}` : 'invited you to an organization'
     case 'profile_family_invite': {
       const relationshipLabel = typeof notification.payload?.relationshipLabel === 'string' ? notification.payload.relationshipLabel.trim() : ''
+      if (requestStatus === 'accepted') {
+        return relationshipLabel ? `You accepted the ${relationshipLabel} request` : 'You accepted the family request'
+      }
+      if (requestStatus === 'rejected') {
+        return relationshipLabel ? `You declined the ${relationshipLabel} request` : 'You declined the family request'
+      }
       return relationshipLabel ? `Added you as their ${relationshipLabel}` : 'Added you as family'
     }
     case 'delivery_contract_bid':
@@ -489,6 +500,8 @@ export function getNotificationMessage(notification: NotificationItem) {
           ? ((requesterChild as Record<string, unknown>).displayName as string).trim()
           : ''
         : ''
+      if (requestStatus === 'accepted') return 'You accepted the family friend request'
+      if (requestStatus === 'rejected') return 'You declined the family friend request'
       return childDisplayName ? `${childDisplayName} wants to connect with your child` : 'wants to connect with your child'
     }
     case 'family_child_friend_removed': {

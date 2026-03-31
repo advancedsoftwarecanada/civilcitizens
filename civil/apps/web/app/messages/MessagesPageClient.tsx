@@ -2941,7 +2941,7 @@ function StandardMessagesPageClient({ initialThreadId, initialInboxSection, view
       parts.push(bodyForDisplay.slice(lastIndex))
     }
 
-    return <p className="whitespace-pre-wrap break-words">{parts}</p>
+    return <p className="whitespace-pre-wrap [overflow-wrap:anywhere]">{parts}</p>
   }, [])
 
   const renderMessageLinkPreviewCard = useCallback(
@@ -4840,8 +4840,12 @@ function StandardMessagesPageClient({ initialThreadId, initialInboxSection, view
                   const civilUrls = message.body ? extractCivilUrlsFromMessage(message.body).slice(0, 3) : []
                   const civilUrlsWithPreview = civilUrls.filter((url) => Boolean(messageLinkPreviews[url]))
                   const suppressedUrls = civilUrlsWithPreview.length ? new Set(civilUrlsWithPreview) : undefined
+                  const messageFrameClasses = clsx(
+                    'inline-flex min-w-0 max-w-[min(85%,42rem)] flex-col',
+                    isMine ? 'items-end' : 'items-start',
+                  )
                   const bubbleClasses = clsx(
-                    'w-fit min-w-[5.5rem] max-w-[80%] rounded-2xl px-4 py-2 text-sm shadow transition',
+                    'min-w-[5.5rem] max-w-full rounded-2xl px-4 py-2 text-sm shadow transition',
                     isMine
                       ? 'ml-auto bg-[var(--cc-primary)] text-white'
                       : 'mr-auto border border-slate-100 bg-white text-slate-800',
@@ -4860,7 +4864,7 @@ function StandardMessagesPageClient({ initialThreadId, initialInboxSection, view
                           />
                         </Link>
                       ) : null}
-                      <div className={clsx('flex flex-col', isMine ? 'items-end' : 'items-start')}>
+                      <div className={messageFrameClasses}>
                         <p className="mb-1 text-xs font-semibold text-slate-500">{isMine ? 'You' : senderDisplayName}</p>
                         <div className={bubbleClasses}>
                           {message.deletedAt ? (
@@ -4906,13 +4910,13 @@ function StandardMessagesPageClient({ initialThreadId, initialInboxSection, view
                   const viewerDisplayName = formatUserDisplayName(me?.name, me?.handle) || me?.handle || 'You'
                   return (
                     <div key={message.id} className="flex w-full justify-end">
-                      <div className="flex flex-col items-end">
+                      <div className="inline-flex min-w-0 max-w-[min(85%,42rem)] flex-col items-end">
                         <p className="mb-1 text-xs font-semibold text-slate-500">You</p>
-                        <div className="ml-auto flex min-w-[10rem] max-w-[80%] items-center gap-2 rounded-2xl bg-[var(--cc-primary)] px-4 py-3 text-sm text-white shadow opacity-85">
+                        <div className="ml-auto flex min-w-[10rem] max-w-full items-center gap-2 rounded-2xl bg-[var(--cc-primary)] px-4 py-3 text-sm text-white shadow opacity-85">
                           <HiOutlineArrowPath className="h-4 w-4 shrink-0 animate-spin" />
                           <div className="min-w-0">
                             <p className="font-medium">Uploading image…</p>
-                            {message.body ? <p className="mt-1 truncate text-xs text-white/85">{message.body}</p> : null}
+                            {message.body ? <p className="mt-1 whitespace-pre-wrap text-xs text-white/85 [overflow-wrap:anywhere]">{message.body}</p> : null}
                           </div>
                         </div>
                         <span className="mt-1 text-[10px] uppercase tracking-wide text-slate-400">Sending…</span>
