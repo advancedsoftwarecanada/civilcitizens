@@ -117,6 +117,22 @@ function normalizeAddressRecord(value: unknown) {
   }, {})
 }
 
+function readNotificationPayloadRecord(value: Prisma.JsonValue | null | undefined): Record<string, unknown> {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {}
+}
+
+function normalizeNotificationRequestStatus(value: unknown): 'pending' | 'accepted' | 'rejected' | null {
+  if (typeof value !== 'string') return null
+  const normalized = value.trim().toLowerCase()
+  if (!normalized) return null
+  if (normalized === 'pending') return 'pending'
+  if (['accepted', 'accept', 'approved', 'confirmed', 'completed'].includes(normalized)) return 'accepted'
+  if (['rejected', 'reject', 'declined', 'dismissed', 'denied', 'cancelled', 'canceled'].includes(normalized)) return 'rejected'
+  return null
+}
+
 function readForwardedHeader(req: FastifyRequest, name: string) {
   const raw = req.headers[name]
   if (Array.isArray(raw)) return raw[0]?.trim() || null
@@ -394,6 +410,143 @@ export function registerNotificationsSearchRoutes(app: FastifyInstance, deps: No
           },
         }),
       ])
+
+      const notifications = rows as Array<{
+        id: string
+        type: string
+        actorId: string | null
+        userId: string
+        payload: Prisma.JsonValue | null
+        readAt: Date | null
+        createdAt: Date
+      }>
+
+      const friendRequestIds = Array.from(
+        new Set(
+          notifications.flatMap((notification) => {
+            if (notification.type !== 'friend_request') return []
+            const payload = readNotificationPayloadRecord(notification.payload)
+            const status = normalizeNotificationRequestStatus(payload.status)
+            if (status && status !== 'pending') return []
+            const friendshipId = typeof payload.friendshipId === 'string' ? payload.friendshipId.trim() : ''
+            return friendshipId ? [friendshipId] : []
+          }),
+        ),
+      )
+
+      const connectionRequestIds = Array.from(
+        new Set(
+          notifications.flatMap((notification) => {
+            if (notification.type !== 'connection_request') return []
+            const payload = readNotificationPayloadRecord(notification.payload)
+            const status = normalizeNotificationRequestStatus(payload.status)
+            if (status && status !== 'pending') return []
+            const connectionId = typeof payload.connectionId === 'string' ? payload.connectionId.trim() : ''
+            return connectionId ? [connectionId] : []
+          }),
+        ),
+      )
+
+      const friendshipStates: Array<{ id: string; status: string; respondedAt: Date | null }> = friendRequestIds.length
+        ? await prisma.friendship.findMany({
+            where: { id: { in: friendRequestIds } },
+            select: { id: true, status: true, respondedAt: true },
+          })
+        : []
+
+      let connectionStates: Array<{ id: string; status: string; respondedAt: Date | null }> = []
+      if (connectionRequestIds.length) {
+        try {
+          connectionStates = await prisma.connection.findMany({
+            where: { id: { in: connectionRequestIds } },
+            select: { id: true, status: true, respondedAt: true },
+          })
+        } catch {
+          connectionStates = []
+        }
+      }
+
+      const friendshipStateMap = new Map<string, { id: string; status: string; respondedAt: Date | null }>(
+        friendshipStates.map((entry: { id: string; status: string; respondedAt: Date | null }) => [entry.id, entry]),
+      )
+      const connectionStateMap = new Map<string, { id: string; status: string; respondedAt: Date | null }>(
+        connectionStates.map((entry: { id: string; status: string; respondedAt: Date | null }) => [entry.id, entry]),
+      )
+
+      const staleNotificationUpdates: Array<{
+        id: string
+        payload: Record<string, unknown>
+        readAt: Date
+      }> = []
+
+      notifications.forEach((notification) => {
+        if (notification.type !== 'friend_request' && notification.type !== 'connection_request') return
+
+        const payload = readNotificationPayloadRecord(notification.payload)
+        const currentStatus = normalizeNotificationRequestStatus(payload.status)
+        if (currentStatus && currentStatus !== 'pending') return
+
+        if (notification.type === 'friend_request') {
+          const friendshipId = typeof payload.friendshipId === 'string' ? payload.friendshipId.trim() : ''
+          const friendship = friendshipId ? friendshipStateMap.get(friendshipId) : null
+          if (!friendship || friendship.status === 'PENDING') return
+          const nextStatus = friendship.status === 'ACCEPTED' ? 'accepted' : 'rejected'
+          staleNotificationUpdates.push({
+            id: notification.id,
+            payload: {
+              ...payload,
+              friendshipId,
+              status: nextStatus,
+              respondedAt: (friendship.respondedAt ?? notification.createdAt).toISOString(),
+            },
+            readAt: notification.readAt ?? friendship.respondedAt ?? new Date(),
+          })
+          notification.payload = {
+            ...payload,
+            friendshipId,
+            status: nextStatus,
+            respondedAt: (friendship.respondedAt ?? notification.createdAt).toISOString(),
+          } as Prisma.JsonValue
+          notification.readAt = notification.readAt ?? friendship.respondedAt ?? new Date()
+          return
+        }
+
+        const connectionId = typeof payload.connectionId === 'string' ? payload.connectionId.trim() : ''
+        const connection = connectionId ? connectionStateMap.get(connectionId) : null
+        if (!connection || connection.status === 'PENDING') return
+        const nextStatus = connection.status === 'ACCEPTED' ? 'accepted' : 'rejected'
+        staleNotificationUpdates.push({
+          id: notification.id,
+          payload: {
+            ...payload,
+            connectionId,
+            status: nextStatus,
+            respondedAt: (connection.respondedAt ?? notification.createdAt).toISOString(),
+          },
+          readAt: notification.readAt ?? connection.respondedAt ?? new Date(),
+        })
+        notification.payload = {
+          ...payload,
+          connectionId,
+          status: nextStatus,
+          respondedAt: (connection.respondedAt ?? notification.createdAt).toISOString(),
+        } as Prisma.JsonValue
+        notification.readAt = notification.readAt ?? connection.respondedAt ?? new Date()
+      })
+
+      if (staleNotificationUpdates.length) {
+        await prisma.$transaction(
+          staleNotificationUpdates.map((update) =>
+            prisma.notification.update({
+              where: { id: update.id },
+              data: {
+                payload: update.payload as Prisma.InputJsonValue,
+                readAt: update.readAt,
+              },
+            }),
+          ),
+        )
+      }
 
       const actors = await Promise.all(rows.map((row: any) => deps.loadNotificationActor(row)))
 
