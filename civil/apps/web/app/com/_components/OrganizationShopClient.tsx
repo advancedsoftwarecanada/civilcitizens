@@ -1,11 +1,14 @@
 'use client'
 
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import { buildCanadaSalesTaxCatalogResponse, buildCanadaSalesTaxRatesByPreset, inferCanadaSalesTaxPreset, normalizeCanadaSalesTaxRatesByRegion } from '@civil/shared'
 import clsx from 'clsx'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { HiOutlineArrowLeft } from 'react-icons/hi2'
+import CivilPostMedia from '../../_components/CivilPostMedia'
 import { CanadianAddressEditor } from '../../_components/address/CanadianAddressEditor'
+import RichTextEditor from '../../_components/RichTextEditor'
 import { buildApiUrl } from '../../_lib/api'
 import { createEmptyCanadianAddress, hasCanadianAddressValue, normalizeCanadianAddress, type CanadianAddress } from '../../_lib/canadianAddresses'
 import { getStoredToken } from '../../_lib/tokenStorage'
@@ -67,6 +70,41 @@ type ShopResponse = {
   catalogs?: ShopCatalog[]
   warehouses?: ShopWarehouse[]
   products?: ShopProduct[]
+}
+
+type ShopOrderItem = {
+  productId: string | null
+  name: string
+  priceCents: number
+  quantity: number
+  fulfillmentType: string
+}
+
+type ShopOrder = {
+  id: string
+  status: string
+  currency: string
+  subtotalCents: number
+  taxCents: number
+  civilFeeCents: number
+  stripeFeeCents: number
+  feeCents: number
+  totalCents: number
+  createdAt: string
+  paymentMethod: string | null
+  paymentStatus: string | null
+  itemCount: number
+  buyer: {
+    id: string
+    name?: string | null
+    handle?: string | null
+    email?: string | null
+  } | null
+  items: ShopOrderItem[]
+}
+
+type ShopOrdersResponse = {
+  items?: ShopOrder[]
 }
 
 type ShopConnectStatus = {
@@ -136,6 +174,22 @@ const ACCEPTED_IMAGE_TYPE_LIST = ACCEPTED_IMAGE_TYPES.split(',')
 const PHOTO_MAX_BYTES = 25 * 1024 * 1024
 
 const TAX_REGION_CODES = ['AB', 'BC', 'MB', 'NB', 'NL', 'NS', 'NT', 'NU', 'ON', 'PE', 'QC', 'SK', 'YT'] as const
+const CURRENT_CANADA_TAX_SELECTION = 'canada_current'
+const DEFAULT_TAX_RATE_CATALOG = (() => {
+  const response = buildCanadaSalesTaxCatalogResponse()
+  const byCode: Record<string, { name: string; defaultRatePct: number; options: Array<{ label: string; ratePct: number }> }> = {}
+  for (const region of response.regions) {
+    byCode[String(region.code).toUpperCase()] = {
+      name: region.name,
+      defaultRatePct: Number(region.defaultRatePct) || 0,
+      options: Array.isArray(region.options) ? region.options : [],
+    }
+  }
+  return {
+    asOf: response.asOf,
+    byCode,
+  }
+})()
 
 const listingTypeSummary = (section?: string | null, category?: string | null, subcategory?: string | null) => {
   const parts = [section, category, subcategory].map((value) => (value ?? '').trim()).filter(Boolean)
@@ -171,7 +225,30 @@ const parseWarehouseAddress = (value?: string | null): CanadianAddress => {
 const formatCurrency = (priceCents: number, currency: string) =>
   new Intl.NumberFormat(undefined, { style: 'currency', currency: currency || 'CAD' }).format((priceCents || 0) / 100)
 
+const formatOrderDateTime = (value: string) => {
+  const parsed = new Date(value)
+  if (Number.isNaN(parsed.getTime())) return 'Unknown date'
+  return new Intl.DateTimeFormat(undefined, {
+    dateStyle: 'medium',
+    timeStyle: 'short',
+  }).format(parsed)
+}
+
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
+
+const stripHtmlToPlainText = (value: string | null | undefined) =>
+  (value ?? '')
+    .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+    .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&amp;/gi, '&')
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;/gi, "'")
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>')
+    .replace(/\s+/g, ' ')
+    .trim()
 
 const reorderCatalogRows = (items: ShopCatalog[], draggedId: string, targetId: string): ShopCatalog[] => {
   if (!draggedId || !targetId || draggedId === targetId) return items
@@ -195,6 +272,21 @@ const pickPhotoVariantUrl = (variants?: Record<string, { url?: string | null } |
   }
   const fallback = Object.values(variants).find((variant) => variant?.url)
   return fallback?.url ?? null
+}
+
+const buildInventorySnapshot = (source: Record<string, number>, fallback: Array<{ warehouseId: string; quantity: number; updatedAt: string }>) => {
+  const now = new Date().toISOString()
+  const updatedAtByWarehouse = new Map(fallback.map((entry) => [entry.warehouseId, entry.updatedAt]))
+  const inventoryByWarehouse = Object.entries(source).map(([warehouseId, quantity]) => ({
+    warehouseId,
+    quantity: Math.max(0, Math.round(Number(quantity) || 0)),
+    updatedAt: updatedAtByWarehouse.get(warehouseId) ?? now,
+  }))
+
+  return {
+    inventoryByWarehouse,
+    inventoryTotal: inventoryByWarehouse.reduce((sum, entry) => sum + entry.quantity, 0),
+  }
 }
 
 const readImageDimensions = async (file: File): Promise<{ width: number; height: number } | null> => {
@@ -289,10 +381,16 @@ export default function OrganizationShopClient({
   const [taxRateCatalog, setTaxRateCatalog] = useState<null | {
     asOf: string
     byCode: Record<string, { name: string; defaultRatePct: number; options: Array<{ label: string; ratePct: number }> }>
-  }>(null)
-  const [taxRateCatalogLoading, setTaxRateCatalogLoading] = useState(false)
+  }>(DEFAULT_TAX_RATE_CATALOG)
   const [connectStatus, setConnectStatus] = useState<ShopConnectStatus | null>(null)
   const [connectLoading, setConnectLoading] = useState(false)
+  const [orders, setOrders] = useState<ShopOrder[]>([])
+  const [ordersLoading, setOrdersLoading] = useState(false)
+  const [ordersError, setOrdersError] = useState<string | null>(null)
+  const [orderStatusFilter, setOrderStatusFilter] = useState('all')
+  const [orderSearchQuery, setOrderSearchQuery] = useState('')
+  const [orderDateFrom, setOrderDateFrom] = useState('')
+  const [orderDateTo, setOrderDateTo] = useState('')
 
   const [pendingProductStatusChange, setPendingProductStatusChange] = useState<null | { productId: string; nextStatus: 'DRAFT' | 'PUBLISHED' }>(null)
   const [showProductPublishModal, setShowProductPublishModal] = useState(false)
@@ -495,12 +593,13 @@ export default function OrganizationShopClient({
       setTaxDrafts((prev) => {
         const next = { ...prev }
         nextProducts.forEach((product) => {
-          const provinceCode = String(province || '').trim().toUpperCase()
-          const defaultSelection = TAX_REGION_CODES.includes(provinceCode as any) ? `region:${provinceCode}` : 'gst_5'
-          const initialRatesByRegion = product.taxRatesByRegion && typeof product.taxRatesByRegion === 'object' ? product.taxRatesByRegion : {}
+          const initialRatesByRegion = product.taxCollect
+            ? normalizeCanadaSalesTaxRatesByRegion(product.taxRatesByRegion, { fallbackPreset: 'canada_current' })
+            : {}
+          const inferredSelection = product.taxCollect ? inferCanadaSalesTaxPreset(initialRatesByRegion) : CURRENT_CANADA_TAX_SELECTION
           next[product.id] = {
             collectTax: Boolean(product.taxCollect),
-            selectionKey: next[product.id]?.selectionKey || defaultSelection,
+            selectionKey: next[product.id]?.selectionKey || inferredSelection,
             ratesByRegion: initialRatesByRegion,
           }
         })
@@ -531,7 +630,6 @@ export default function OrganizationShopClient({
 
   useEffect(() => {
     let cancelled = false
-    setTaxRateCatalogLoading(true)
     fetch(buildApiUrl('/tax/canada/sales-rates'), { cache: 'no-store' })
       .then(async (res) => {
         const json = (await res.json().catch(() => null)) as CanadaSalesTaxRatesResponse | null
@@ -552,11 +650,7 @@ export default function OrganizationShopClient({
         if (payload) setTaxRateCatalog(payload)
       })
       .catch(() => {
-        // ignore: fallback to manual entry values already in state
-      })
-      .finally(() => {
-        if (cancelled) return
-        setTaxRateCatalogLoading(false)
+        // ignore: the shared default catalog is already loaded locally
       })
 
     return () => {
@@ -566,33 +660,61 @@ export default function OrganizationShopClient({
 
   const buildRatesBySelection = useCallback(
     (selectionKey: string, existing: Record<string, string> | undefined): Record<string, string> => {
-      const nextRates: Record<string, string> = { ...(existing ?? {}) }
-
-      let targetRatePct = 0
-      if (selectionKey === 'none') {
-        targetRatePct = 0
-      } else if (selectionKey === 'gst_5') {
-        targetRatePct = 5
-      } else if (selectionKey.startsWith('region:')) {
-        const code = selectionKey.slice('region:'.length).trim().toUpperCase()
-        const catalog = taxRateCatalog?.byCode?.[code]
-        targetRatePct = catalog ? Number(catalog.defaultRatePct) || 0 : 5
-      } else {
-        targetRatePct = 5
-      }
-
-      for (const code of TAX_REGION_CODES) {
-        nextRates[code] = String(targetRatePct)
-      }
-      return nextRates
+      if (selectionKey === 'none') return buildCanadaSalesTaxRatesByPreset('none')
+      if (selectionKey === 'gst_5') return buildCanadaSalesTaxRatesByPreset('gst_5')
+      if (selectionKey === CURRENT_CANADA_TAX_SELECTION) return buildCanadaSalesTaxRatesByPreset('canada_current')
+      return normalizeCanadaSalesTaxRatesByRegion(existing ?? {}, { fallbackPreset: 'canada_current' })
     },
-    [taxRateCatalog],
+    [],
   )
 
   useEffect(() => {
     if (!canManage || mode !== 'manage') return
     void loadConnectStatus()
   }, [canManage, loadConnectStatus, mode])
+
+  const loadOrders = useCallback(async () => {
+    if (!canManage || mode !== 'manage' || manageSection !== 'orders') {
+      setOrders([])
+      setOrdersError(null)
+      setOrdersLoading(false)
+      return
+    }
+
+    const token = getStoredToken()
+    if (!token) {
+      redirectToAuthModal('login')
+      return
+    }
+
+    setOrdersLoading(true)
+    setOrdersError(null)
+    try {
+      const res = await fetch(buildApiUrl(`${shopPath}/orders?limit=200`), {
+        headers: { authorization: `Bearer ${token}` },
+        cache: 'no-store',
+      })
+      if (!res.ok) {
+        setOrders([])
+        setOrdersError('Unable to load orders right now.')
+        return
+      }
+
+      const payload = (await res.json().catch(() => null)) as ShopOrdersResponse | null
+      setOrders(Array.isArray(payload?.items) ? payload.items : [])
+    } catch {
+      setOrders([])
+      setOrdersError('Unable to load orders right now.')
+    } finally {
+      setOrdersLoading(false)
+    }
+  }, [canManage, manageSection, mode, shopPath])
+
+  useEffect(() => {
+    if (mode !== 'manage' || manageSection !== 'orders') return
+    if (!canManage) return
+    void loadOrders()
+  }, [canManage, loadOrders, manageSection, mode])
 
   const uploadMediaFile = useCallback(async (file: File) => {
     const token = getStoredToken()
@@ -763,7 +885,7 @@ export default function OrganizationShopClient({
       }
       const draft = productDrafts[productId]
       if (!draft) return false
-      const taxDraft = taxDrafts[productId] ?? { collectTax: false, selectionKey: 'gst_5', ratesByRegion: {} }
+      const taxDraft = taxDrafts[productId] ?? { collectTax: false, selectionKey: CURRENT_CANADA_TAX_SELECTION, ratesByRegion: {} }
 
       const price = Number(draft.priceDollars)
       if (!Number.isFinite(price) || price < 0) {
@@ -928,13 +1050,15 @@ export default function OrganizationShopClient({
         const ok = await savePhotos(productId, mediaUrl, draft.galleryImageUrls)
         if (!ok) return
         updateProductDraft(productId, (current) => ({ ...current, primaryImageUrl: mediaUrl }))
+        setProducts((prev) =>
+          prev.map((product) => (product.id === productId ? { ...product, primaryImageUrl: mediaUrl } : product)),
+        )
         pushToast('Primary photo uploaded.', 'success')
-        await load()
       } finally {
         setUploadingProductId(null)
       }
     },
-    [load, productDrafts, pushToast, savePhotos, updateProductDraft, uploadMediaFile],
+    [productDrafts, savePhotos, updateProductDraft, uploadMediaFile],
   )
 
   const handleGalleryPhotoUpload = useCallback(
@@ -957,13 +1081,15 @@ export default function OrganizationShopClient({
         const ok = await savePhotos(productId, draft.primaryImageUrl, deduped)
         if (!ok) return
         updateProductDraft(productId, (current) => ({ ...current, galleryImageUrls: deduped }))
+        setProducts((prev) =>
+          prev.map((product) => (product.id === productId ? { ...product, galleryImageUrls: deduped } : product)),
+        )
         pushToast('Gallery updated.', 'success')
-        await load()
       } finally {
         setUploadingProductId(null)
       }
     },
-    [load, productDrafts, pushToast, savePhotos, updateProductDraft, uploadMediaFile],
+    [productDrafts, savePhotos, updateProductDraft, uploadMediaFile],
   )
 
   const saveInventory = useCallback(
@@ -971,14 +1097,14 @@ export default function OrganizationShopClient({
       const token = getStoredToken()
       if (!token) {
         redirectToAuthModal('login')
-        return
+        return false
       }
       const source = override ?? inventoryDraft[productId] ?? {}
       const quantities = Object.entries(source).map(([warehouseId, quantity]) => ({
         warehouseId,
         quantity: Math.max(0, Math.round(Number(quantity) || 0)),
       }))
-      if (!quantities.length) return
+      if (!quantities.length) return true
 
       setSaving(true)
       try {
@@ -993,17 +1119,34 @@ export default function OrganizationShopClient({
         const payload = (await res.json().catch(() => null)) as { error?: string } | null
         if (!res.ok) {
           pushToast(payload?.error ?? 'Unable to save inventory right now.', 'error')
-          return
+          return false
         }
+        const normalizedSource = Object.fromEntries(quantities.map((entry) => [entry.warehouseId, entry.quantity]))
+        setInventoryDraft((prev) => ({
+          ...prev,
+          [productId]: normalizedSource,
+        }))
+        setProducts((prev) =>
+          prev.map((product) => {
+            if (product.id !== productId) return product
+            const snapshot = buildInventorySnapshot(normalizedSource, product.inventoryByWarehouse)
+            return {
+              ...product,
+              inventoryByWarehouse: snapshot.inventoryByWarehouse,
+              inventoryTotal: snapshot.inventoryTotal,
+            }
+          }),
+        )
         pushToast('Inventory updated.', 'success')
-        await load()
+        return true
       } catch {
         pushToast('Unable to save inventory right now.', 'error')
+        return false
       } finally {
         setSaving(false)
       }
     },
-    [inventoryDraft, load, shopPath],
+    [inventoryDraft, shopPath],
   )
 
   const openInventoryAdjustModal = useCallback(
@@ -1045,8 +1188,8 @@ export default function OrganizationShopClient({
       [productId]: next,
     }))
 
-    await saveInventory(productId, next)
-    setShowInventoryAdjustModal(false)
+    const saved = await saveInventory(productId, next)
+    if (saved) setShowInventoryAdjustModal(false)
   }, [inventoryAdjustDirection, inventoryAdjustProductId, inventoryAdjustQuantity, inventoryAdjustWarehouseId, inventoryDraft, saveInventory])
 
   const createCatalog = useCallback(async () => {
@@ -1416,6 +1559,37 @@ export default function OrganizationShopClient({
     if (!focusProductId) return base
     return base.filter((product) => product.id === focusProductId)
   }, [focusProductId, mode, products])
+  const orderStatusOptions = useMemo(() => {
+    const values = Array.from(new Set(orders.map((order) => String(order.status || '').trim()).filter(Boolean)))
+    return ['all', ...values]
+  }, [orders])
+  const filteredOrders = useMemo(() => {
+    const searchNeedle = orderSearchQuery.trim().toLowerCase()
+
+    return orders.filter((order) => {
+      if (orderStatusFilter !== 'all' && order.status !== orderStatusFilter) return false
+
+      const createdAtMs = new Date(order.createdAt).getTime()
+      if (orderDateFrom) {
+        const start = new Date(`${orderDateFrom}T00:00:00`).getTime()
+        if (Number.isFinite(start) && createdAtMs < start) return false
+      }
+      if (orderDateTo) {
+        const end = new Date(`${orderDateTo}T23:59:59.999`).getTime()
+        if (Number.isFinite(end) && createdAtMs > end) return false
+      }
+
+      if (!searchNeedle) return true
+
+      const buyerLabel = order.buyer
+        ? [order.buyer.name, order.buyer.handle ? `@${order.buyer.handle}` : '', order.buyer.email].filter(Boolean).join(' ').toLowerCase()
+        : 'guest guest checkout legacy'
+      const itemLabel = order.items.map((item) => `${item.name} ${item.fulfillmentType}`).join(' ').toLowerCase()
+      const orderIdLabel = order.id.toLowerCase()
+
+      return buyerLabel.includes(searchNeedle) || itemLabel.includes(searchNeedle) || orderIdLabel.includes(searchNeedle)
+    })
+  }, [orderDateFrom, orderDateTo, orderSearchQuery, orderStatusFilter, orders])
 
   useEffect(() => {
     if (mode !== 'storefront') return
@@ -1470,7 +1644,7 @@ export default function OrganizationShopClient({
           <img src={product.primaryImageUrl} alt={product.name} className="mb-3 h-44 w-full rounded-xl border border-slate-200 object-cover" />
         ) : null}
         <p className="text-base font-semibold text-slate-900">{product.name}</p>
-        {product.description ? <p className="mt-1 line-clamp-2 text-sm text-slate-600">{product.description}</p> : null}
+        {product.description ? <p className="mt-1 line-clamp-2 text-sm text-slate-600">{stripHtmlToPlainText(product.description)}</p> : null}
         <p className="mt-2 text-sm font-semibold text-slate-900">{formatCurrency(product.priceCents, product.currency)}</p>
       </button>
     )
@@ -1488,20 +1662,31 @@ export default function OrganizationShopClient({
               {selectedCatalog ? `Return to ${selectedCatalog.title}` : 'Return to products'}
             </button>
 
-            {storefrontSelectedProduct.primaryImageUrl ? (
-              <img
-                src={storefrontSelectedProduct.primaryImageUrl}
-                alt={storefrontSelectedProduct.name}
-                className="h-64 w-full rounded-xl border border-slate-200 object-cover"
-              />
-            ) : null}
+            {(() => {
+              const productImages = Array.from(
+                new Set(
+                  [storefrontSelectedProduct.primaryImageUrl, ...(storefrontSelectedProduct.galleryImageUrls ?? [])].filter(
+                    (value): value is string => Boolean(value && value.trim()),
+                  ),
+                ),
+              )
+
+              if (!productImages.length) return null
+
+              return <CivilPostMedia images={productImages} />
+            })()}
 
             <div>
               <h3 className="text-xl font-semibold text-slate-900">{storefrontSelectedProduct.name}</h3>
               <p className="mt-2 text-sm font-semibold text-slate-900">
                 {formatCurrency(storefrontSelectedProduct.priceCents, storefrontSelectedProduct.currency)}
               </p>
-              {storefrontSelectedProduct.description ? <p className="mt-2 text-sm text-slate-600">{storefrontSelectedProduct.description}</p> : null}
+              {storefrontSelectedProduct.description ? (
+                <div
+                  className="cc-article-rich-content mt-2 text-sm text-slate-600"
+                  dangerouslySetInnerHTML={{ __html: storefrontSelectedProduct.description }}
+                />
+              ) : null}
             </div>
 
             <div className="flex flex-wrap items-center gap-2">
@@ -1642,7 +1827,7 @@ export default function OrganizationShopClient({
         }
 
         const currentStatus: 'DRAFT' | 'PUBLISHED' = focusedProduct.isDraft ? 'DRAFT' : 'PUBLISHED'
-        const taxDraft = taxDrafts[focusedProduct.id] ?? { collectTax: false, selectionKey: 'gst_5', ratesByRegion: {} }
+        const taxDraft = taxDrafts[focusedProduct.id] ?? { collectTax: false, selectionKey: CURRENT_CANADA_TAX_SELECTION, ratesByRegion: {} }
         const selectedSection = getMarketListingSection(draft.listingSection)
         const selectedCategory = getMarketListingCategory(draft.listingSection, draft.listingCategory)
         const currentListingSummary = listingTypeSummary(draft.listingSection, draft.listingCategory, draft.listingSubcategory)
@@ -1779,15 +1964,17 @@ export default function OrganizationShopClient({
                 />
               </label>
 
-              <label className="grid gap-1 text-xs font-semibold uppercase tracking-wide text-slate-500">
-                Description
-                <textarea
-                  rows={4}
-                  value={draft.description}
-                  onChange={(event) => updateProductDraft(focusedProduct.id, (current) => ({ ...current, description: event.target.value }))}
-                  className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-normal normal-case tracking-normal text-slate-900"
-                />
-              </label>
+              <div className="grid gap-1">
+                <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">Description</span>
+                <div className="normal-case text-base font-normal tracking-normal text-slate-900">
+                  <RichTextEditor
+                    value={draft.description}
+                    onChange={(value) => updateProductDraft(focusedProduct.id, (current) => ({ ...current, description: value }))}
+                    minHeight={220}
+                    placeholder="Describe the product, details, policies, and anything buyers should know"
+                  />
+                </div>
+              </div>
 
               <label className="grid gap-1 text-xs font-semibold uppercase tracking-wide text-slate-500">
                 Price (CAD)
@@ -1929,9 +2116,9 @@ export default function OrganizationShopClient({
                   checked={taxDraft.collectTax}
                   onChange={(event) =>
                     setTaxDrafts((prev) => {
-                      const current = prev[focusedProduct.id] ?? { collectTax: false, selectionKey: 'gst_5', ratesByRegion: {} }
+                      const current = prev[focusedProduct.id] ?? { collectTax: false, selectionKey: CURRENT_CANADA_TAX_SELECTION, ratesByRegion: {} }
                       const nextCollectTax = event.target.checked
-                      const nextSelectionKey = current.selectionKey || 'gst_5'
+                      const nextSelectionKey = current.selectionKey || CURRENT_CANADA_TAX_SELECTION
                       const nextRates = nextCollectTax ? buildRatesBySelection(nextSelectionKey, current.ratesByRegion) : current.ratesByRegion
 
                       return {
@@ -1951,15 +2138,14 @@ export default function OrganizationShopClient({
 
               {taxDraft.collectTax ? (
                 <div className="space-y-2">
-                  {taxRateCatalogLoading ? <p className="text-xs text-slate-500">Loading latest tax rates…</p> : null}
                   <label className="grid gap-1 text-xs font-semibold uppercase tracking-wide text-slate-500">
-                    Select tax rate
+                    Sales tax preset
                     <select
-                      value={taxDraft.selectionKey || 'gst_5'}
+                      value={taxDraft.selectionKey || CURRENT_CANADA_TAX_SELECTION}
                       onChange={(event) => {
-                        const selectionKey = String(event.target.value || 'gst_5')
+                        const selectionKey = String(event.target.value || CURRENT_CANADA_TAX_SELECTION)
                         setTaxDrafts((prev) => {
-                          const current = prev[focusedProduct.id] ?? { collectTax: false, selectionKey: 'gst_5', ratesByRegion: {} }
+                          const current = prev[focusedProduct.id] ?? { collectTax: false, selectionKey: CURRENT_CANADA_TAX_SELECTION, ratesByRegion: {} }
                           return {
                             ...prev,
                             [focusedProduct.id]: {
@@ -1972,24 +2158,32 @@ export default function OrganizationShopClient({
                       }}
                       className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 focus:border-[var(--cc-primary)] focus:outline-none"
                     >
-                      {TAX_REGION_CODES.map((code) => {
-                        const catalog = taxRateCatalog?.byCode?.[code]
-                        const standardLabel =
-                          catalog?.options?.find((opt) => Number(opt.ratePct) === Number(catalog.defaultRatePct))?.label ??
-                          (catalog ? `${catalog.defaultRatePct}%` : '5%')
-                        const name = catalog?.name ? ` — ${catalog.name}` : ''
-                        return (
-                          <option key={code} value={`region:${code}`}>
-                            {code}
-                            {name} — {standardLabel}
-                          </option>
-                        )
-                      })}
+                      <option value={CURRENT_CANADA_TAX_SELECTION}>Current Canadian sales taxes</option>
                       <option value="gst_5">GST only — 5%</option>
                       <option value="none">No tax — 0%</option>
+                      <option value="custom">Custom rates</option>
                     </select>
                   </label>
-                  <p className="text-xs text-slate-500">This applies your selected rate across all regions for now.</p>
+                  <p className="text-xs text-slate-500">
+                    Current Canadian rates apply GST, HST, PST, RST, and QST by province using today&apos;s combined rates.
+                  </p>
+                  <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                    {TAX_REGION_CODES.map((code) => {
+                      const catalog = taxRateCatalog?.byCode?.[code]
+                      const label =
+                        catalog?.options?.find((opt) => Number(opt.ratePct) === Number(catalog.defaultRatePct))?.label ??
+                        (catalog ? `${catalog.defaultRatePct}%` : '—')
+                      const currentRate = taxDraft.ratesByRegion?.[code]
+                      return (
+                        <div key={code} className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">
+                          <div className="font-semibold text-slate-900">
+                            {code} — {currentRate ?? '—'}%
+                          </div>
+                          <div className="mt-1">{label}</div>
+                        </div>
+                      )
+                    })}
+                  </div>
                 </div>
               ) : null}
             </section>
@@ -2560,7 +2754,136 @@ export default function OrganizationShopClient({
         <div className="space-y-5">
           {renderReturnRow()}
           <section className="rounded-2xl border border-slate-200 bg-white p-4">
-            <p className="text-sm text-slate-700">Orders management will appear here.</p>
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <p className="text-sm font-semibold text-slate-900">Orders</p>
+                <p className="mt-1 text-xs text-slate-500">Filter by status, date, items, or buyer.</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => void loadOrders()}
+                disabled={ordersLoading}
+                className="rounded-full border border-slate-200 bg-white px-4 py-2 text-xs font-semibold text-slate-700 transition hover:bg-slate-50 disabled:opacity-60"
+              >
+                {ordersLoading ? 'Refreshing…' : 'Refresh'}
+              </button>
+            </div>
+
+            <div className="mt-4 grid gap-3 lg:grid-cols-4">
+              <label className="space-y-1.5">
+                <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">Status</span>
+                <select
+                  value={orderStatusFilter}
+                  onChange={(event) => setOrderStatusFilter(event.target.value)}
+                  className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900"
+                >
+                  {orderStatusOptions.map((value) => (
+                    <option key={value} value={value}>
+                      {value === 'all' ? 'All statuses' : value}
+                    </option>
+                  ))}
+                </select>
+              </label>
+
+              <label className="space-y-1.5 lg:col-span-1">
+                <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">Items or User</span>
+                <input
+                  value={orderSearchQuery}
+                  onChange={(event) => setOrderSearchQuery(event.target.value)}
+                  placeholder="Search orders"
+                  className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900"
+                />
+              </label>
+
+              <label className="space-y-1.5">
+                <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">Date From</span>
+                <input
+                  type="date"
+                  value={orderDateFrom}
+                  onChange={(event) => setOrderDateFrom(event.target.value)}
+                  className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900"
+                />
+              </label>
+
+              <label className="space-y-1.5">
+                <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">Date To</span>
+                <input
+                  type="date"
+                  value={orderDateTo}
+                  onChange={(event) => setOrderDateTo(event.target.value)}
+                  className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900"
+                />
+              </label>
+            </div>
+
+            {ordersError ? <div className="mt-4 rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">{ordersError}</div> : null}
+
+            {ordersLoading ? (
+              <div className="mt-4 rounded-2xl border border-slate-100 bg-slate-50 px-4 py-6 text-sm text-slate-500">Loading orders…</div>
+            ) : filteredOrders.length ? (
+              <div className="mt-4 space-y-3">
+                {filteredOrders.map((order) => {
+                  const buyerLabel = order.buyer?.name?.trim() || (order.buyer?.handle ? `@${order.buyer.handle}` : '') || 'Guest checkout (legacy)'
+                  const buyerMeta = order.buyer?.handle ? `@${order.buyer.handle}` : order.buyer?.email?.trim() || null
+                  const statusTone =
+                    order.status === 'paid'
+                      ? 'border-emerald-200 bg-emerald-50 text-emerald-700'
+                      : order.status === 'fulfilled'
+                        ? 'border-sky-200 bg-sky-50 text-sky-700'
+                        : order.status === 'cancelled'
+                          ? 'border-rose-200 bg-rose-50 text-rose-700'
+                          : 'border-amber-200 bg-amber-50 text-amber-700'
+
+                  return (
+                    <article key={order.id} className="rounded-2xl border border-slate-200 bg-slate-50/60 p-4">
+                      <div className="flex flex-wrap items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <span className="text-sm font-semibold text-slate-900">Order {order.id.slice(0, 8)}</span>
+                            <span className={clsx('rounded-full border px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wide', statusTone)}>
+                              {order.status}
+                            </span>
+                          </div>
+                          <div className="mt-1 text-xs text-slate-500">{formatOrderDateTime(order.createdAt)}</div>
+                        </div>
+                        <div className="text-right">
+                          <div className="text-sm font-semibold text-slate-900">{formatCurrency(order.totalCents, order.currency)}</div>
+                          <div className="mt-1 text-xs text-slate-500">{order.paymentMethod === 'civil_wallet' ? 'Civil Wallet' : 'Credit Card'}</div>
+                        </div>
+                      </div>
+
+                      <div className="mt-4 grid gap-3 md:grid-cols-3">
+                        <div className="rounded-xl border border-slate-200 bg-white px-3 py-3">
+                          <div className="text-[11px] font-semibold uppercase tracking-[0.24em] text-slate-500">User</div>
+                          <div className="mt-2 text-sm font-semibold text-slate-900">{buyerLabel}</div>
+                          {buyerMeta ? <div className="mt-1 text-xs text-slate-500">{buyerMeta}</div> : null}
+                        </div>
+                        <div className="rounded-xl border border-slate-200 bg-white px-3 py-3 md:col-span-2">
+                          <div className="text-[11px] font-semibold uppercase tracking-[0.24em] text-slate-500">Items</div>
+                          <div className="mt-2 space-y-2">
+                            {order.items.map((item, index) => (
+                              <div key={`${order.id}-${item.productId ?? index}`} className="flex flex-wrap items-center justify-between gap-2 text-sm text-slate-700">
+                                <div className="min-w-0">
+                                  <span className="font-semibold text-slate-900">{item.name}</span>
+                                  <span className="ml-2 text-xs uppercase tracking-wide text-slate-500">{item.fulfillmentType}</span>
+                                </div>
+                                <div className="shrink-0 text-xs text-slate-500">
+                                  Qty {item.quantity} • {formatCurrency(item.priceCents * item.quantity, order.currency)}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      </div>
+                    </article>
+                  )
+                })}
+              </div>
+            ) : (
+              <div className="mt-4 rounded-2xl border border-slate-100 bg-slate-50 px-4 py-6 text-sm text-slate-500">
+                No orders match these filters.
+              </div>
+            )}
           </section>
         </div>
       )

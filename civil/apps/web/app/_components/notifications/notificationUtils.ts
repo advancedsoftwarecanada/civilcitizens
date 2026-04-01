@@ -359,6 +359,8 @@ export function getNotificationMessage(notification: NotificationItem) {
     case 'cause_contribution_received_creator': {
       return 'Backed your Cause'
     }
+    case 'market_order_received':
+      return 'Placed a shop order'
     case 'friend_request':
       if (requestStatus === 'accepted') return 'You accepted the friend request'
       if (requestStatus === 'rejected') return 'You declined the friend request'
@@ -522,6 +524,19 @@ export function getNotificationMessage(notification: NotificationItem) {
 }
 
 export function getNotificationDetailLine(notification: NotificationItem): string | null {
+  if (notification.type === 'market_order_received') {
+    const amountCents = typeof notification.payload?.totalCents === 'number' ? Math.max(0, Math.round(notification.payload.totalCents)) : null
+    const itemCount = typeof notification.payload?.itemCount === 'number' ? Math.max(0, Math.round(notification.payload.itemCount)) : null
+    const businessName = typeof notification.payload?.businessName === 'string' ? notification.payload.businessName.trim() : ''
+    const amountLabel = typeof amountCents === 'number'
+      ? new Intl.NumberFormat('en-CA', { style: 'currency', currency: 'CAD' }).format(amountCents / 100)
+      : ''
+    const itemLabel = typeof itemCount === 'number' && itemCount > 0 ? `${itemCount} item${itemCount === 1 ? '' : 's'}` : ''
+
+    const detailParts = [amountLabel, itemLabel, businessName].filter(Boolean)
+    return detailParts.length ? detailParts.join(' • ') : null
+  }
+
   if (notification.type === 'cause_contribution_received_creator') {
     const amountCents = typeof notification.payload?.amountCents === 'number'
       ? Math.max(0, Math.round(notification.payload.amountCents))
@@ -558,6 +573,7 @@ export function getNotificationFamilyInviteOptions(notification: NotificationIte
 }
 
 export function getNotificationOpenLabel(notification: NotificationItem): string | null {
+  if (notification.type === 'market_order_received') return 'View orders'
   if (notification.type === 'profile_event_invite') return 'View event'
   if (notification.type === 'profile_organization_invite') return 'View organization'
   if (notification.type === 'profile_family_invite') return 'View profile'

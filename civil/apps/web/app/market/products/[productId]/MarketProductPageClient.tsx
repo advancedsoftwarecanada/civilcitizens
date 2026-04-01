@@ -115,7 +115,12 @@ export default function MarketProductPageClient({
               </button>
             </div>
 
-            {product.description ? <div className="whitespace-pre-wrap text-sm text-slate-700">{product.description}</div> : null}
+            {product.description ? (
+              <div
+                className="cc-article-rich-content text-sm text-slate-700"
+                dangerouslySetInnerHTML={{ __html: product.description }}
+              />
+            ) : null}
 
             <div className="flex flex-wrap gap-2 text-xs text-slate-600">
               <span className="rounded-full border border-slate-200 bg-white px-3 py-1">{product.fulfillmentType}</span>

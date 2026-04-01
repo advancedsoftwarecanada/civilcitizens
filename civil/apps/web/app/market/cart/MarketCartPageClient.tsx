@@ -7,6 +7,7 @@ import { useRouter } from 'next/navigation'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import DashboardShell from '../../_components/DashboardShell'
 import { buildApiUrl, parseApiResponse } from '../../_lib/api'
+import { redirectToAuthModal } from '../../_lib/authModal'
 import {
   normalizeCanadianAddress,
   readStoredMarketShippingAddress,
@@ -274,6 +275,11 @@ export default function MarketCartPageClient() {
     setCreatingPayment(true)
     setError(null)
     try {
+      const token = typeof window !== 'undefined' ? window.localStorage.getItem('token') : null
+      if (!token) {
+        redirectToAuthModal('login')
+        return
+      }
       if (needsShipping && rememberShippingAddress && typeof window !== 'undefined') {
         writeStoredMarketShippingAddress(shippingAddress)
       }
@@ -324,18 +330,23 @@ export default function MarketCartPageClient() {
               <div className="divide-y divide-slate-100">
                 {lines.map((line) => (
                   <div key={line.product.id} className="flex items-center gap-4 p-4">
-                    <div className="h-16 w-16 shrink-0 overflow-hidden rounded-xl bg-slate-50">
-                      {line.product.primaryImageUrl ? (
-                        // eslint-disable-next-line @next/next/no-img-element
-                        <img src={line.product.primaryImageUrl} alt={line.product.name} className="h-full w-full object-cover" />
-                      ) : null}
-                    </div>
+                    <Link
+                      href={`/market/products/${encodeURIComponent(line.product.id)}`}
+                      className="flex min-w-0 flex-1 items-center gap-4 rounded-2xl transition hover:bg-slate-50/80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--cc-primary)]/30"
+                    >
+                      <div className="h-16 w-16 shrink-0 overflow-hidden rounded-xl bg-slate-50">
+                        {line.product.primaryImageUrl ? (
+                          // eslint-disable-next-line @next/next/no-img-element
+                          <img src={line.product.primaryImageUrl} alt={line.product.name} className="h-full w-full object-cover" />
+                        ) : null}
+                      </div>
 
-                    <div className="min-w-0 flex-1">
-                      <div className="truncate text-sm font-semibold text-slate-900">{line.product.name}</div>
-                      <div className="mt-1 text-xs text-slate-600">{line.organization.name}</div>
-                      <div className="mt-1 text-xs text-slate-600">{formatMoney(line.product.priceCents, line.product.currency)} each</div>
-                    </div>
+                      <div className="min-w-0 flex-1">
+                        <div className="truncate text-sm font-semibold text-slate-900">{line.product.name}</div>
+                        <div className="mt-1 text-xs text-slate-600">{line.organization.name}</div>
+                        <div className="mt-1 text-xs text-slate-600">{formatMoney(line.product.priceCents, line.product.currency)} each</div>
+                      </div>
+                    </Link>
 
                     <div className="flex items-center gap-2">
                       <label className="text-xs text-slate-600" htmlFor={`qty-${line.product.id}`}>

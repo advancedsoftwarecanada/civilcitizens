@@ -111,6 +111,18 @@ function loadDependencies() {
   return dependenciesPromise
 }
 
+function normalizeEditableEmptyBlocks(root: HTMLElement | null) {
+  if (!root) return
+  const blockNodes = root.querySelectorAll('p, div')
+  blockNodes.forEach((node) => {
+    if (!(node instanceof HTMLElement)) return
+    const normalizedHtml = node.innerHTML.replace(/&nbsp;/gi, '').replace(/<br\s*\/?>/gi, '').trim()
+    if (!normalizedHtml && node.childElementCount === 0) {
+      node.innerHTML = '<br>'
+    }
+  })
+}
+
 export default function RichTextEditor({ value, onChange, placeholder, minHeight = 220, disabled }: RichTextEditorProps) {
   const containerRef = useRef<HTMLDivElement | null>(null)
   const [ready, setReady] = useState(false)
@@ -187,11 +199,27 @@ export default function RichTextEditor({ value, onChange, placeholder, minHeight
     $element.summernote('code', initialCode)
     lastEditorValueRef.current = initialCode
 
+    const noteEditorSibling = containerRef.current.nextElementSibling
+    const noteEditorElement =
+      noteEditorSibling instanceof HTMLElement && noteEditorSibling.classList.contains('note-editor') ? noteEditorSibling : null
+    const editableElement = noteEditorElement?.querySelector('.note-editable') as HTMLElement | null
+    normalizeEditableEmptyBlocks(editableElement)
+
+    const handleEnterKey = (event: KeyboardEvent) => {
+      if (event.key !== 'Enter') return
+      window.requestAnimationFrame(() => {
+        normalizeEditableEmptyBlocks(editableElement)
+      })
+    }
+
+    editableElement?.addEventListener('keyup', handleEnterKey)
+
     if (initialDisabledRef.current) {
       $element.summernote('disable')
     }
 
     return () => {
+      editableElement?.removeEventListener('keyup', handleEnterKey)
       $element.off('summernote.change', handleChange)
       $element.summernote('destroy')
     }
