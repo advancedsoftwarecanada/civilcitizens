@@ -12,6 +12,9 @@ type Order = {
   status: string
   currency: string
   subtotalCents: number
+  taxCents: number
+  civilFeeCents: number
+  stripeFeeCents: number
   feeCents: number
   totalCents: number
   shippingAddress: unknown
@@ -152,9 +155,27 @@ export default function MarketOrderPageClient({ orderId }: { orderId: string }) 
                   <span className="font-semibold text-slate-900">{formatMoney(data.order.subtotalCents, data.order.currency)}</span>
                 </div>
                 <div className="flex items-center justify-between">
-                  <span>Platform fee</span>
-                  <span className="font-semibold text-slate-900">{formatMoney(data.order.feeCents, data.order.currency)}</span>
+                  <span>Taxes</span>
+                  <span className="font-semibold text-slate-900">{formatMoney(data.order.taxCents, data.order.currency)}</span>
                 </div>
+                <div className="flex items-center justify-between">
+                  <span>Civil Fee</span>
+                  <span className="font-semibold text-slate-900">{formatMoney(data.order.civilFeeCents, data.order.currency)}</span>
+                </div>
+                {data.order.stripeFeeCents > 0 ? (
+                  <div className="flex items-center justify-between">
+                    <span>Credit card fee</span>
+                    <span className="font-semibold text-slate-900">{formatMoney(data.order.stripeFeeCents, data.order.currency)}</span>
+                  </div>
+                ) : null}
+                {data.order.feeCents > data.order.civilFeeCents + data.order.stripeFeeCents ? (
+                  <div className="flex items-center justify-between">
+                    <span>Other fees</span>
+                    <span className="font-semibold text-slate-900">
+                      {formatMoney(data.order.feeCents - data.order.civilFeeCents - data.order.stripeFeeCents, data.order.currency)}
+                    </span>
+                  </div>
+                ) : null}
               </div>
             </div>
 

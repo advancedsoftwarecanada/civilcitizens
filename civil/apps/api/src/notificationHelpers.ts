@@ -236,7 +236,7 @@ function getNativeNotificationSound(type: string, platform: NativePushPlatform):
   if (normalized === 'drive_ride_contract_update' || normalized === 'delivery_contract_update') {
     return platform === 'android' ? 'honk_honk' : 'honk-honk.caf'
   }
-  if (normalized === CAUSE_NOTIFICATION_TYPES.CONTRIBUTION_RECEIVED_CREATOR) {
+  if (normalized === CAUSE_NOTIFICATION_TYPES.CONTRIBUTION_RECEIVED_CREATOR || normalized === 'market_order_received') {
     return platform === 'android' ? 'money' : 'money.caf'
   }
   return 'civil-general.caf'
@@ -377,6 +377,16 @@ export function createNotificationHelpers(deps: CreateNotificationHelpersDeps) {
     }
     if (record.type === CONNECTION_NOTIFICATION_TYPES.ACCEPT) {
       return { title: 'Connection request accepted', message: `${actorLabel} accepted your connection request.` }
+    }
+    if (record.type === 'market_order_received') {
+      const payload = readPayloadRecord(record.payload)
+      const businessName = typeof payload?.businessName === 'string' ? payload.businessName.trim() : ''
+      const itemCount = Number(payload?.itemCount || 0) || 0
+      const countLabel = itemCount > 0 ? `${itemCount} item${itemCount === 1 ? '' : 's'}` : 'an order'
+      return {
+        title: 'New shop order',
+        message: businessName ? `${actorLabel} placed ${countLabel} with ${businessName}.` : `${actorLabel} placed ${countLabel}.`,
+      }
     }
     if (record.type === EVENT_NOTIFICATION_TYPES.GUEST_SPEAKER_INVITE) {
       const payload = readPayloadRecord(record.payload)

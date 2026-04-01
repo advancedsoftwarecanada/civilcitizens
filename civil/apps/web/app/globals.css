@@ -538,6 +538,7 @@ html.cc-launch-pending #cc-app-root {
 .cc-article-rich-content p,
 .cc-article-rich-content li,
 .cc-article-rich-content blockquote,
+.cc-rich-text-editor + .note-editor .note-editing-area .note-editable div,
 .cc-rich-text-editor + .note-editor .note-editing-area .note-editable p,
 .cc-rich-text-editor + .note-editor .note-editing-area .note-editable li,
 .cc-rich-text-editor + .note-editor .note-editing-area .note-editable blockquote {
@@ -551,6 +552,7 @@ html.cc-launch-pending #cc-app-root {
 .cc-article-rich-content h1,
 .cc-article-rich-content h2,
 .cc-article-rich-content h3,
+.cc-rich-text-editor + .note-editor .note-editing-area .note-editable div,
 .cc-rich-text-editor + .note-editor .note-editing-area .note-editable p,
 .cc-rich-text-editor + .note-editor .note-editing-area .note-editable ul,
 .cc-rich-text-editor + .note-editor .note-editing-area .note-editable ol,
@@ -568,6 +570,7 @@ html.cc-launch-pending #cc-app-root {
 .cc-article-rich-content h1:last-child,
 .cc-article-rich-content h2:last-child,
 .cc-article-rich-content h3:last-child,
+.cc-rich-text-editor + .note-editor .note-editing-area .note-editable div:last-child,
 .cc-rich-text-editor + .note-editor .note-editing-area .note-editable p:last-child,
 .cc-rich-text-editor + .note-editor .note-editing-area .note-editable ul:last-child,
 .cc-rich-text-editor + .note-editor .note-editing-area .note-editable ol:last-child,
@@ -669,6 +672,16 @@ html.cc-launch-pending #cc-app-root {
 
 .cc-rich-text-editor + .note-editor .note-editing-area .note-editable {
   padding: 1rem 1.1rem;
+}
+
+.cc-rich-text-editor + .note-editor .note-editing-area .note-editable p:empty,
+.cc-rich-text-editor + .note-editor .note-editing-area .note-editable div:empty {
+  min-height: 1.5rem;
+}
+
+.cc-rich-text-editor + .note-editor .note-editing-area .note-editable p:empty::before,
+.cc-rich-text-editor + .note-editor .note-editing-area .note-editable div:empty::before {
+  content: '\200B';
 }
 
 @media (max-width: 767px) {

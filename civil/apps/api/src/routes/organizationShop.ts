@@ -3,6 +3,8 @@ import { randomUUID } from 'node:crypto'
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 import { prisma } from '@civil/db'
 import { Prisma } from '@prisma/client'
+import { normalizeCanadaSalesTaxRatesByRegion } from '@civil/shared'
+import { z } from 'zod'
 
 type OrganizationShopDeps = Record<string, any>
 
@@ -284,10 +286,7 @@ export function registerOrganizationShopRoutes(app: FastifyInstance, deps: Organ
           listingSubcategory: row.listing_subcategory,
           featuredHomepage: row.featured_homepage,
           taxCollect: row.tax_collect,
-          taxRatesByRegion:
-            row.tax_rates_by_region && typeof row.tax_rates_by_region === 'object' && !Array.isArray(row.tax_rates_by_region)
-              ? (row.tax_rates_by_region as Record<string, unknown>)
-              : {},
+          taxRatesByRegion: row.tax_collect ? normalizeCanadaSalesTaxRatesByRegion(row.tax_rates_by_region, { fallbackPreset: 'canada_current' }) : {},
           priceCents: Number(row.price_cents) || 0,
           currency: row.currency,
           sku: row.sku,
@@ -307,6 +306,177 @@ export function registerOrganizationShopRoutes(app: FastifyInstance, deps: Organ
           inventoryByWarehouse: includePrivateShopData ? inventoryByProduct.get(row.id) ?? [] : [],
           createdAt: row.created_at.toISOString(),
           updatedAt: row.updated_at.toISOString(),
+        })),
+      })
+    }),
+  )
+
+  app.get('/communities/:province/:municipality/orgs/:slug/shop/orders', async (req: FastifyRequest, reply: FastifyReply) =>
+    deps.withSchemaGuard(req, reply, async () => {
+      const userId = (await deps.resolveUserId(req)) ?? undefined
+      if (!userId) return reply.code(401).send({ error: 'unauthorized' })
+
+      const params = deps.CommunityOrgSlugParams.safeParse(req.params)
+      if (!params.success) return reply.code(400).send({ error: 'invalid_params' })
+
+      const query = z
+        .object({
+          limit: z.coerce.number().int().min(1).max(500).optional().default(200),
+        })
+        .safeParse(req.query ?? {})
+      if (!query.success) return reply.code(400).send({ error: 'invalid_query' })
+
+      const province = deps.normalizeProvinceCode(params.data.province)
+      if (!province) return reply.code(404).send({ error: 'province_not_found' })
+      const community = deps.findCommunity(province, params.data.municipality.trim().toLowerCase())
+      if (!community) return reply.code(404).send({ error: 'community_not_found' })
+
+      const org = await prisma.business.findFirst({
+        where: { provinceCode: province, communitySlug: community.slug, slug: params.data.slug.trim().toLowerCase() },
+        select: { id: true, ownerId: true, moderationStatus: true },
+      })
+      if (!org) return reply.code(404).send({ error: 'organization_not_found' })
+      if (org.moderationStatus !== deps.ModerationStatus.VISIBLE) {
+        return reply.code(423).send({ error: deps.moderationLockedErrorCode('ORGANIZATION') })
+      }
+
+      const isOwner = org.ownerId === userId
+      const membership = isOwner
+        ? { role: 'OWNER' as const }
+        : await prisma.businessMembership.findUnique({ where: { businessId_userId: { businessId: org.id, userId } }, select: { role: true } })
+      if (!membership || (membership.role !== 'OWNER' && membership.role !== 'MANAGER')) {
+        return reply.code(403).send({ error: 'forbidden' })
+      }
+
+      await deps.ensureOrganizationShopTables()
+
+      type OrderRow = {
+        id: string
+        status: string
+        currency: string
+        subtotal_cents: number
+        tax_cents: number
+        civil_fee_cents: number
+        stripe_fee_cents: number
+        fee_cents: number
+        total_cents: number
+        created_at: Date
+        buyer_user_id: string | null
+        buyer_name: string | null
+        buyer_handle: string | null
+        buyer_email: string | null
+        payment_method: string | null
+        payment_status: string | null
+        item_count: bigint | number
+      }
+
+      const orderRows = await prisma.$queryRaw<OrderRow[]>`
+        SELECT
+          o.id,
+          o.status,
+          o.currency,
+          o.subtotal_cents,
+          o.tax_cents,
+          o.civil_fee_cents,
+          o.stripe_fee_cents,
+          o.fee_cents,
+          o.total_cents,
+          o.created_at,
+          o.buyer_user_id,
+          u.name AS buyer_name,
+          u.handle AS buyer_handle,
+          u.email AS buyer_email,
+          pay.payment_method,
+          pay.status AS payment_status,
+          COALESCE(SUM(oi.quantity), 0)::bigint AS item_count
+        FROM organization_shop_order o
+        LEFT JOIN "User" u ON u.id = o.buyer_user_id
+        LEFT JOIN LATERAL (
+          SELECT payment_method, status
+          FROM organization_shop_payment
+          WHERE order_id = o.id
+          ORDER BY created_at DESC
+          LIMIT 1
+        ) pay ON TRUE
+        LEFT JOIN organization_shop_order_item oi ON oi.order_id = o.id
+        WHERE o.business_id = ${org.id}
+        GROUP BY
+          o.id,
+          o.status,
+          o.currency,
+          o.subtotal_cents,
+          o.tax_cents,
+          o.civil_fee_cents,
+          o.stripe_fee_cents,
+          o.fee_cents,
+          o.total_cents,
+          o.created_at,
+          o.buyer_user_id,
+          u.name,
+          u.handle,
+          u.email,
+          pay.payment_method,
+          pay.status
+        ORDER BY o.created_at DESC
+        LIMIT ${query.data.limit}
+      `
+
+      const orderIds = orderRows.map((row: OrderRow) => row.id)
+      type OrderItemRow = {
+        order_id: string
+        product_id: string | null
+        name: string
+        price_cents: number
+        quantity: number
+        fulfillment_type: string
+      }
+
+      const itemRows = orderIds.length
+        ? await prisma.$queryRaw<OrderItemRow[]>`
+            SELECT order_id, product_id, name, price_cents, quantity, fulfillment_type
+            FROM organization_shop_order_item
+            WHERE order_id IN (${Prisma.join(orderIds)})
+            ORDER BY created_at ASC
+          `
+        : []
+
+      const itemsByOrderId = new Map<string, OrderItemRow[]>()
+      for (const row of itemRows) {
+        const current = itemsByOrderId.get(row.order_id) ?? []
+        current.push(row)
+        itemsByOrderId.set(row.order_id, current)
+      }
+
+      return reply.send({
+        items: orderRows.map((row: OrderRow) => ({
+          id: row.id,
+          status: row.status,
+          currency: row.currency,
+          subtotalCents: Number(row.subtotal_cents) || 0,
+          taxCents: Number(row.tax_cents) || 0,
+          civilFeeCents: Number(row.civil_fee_cents) || 0,
+          stripeFeeCents: Number(row.stripe_fee_cents) || 0,
+          feeCents: Number(row.fee_cents) || 0,
+          totalCents: Number(row.total_cents) || 0,
+          createdAt: row.created_at.toISOString(),
+          paymentMethod: row.payment_method,
+          paymentStatus: row.payment_status,
+          itemCount: Number(row.item_count ?? 0) || 0,
+          buyer: row.buyer_user_id
+            ? {
+                id: row.buyer_user_id,
+                name: row.buyer_name,
+                handle: row.buyer_handle,
+                email: row.buyer_email,
+              }
+            : null,
+          items: (itemsByOrderId.get(row.id) ?? []).map((item: OrderItemRow) => ({
+            productId: item.product_id,
+            name: item.name,
+            priceCents: Number(item.price_cents) || 0,
+            quantity: Number(item.quantity) || 0,
+            fulfillmentType: item.fulfillment_type,
+          })),
         })),
       })
     }),
@@ -996,7 +1166,13 @@ export function registerOrganizationShopRoutes(app: FastifyInstance, deps: Organ
       }
 
       const nextProductDescription =
-        'description' in body.data ? (body.data.description?.trim() ? deps.sanitizePlainText(body.data.description).trim() : null) : null
+        'description' in body.data ? (body.data.description?.trim() ? deps.sanitizeRichTextHtml(body.data.description).trim() : null) : null
+      const hasTaxRatesByRegion = Object.prototype.hasOwnProperty.call(body.data, 'taxRatesByRegion')
+      const nextTaxRatesByRegion = hasTaxRatesByRegion
+        ? body.data.taxCollect === false
+          ? {}
+          : normalizeCanadaSalesTaxRatesByRegion(body.data.taxRatesByRegion ?? {}, { fallbackPreset: 'canada_current' })
+        : undefined
 
       const catalogProvided = Object.prototype.hasOwnProperty.call(body.data, 'catalogId')
       let resolvedCatalogId: string | null | undefined = undefined
@@ -1026,7 +1202,7 @@ export function registerOrganizationShopRoutes(app: FastifyInstance, deps: Organ
             featured_homepage = COALESCE(${typeof body.data.featuredHomepage === 'boolean' ? body.data.featuredHomepage : null}, featured_homepage),
             tax_collect = COALESCE(${typeof body.data.taxCollect === 'boolean' ? body.data.taxCollect : null}, tax_collect),
             tax_rates_by_region = CASE
-              WHEN ${Object.prototype.hasOwnProperty.call(body.data, 'taxRatesByRegion')} THEN ${JSON.stringify(body.data.taxRatesByRegion ?? {})}::jsonb
+              WHEN ${hasTaxRatesByRegion} THEN ${JSON.stringify(nextTaxRatesByRegion ?? {})}::jsonb
               ELSE tax_rates_by_region
             END,
             price_cents = COALESCE(${body.data.priceCents ?? null}, price_cents),
@@ -1147,11 +1323,14 @@ export function registerOrganizationShopRoutes(app: FastifyInstance, deps: Organ
       const digitalDeliveryUrl = body.data.digitalDeliveryUrl?.trim() ? body.data.digitalDeliveryUrl.trim() : null
       if (fulfillmentType === 'digital' && !digitalDeliveryUrl) return reply.code(400).send({ error: 'digital_delivery_url_required' })
 
-      const productDescription = body.data.description?.trim() ? deps.sanitizePlainText(body.data.description).trim() : null
+      const productDescription = body.data.description?.trim() ? deps.sanitizeRichTextHtml(body.data.description).trim() : null
       const listingSection = body.data.listingSection?.trim() ? body.data.listingSection.trim() : null
       const listingCategory = body.data.listingCategory?.trim() ? body.data.listingCategory.trim() : null
       const listingSubcategory = body.data.listingSubcategory?.trim() ? body.data.listingSubcategory.trim() : null
       const galleryImageUrls = body.data.galleryImageUrls ?? []
+      const normalizedTaxRatesByRegion = body.data.taxCollect
+        ? normalizeCanadaSalesTaxRatesByRegion(body.data.taxRatesByRegion ?? {}, { fallbackPreset: 'canada_current' })
+        : {}
       let resolvedCatalogId: string | null = null
 
       if (body.data.catalogId != null) {
@@ -1174,7 +1353,7 @@ export function registerOrganizationShopRoutes(app: FastifyInstance, deps: Organ
         VALUES (
           ${productId}, ${org.id}, ${resolvedCatalogId}, ${body.data.name.trim()}, ${productDescription}, ${listingSection}, ${listingCategory}, ${listingSubcategory}, ${priceCents}, ${currency}, ${body.data.sku ?? null},
           ${body.data.primaryImageUrl ?? null}, ${JSON.stringify(galleryImageUrls)}::jsonb, ${body.data.weightGrams ?? null}, ${body.data.shippingPolicy},
-          ${body.data.allowShippingContracts}, ${body.data.featuredHomepage}, ${body.data.taxCollect}, ${JSON.stringify(body.data.taxRatesByRegion ?? {})}::jsonb, ${fulfillmentType}, ${fulfillmentType === 'digital' ? digitalDeliveryUrl : null}, ${false}, ${true}, ${body.data.trackInventory}, ${userId}
+          ${body.data.allowShippingContracts}, ${body.data.featuredHomepage}, ${body.data.taxCollect}, ${JSON.stringify(normalizedTaxRatesByRegion)}::jsonb, ${fulfillmentType}, ${fulfillmentType === 'digital' ? digitalDeliveryUrl : null}, ${false}, ${true}, ${body.data.trackInventory}, ${userId}
         )
       `
 

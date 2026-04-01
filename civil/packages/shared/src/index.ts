@@ -1,5 +1,5 @@
 export * from './schemas.js'
+export * from './canadaSalesTaxes.js'
 export * from './chambers.js'
 export * from './handle.js'
 export * from './tagging.js'
-

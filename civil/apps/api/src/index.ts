@@ -35,6 +35,7 @@ import {
 } from '@prisma/client'
 import type { City as CityModel } from '@prisma/client'
 import {
+  buildCanadaSalesTaxCatalogResponse,
   CreatePostInput,
   calculateCausePlatformFeeCents,
   RegisterInput,
@@ -6395,6 +6396,21 @@ function ensureOrganizationShopTables() {
 
       await prisma.$executeRawUnsafe(`
         ALTER TABLE organization_shop_order
+        ADD COLUMN IF NOT EXISTS tax_cents INTEGER NOT NULL DEFAULT 0;
+      `)
+
+      await prisma.$executeRawUnsafe(`
+        ALTER TABLE organization_shop_order
+        ADD COLUMN IF NOT EXISTS civil_fee_cents INTEGER NOT NULL DEFAULT 0;
+      `)
+
+      await prisma.$executeRawUnsafe(`
+        ALTER TABLE organization_shop_order
+        ADD COLUMN IF NOT EXISTS stripe_fee_cents INTEGER NOT NULL DEFAULT 0;
+      `)
+
+      await prisma.$executeRawUnsafe(`
+        ALTER TABLE organization_shop_order
         ADD COLUMN IF NOT EXISTS fee_cents INTEGER NOT NULL DEFAULT 0;
       `)
 
@@ -6437,12 +6453,24 @@ function ensureOrganizationShopTables() {
           id TEXT PRIMARY KEY,
           order_id TEXT NOT NULL REFERENCES organization_shop_order(id) ON DELETE CASCADE,
           stripe_payment_intent_id TEXT,
+          wallet_transaction_id TEXT,
+          payment_method TEXT NOT NULL DEFAULT 'credit_card',
           status TEXT NOT NULL DEFAULT 'requires_payment_method',
           amount_cents INTEGER NOT NULL,
           currency TEXT NOT NULL DEFAULT 'CAD',
           created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
           updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
         );
+      `)
+
+      await prisma.$executeRawUnsafe(`
+        ALTER TABLE organization_shop_payment
+        ADD COLUMN IF NOT EXISTS wallet_transaction_id TEXT;
+      `)
+
+      await prisma.$executeRawUnsafe(`
+        ALTER TABLE organization_shop_payment
+        ADD COLUMN IF NOT EXISTS payment_method TEXT NOT NULL DEFAULT 'credit_card';
       `)
 
       await prisma.$executeRawUnsafe(`
@@ -9752,6 +9780,7 @@ registerOrganizationShopRoutes(app, {
   readOrganizationShopPaymentsState,
   resolveUserId,
   sanitizePlainText,
+  sanitizeRichTextHtml,
   withSchemaGuard,
 })
 
@@ -9853,6 +9882,8 @@ function resolveTaxRegionCode(value: unknown): string | null {
   const compact = normalized.replace(/[^A-Z]/g, '')
   return CANADA_TAX_REGION_NAME_TO_CODE[compact] ?? null
 }
+
+const CANADA_SALES_TAX_CATALOG_RESPONSE = buildCanadaSalesTaxCatalogResponse()
 
 const MarketOrderParams = z.object({
   orderId: z.string().trim().min(1).max(128),
@@ -10501,6 +10532,10 @@ async function readViewerCommunityFollows(userId: string): Promise<Array<{ provi
     }))
 }
 
+app.get('/tax/canada/sales-rates', async (_req: FastifyRequest, reply: FastifyReply) => {
+  return reply.send(CANADA_SALES_TAX_CATALOG_RESPONSE)
+})
+
 registerMarketStorefrontRoutes(app, {
   MarketCheckoutBody,
   MarketShippingAddressBody,
@@ -10510,13 +10545,19 @@ registerMarketStorefrontRoutes(app, {
   MarketProductParams,
   MarketProductsQuery,
   ModerationStatus,
+  STRIPE_PUBLISHABLE_KEY,
+  createNotificationRecord,
   ensureCitizenMarketplaceTables,
   ensureOrganizationShopTables,
+  ensureStripeCustomer,
+  getStripeClient,
+  isStripeConfigured,
   loadViewerBlockState,
   mergeMarketShippingAddressesIntoCommunityMeta,
   normalizeMediaUrl,
   parseMarketCursor,
   parseTaxRatePct,
+  readOrganizationShopPaymentsState,
   readMarketShippingAddresses,
   readGalleryUrls,
   readViewerCommunityFollows,
