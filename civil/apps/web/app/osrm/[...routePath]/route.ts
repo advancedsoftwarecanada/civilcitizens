@@ -3,7 +3,7 @@ import { NextRequest, NextResponse } from 'next/server'
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 
-const DEFAULT_OSRM_SERVER = 'http://192.168.2.254:5000'
+const DEFAULT_OSRM_SERVER = 'http://osrm:5000'
 
 function trimTrailingSlash(value: string) {
   return value.replace(/\/+$/, '')

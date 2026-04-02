@@ -1,0 +1,56 @@
+services:
+  tileserver-gl:
+    profiles: [maps-core]
+    image: maptiler/tileserver-gl:latest
+    restart: unless-stopped
+    volumes:
+      - ${OSM_TILE_DATA_DIR:-/mnt/osm/incoming/civil-maps/data}:/data:ro
+    healthcheck:
+      test: ["CMD-SHELL", "test -s /data/canada.mbtiles"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+
+  osrm:
+    profiles: [maps-core]
+    image: osrm/osrm-backend:latest
+    restart: unless-stopped
+    command: ["osrm-routed", "--algorithm", "mld", "/data/canada-latest.osrm"]
+    volumes:
+      - ${OSM_OSRM_DATA_DIR:-/mnt/osm/incoming/civil-maps/osrm}:/data:ro
+    healthcheck:
+      test: ["CMD-SHELL", "test -s /data/canada-latest.osrm && test -s /data/canada-latest.osrm.timestamp"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+
+  nominatim:
+    profiles: [nominatim]
+    build:
+      context: ../builds/maps/nominatim-restore
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    shm_size: ${NOMINATIM_SHM_SIZE:-8g}
+    environment:
+      PBF_PATH: /nominatim/input/canada-latest.osm.pbf
+      UPDATE_MODE: ${NOMINATIM_UPDATE_MODE:-none}
+      FREEZE: ${NOMINATIM_FREEZE:-true}
+      REVERSE_ONLY: ${NOMINATIM_REVERSE_ONLY:-false}
+      WARMUP_ON_STARTUP: ${NOMINATIM_WARMUP_ON_STARTUP:-false}
+      NOMINATIM_ALLOW_FRESH_IMPORT: ${NOMINATIM_ALLOW_FRESH_IMPORT:-false}
+      NOMINATIM_PASSWORD: ${NOMINATIM_PASSWORD:-qaIACxO6wMR3}
+      NOMINATIM_BASEBACKUP_DIR: /nominatim/basebackup
+      NOMINATIM_PGDATA_DIR: /var/lib/postgresql/16/main
+    volumes:
+      - ${OSM_NOMINATIM_POSTGRES_DIR:-/mnt/osm/nominatim/postgres-data}:/var/lib/postgresql/16/main
+      - ${OSM_NOMINATIM_BASEBACKUP_DIR:-/mnt/osm/incoming/nominatim/postgres}:/nominatim/basebackup:ro
+      - ${OSM_NOMINATIM_FLATNODE_DIR:-/mnt/osm/incoming/nominatim/flatnode}:/nominatim/flatnode
+      - ${OSM_NOMINATIM_INPUT_DIR:-/mnt/osm/incoming/nominatim/input}:/nominatim/input:ro
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- 'http://127.0.0.1:8080/search?q=Toronto&format=jsonv2&limit=1' >/dev/null 2>&1 || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+      start_period: ${NOMINATIM_HEALTHCHECK_START_PERIOD:-6h}

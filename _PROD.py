@@ -12,6 +12,10 @@ Usage:
     python3 _PROD.py                  # deploy + auto-prune old Docker cache/images
   python3 _PROD.py deploy           # same as default
     python3 _PROD.py build            # build images only + auto-prune old Docker cache/images
+    python3 _PROD.py maps-up          # start TileServer GL + OSRM against mounted /mnt/osm data
+    python3 _PROD.py maps-down        # stop TileServer GL + OSRM services
+    python3 _PROD.py nominatim-up     # build/start Nominatim against mounted /mnt/osm data
+    python3 _PROD.py nominatim-down   # stop Nominatim service
   python3 _PROD.py prune-build-cache  # free Docker build cache (fixes ENOSPC)
   python3 _PROD.py prune-docker      # free more Docker space (no volumes; fixes recurring ENOSPC)
   python3 _PROD.py status           # docker compose ps
@@ -75,6 +79,7 @@ def main(argv: list[str]) -> int:
         # Preserve infra (postgres/redis/minio) and only rebuild/restart app.
         default_command="deploy",
         post_command=_post_prod_command,
+        extra_compose_files=[REPO_ROOT / "civil" / "docker-compose.maps.yml"],
     )
     return 0
 

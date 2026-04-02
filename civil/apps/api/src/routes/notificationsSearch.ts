@@ -622,7 +622,17 @@ export function registerNotificationsSearchRoutes(app: FastifyInstance, deps: No
 
         if (!upstreamResponse.ok) {
           req.log.warn({ query: normalizedQuery, statusCode: upstreamResponse.status }, 'search_places_upstream_failed')
-          return reply.code(upstreamResponse.status).send({ error: 'nominatim_search_failed' })
+          return reply.send({
+            query: q,
+            places: [],
+            addresses: [],
+            meta: {
+              total: 0,
+              poiCount: 0,
+              hasPois: false,
+              unavailable: true,
+            },
+          })
         }
 
         const payload = (await upstreamResponse.json().catch(() => [])) as unknown
@@ -661,7 +671,17 @@ export function registerNotificationsSearchRoutes(app: FastifyInstance, deps: No
         })
       } catch (error) {
         req.log.error({ err: error, query: normalizedQuery }, 'search_places_request_failed')
-        return reply.code(502).send({ error: 'search_places_failed' })
+        return reply.send({
+          query: q,
+          places: [],
+          addresses: [],
+          meta: {
+            total: 0,
+            poiCount: 0,
+            hasPois: false,
+            unavailable: true,
+          },
+        })
       }
     }),
   )

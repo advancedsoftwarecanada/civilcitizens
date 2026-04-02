@@ -3,7 +3,7 @@ import { NextRequest, NextResponse } from 'next/server'
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 
-const DEFAULT_MAP_TILE_SERVER = 'http://192.168.2.254:8080'
+const DEFAULT_MAP_TILE_SERVER = 'http://tileserver-gl:8080'
 
 function trimTrailingSlash(value: string) {
   return value.replace(/\/+$/, '')
