@@ -353,7 +353,7 @@ export function CommunitiesView({ mode = 'default' }: { mode?: CommunitiesPageMo
       }
 
       if (!items.length) {
-        const res = await fetch(buildApiUrl(`/communities?province=${encodeURIComponent(province)}`))
+        const res = await fetch(buildApiUrl(`/communities/${encodeURIComponent(province)}`))
         const data = await jsonOrThrow<ItemsResponse<CommunityOption>>(res)
         items = Array.isArray(data.items) ? data.items : []
       }
