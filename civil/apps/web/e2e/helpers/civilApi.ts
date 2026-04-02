@@ -191,7 +191,7 @@ export async function createTestUser(request: APIRequestContext) {
 async function pickCommunity(request: APIRequestContext): Promise<{ province: string; municipality: string }> {
   const preferredProvince = (process.env.PLAYWRIGHT_PROVINCE ?? 'on').trim().toLowerCase()
   const preferredMunicipality = (process.env.PLAYWRIGHT_MUNICIPALITY ?? 'york-durham').trim().toLowerCase()
-  const preferred = await request.get(`/api/communities?province=${encodeURIComponent(preferredProvince)}`)
+  const preferred = await request.get(`/api/communities/${encodeURIComponent(preferredProvince)}`)
   if (preferred.ok()) {
     const preferredJson = (await preferred.json()) as CommunitiesResponse
     const first = preferredJson.items?.[0]
@@ -211,7 +211,7 @@ async function pickCommunity(request: APIRequestContext): Promise<{ province: st
   expect(provinces.length, 'no provinces available for tests').toBeGreaterThan(0)
 
   for (const province of provinces) {
-    const communitiesRes = await request.get(`/api/communities?province=${encodeURIComponent(province)}`)
+    const communitiesRes = await request.get(`/api/communities/${encodeURIComponent(province)}`)
     if (!communitiesRes.ok()) continue
     const communitiesJson = (await communitiesRes.json()) as CommunitiesResponse
     const first = communitiesJson.items?.[0]

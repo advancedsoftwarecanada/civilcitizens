@@ -42,6 +42,16 @@ type CommunityBootstrapRoutesDeps = {
 }
 
 export function registerCommunityBootstrapRoutes(app: FastifyInstance, deps: CommunityBootstrapRoutesDeps) {
+  deps.registerCommunityRoute('get', '/communities', async (req: FastifyRequest, reply: FastifyReply) => {
+    const query = z.object({ province: z.string().min(2).max(64) }).safeParse(req.query)
+    if (!query.success) return reply.code(400).send({ error: query.error.flatten() })
+
+    const province = normalizeProvinceCode(query.data.province)
+    if (!province) return reply.code(404).send({ error: 'province_not_found' })
+
+    return reply.send({ items: getCommunitiesByProvince(province) })
+  })
+
   deps.registerCommunityRoute('get', '/communities/provinces', async (_req: FastifyRequest, reply: FastifyReply) => {
     const items = await prisma.province.findMany({
       orderBy: [{ name: 'asc' }],
