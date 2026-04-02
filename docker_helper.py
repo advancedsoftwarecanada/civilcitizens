@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import argparse
+import grp
 import os
+import pwd
+import shlex
 import shutil
 import subprocess
 import sys
@@ -44,6 +47,60 @@ def ensure_docker() -> None:
     if shutil.which("docker") is None:
         print("Error: docker is not installed or not on PATH", file=sys.stderr)
         sys.exit(1)
+
+
+def _docker_info_error() -> Optional[str]:
+    try:
+        subprocess.run(
+            ["docker", "info"],
+            check=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        return None
+    except subprocess.CalledProcessError as exc:
+        return (exc.stderr or "").strip()
+    except OSError as exc:
+        return str(exc)
+
+
+def _user_effectively_in_group(group_name: str) -> bool:
+    try:
+        target_group = grp.getgrnam(group_name)
+    except KeyError:
+        return False
+
+    if target_group.gr_gid in os.getgroups() or os.getgid() == target_group.gr_gid:
+        return True
+
+    try:
+        username = pwd.getpwuid(os.getuid()).pw_name
+    except KeyError:
+        return False
+
+    return username in target_group.gr_mem
+
+
+def maybe_reexec_with_docker_group() -> None:
+    if os.name != "posix" or os.environ.get("CIVIL_DOCKER_GROUP_REEXEC") == "1":
+        return
+    if shutil.which("sg") is None:
+        return
+
+    docker_error = _docker_info_error()
+    if not docker_error:
+        return
+    if "permission denied" not in docker_error.lower() or "docker.sock" not in docker_error.lower():
+        return
+    if not _user_effectively_in_group("docker"):
+        return
+
+    print("→ Docker access requires refreshing this shell's docker group; re-running via 'sg docker'")
+    rerun_command = shlex.join([sys.executable, *sys.argv])
+    env = os.environ.copy()
+    env["CIVIL_DOCKER_GROUP_REEXEC"] = "1"
+    os.execvpe("sg", ["sg", "docker", "-c", rerun_command], env)
 
 
 def try_get_docker_root_dir() -> Optional[Path]:
@@ -341,6 +398,30 @@ def command_shadow_down(compose_cmd: list[str], overrides: Mapping[str, str]) ->
     run_compose(compose_cmd, ["rm", "-sf", "postgres-gis-shadow"], overrides)
 
 
+def command_maps_up(compose_cmd: list[str], overrides: Mapping[str, str]) -> None:
+    run_compose(
+        compose_cmd,
+        ["--profile", "maps-core", "up", "-d", "tileserver-gl", "osrm"],
+        overrides,
+    )
+
+
+def command_maps_down(compose_cmd: list[str], overrides: Mapping[str, str]) -> None:
+    run_compose(compose_cmd, ["rm", "-sf", "tileserver-gl", "osrm"], overrides)
+
+
+def command_nominatim_up(compose_cmd: list[str], overrides: Mapping[str, str]) -> None:
+    run_compose(
+        compose_cmd,
+        ["--profile", "nominatim", "up", "-d", "--build", "nominatim"],
+        overrides,
+    )
+
+
+def command_nominatim_down(compose_cmd: list[str], overrides: Mapping[str, str]) -> None:
+    run_compose(compose_cmd, ["rm", "-sf", "nominatim"], overrides)
+
+
 def command_down(compose_cmd: list[str], overrides: Mapping[str, str]) -> None:
     run_compose(
         compose_cmd,
@@ -383,6 +464,10 @@ def parse_args(default_command: Optional[str]) -> argparse.Namespace:
             "build",
             "up",
             "infra-up",
+            "maps-up",
+            "maps-down",
+            "nominatim-up",
+            "nominatim-down",
             "shadow-infra-up",
             "shadow-down",
             "down",
@@ -426,6 +511,7 @@ def run_helper(
     extra_compose_files: Iterable[Path] = [],
 ) -> None:
     ensure_docker()
+    maybe_reexec_with_docker_group()
     args = parse_args(default_command)
     os.chdir(ROOT_DIR)
     if args.command_was_default:
@@ -483,6 +569,10 @@ def run_helper(
         "build": lambda c, o: command_build(c, o, no_cache=False),
         "up": command_up,
         "infra-up": command_infra_up,
+        "maps-up": command_maps_up,
+        "maps-down": command_maps_down,
+        "nominatim-up": command_nominatim_up,
+        "nominatim-down": command_nominatim_down,
         "shadow-infra-up": command_shadow_infra_up,
         "shadow-down": command_shadow_down,
         "down": command_down,

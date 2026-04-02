@@ -3,6 +3,8 @@ services:
     image: nginx:1.25-alpine
     profiles: [app]
     restart: unless-stopped
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     networks:
       default: {}
       public_proxy:
@@ -31,6 +33,7 @@ services:
     environment:
       # Required: Prisma database URL (uses local Postgres service)
       DATABASE_URL: ${DATABASE_URL:-postgresql://postgres:postgres@postgres:5432/civil}
+      PRISMA_SKIP_MIGRATE: ${PRISMA_SKIP_MIGRATE:-0}
       # Point to the Redis service on the Compose network (not localhost)
       REDIS_URL: redis://redis:6379
       # Provide a default JWT secret; override in deployment via environment if desired
@@ -76,9 +79,9 @@ services:
       CIVIL_ENV_PRIMARY: ${CIVIL_ENV_PRIMARY:-}
       CIVIL_ENV_FILES: ${CIVIL_ENV_FILES:-}
       CIVIL_ADMIN_EMAILS: ${CIVIL_ADMIN_EMAILS:-}
-      NOMINATIM_SERVER: ${NOMINATIM_SERVER:-}
-      MAP_TILE_SERVER: ${MAP_TILE_SERVER:-http://192.168.2.254:8080}
-      OSRM_SERVER: ${OSRM_SERVER:-http://192.168.2.254:5000}
+      NOMINATIM_SERVER: ${NOMINATIM_SERVER:-http://nominatim:8080}
+      MAP_TILE_SERVER: ${MAP_TILE_SERVER:-http://tileserver-gl:8080}
+      OSRM_SERVER: ${OSRM_SERVER:-http://osrm:5000}
     # Do not publish API to host; Nginx proxies to it via internal network
     depends_on: [postgres, redis, meeting-rtc]
     healthcheck:
@@ -183,9 +186,9 @@ services:
       NEXT_PUBLIC_BASE_URL: ${NEXT_PUBLIC_BASE_URL:-https://${CIVIL_PUBLIC_HOST:-dev.civilcitizens.ca}}
       NEXT_PUBLIC_MEDIA_BASE_URL: ${NEXT_PUBLIC_MEDIA_BASE_URL:-https://${CIVIL_PUBLIC_HOST:-dev.civilcitizens.ca}/media}
       NEXT_PUBLIC_GTAG_ID: ${NEXT_PUBLIC_GTAG_ID:-}
-      NOMINATIM_SERVER: ${NOMINATIM_SERVER:-}
-      MAP_TILE_SERVER: ${MAP_TILE_SERVER:-http://192.168.2.254:8080}
-      OSRM_SERVER: ${OSRM_SERVER:-http://192.168.2.254:5000}
+      NOMINATIM_SERVER: ${NOMINATIM_SERVER:-http://nominatim:8080}
+      MAP_TILE_SERVER: ${MAP_TILE_SERVER:-http://tileserver-gl:8080}
+      OSRM_SERVER: ${OSRM_SERVER:-http://osrm:5000}
     depends_on:
       api:
         condition: service_healthy

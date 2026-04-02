@@ -2,7 +2,7 @@ import { prisma, ByElectionStatus, PoliticalJurisdiction, PoliticalOfficeType, P
 import { ensureGeoCache } from './geodata.js'
 import { normalizePostalCodeInput } from './communityGeo.js'
 
-const DEFAULT_MAP_TILE_SERVER = 'http://192.168.2.254:8080'
+const DEFAULT_MAP_TILE_SERVER = 'http://tileserver-gl:8080'
 const PUBLIC_MAP_PROXY_BASE = '/maps'
 
 type DistrictQueryRow = {
