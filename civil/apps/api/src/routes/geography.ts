@@ -1,8 +1,33 @@
-import { ElectoralDistrictBrowserInput, ElectoralDistrictContextInput } from '@civil/shared'
+import { prisma } from '@civil/db'
+import { ElectoralDistrictBrowserInput, ElectoralDistrictContextInput, normalizeProvinceCode } from '@civil/shared'
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
+import { z } from 'zod'
+
+import { formatCitySummary } from '../communityGeo.js'
 import { browseElectoralDistricts, resolveElectoralDistrictContext } from '../geospatial.js'
 
+const CityListQuery = z.object({
+  province: z.string().trim().min(2).max(64),
+  limit: z.coerce.number().int().min(1).max(500).default(500),
+})
+
 export function registerGeographyRoutes(app: FastifyInstance) {
+  app.get('/cities', async (req: FastifyRequest, reply: FastifyReply) => {
+    const query = CityListQuery.safeParse(req.query)
+    if (!query.success) return reply.code(400).send({ error: query.error.flatten() })
+
+    const provinceCode = normalizeProvinceCode(query.data.province)
+    if (!provinceCode) return reply.code(404).send({ error: 'province_not_found' })
+
+    const cities = await prisma.city.findMany({
+      where: { provinceCode },
+      orderBy: [{ population: 'desc' }, { communityName: 'asc' }, { name: 'asc' }],
+      take: query.data.limit,
+    })
+
+    return reply.send({ items: cities.map((city: (typeof cities)[number]) => formatCitySummary(city)) })
+  })
+
   app.post('/geography/district-context', async (req: FastifyRequest, reply: FastifyReply) => {
     const userId = (req as any).user?.id
     if (!userId) return reply.code(401).send({ error: 'unauthorized' })
