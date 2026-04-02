@@ -45,9 +45,9 @@ services:
       NOMINATIM_PGDATA_DIR: /var/lib/postgresql/16/main
     volumes:
       - ${OSM_NOMINATIM_POSTGRES_DIR:-/mnt/osm/nominatim/postgres-data}:/var/lib/postgresql/16/main
-      - ${OSM_NOMINATIM_BASEBACKUP_DIR:-/mnt/osm/incoming/nominatim/postgres}:/nominatim/basebackup:ro
+      - ${OSM_NOMINATIM_BASEBACKUP_DIR:-/mnt/osm/incoming/nominatim/postgres}:/nominatim/basebackup
       - ${OSM_NOMINATIM_FLATNODE_DIR:-/mnt/osm/incoming/nominatim/flatnode}:/nominatim/flatnode
-      - ${OSM_NOMINATIM_INPUT_DIR:-/mnt/osm/incoming/nominatim/input}:/nominatim/input:ro
+      - ${OSM_NOMINATIM_INPUT_DIR:-/mnt/osm/incoming/nominatim/input}:/nominatim/input
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- 'http://127.0.0.1:8080/search?q=Toronto&format=jsonv2&limit=1' >/dev/null 2>&1 || exit 1"]
       interval: 30s
