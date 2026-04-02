@@ -843,14 +843,18 @@ export async function resolveElectoralDistrictContext(args: {
 
   const district = await findElectoralDistrict(lat, lng)
 
-  await upsertUserLocation({
-    userId: args.userId,
-    lat,
-    lng,
-    source: resolvedFrom,
-    postalCode,
-    electoralDistrictCode: district?.code ?? null,
-  })
+  try {
+    await upsertUserLocation({
+      userId: args.userId,
+      lat,
+      lng,
+      source: resolvedFrom,
+      postalCode,
+      electoralDistrictCode: district?.code ?? null,
+    })
+  } catch (error) {
+    console.error('Failed to persist user location for district context', error)
+  }
 
   return {
     resolvedFrom,
