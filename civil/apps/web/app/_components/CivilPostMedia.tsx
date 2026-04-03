@@ -8,10 +8,21 @@ import { resolvePublicAssetUrl } from '../_lib/publicAssetUrl'
 type CivilPostMediaProps = {
   images?: string[] | null
   mediaUrl?: string | null
+  video?: {
+    assetId: string
+    playbackUrl?: string | null
+    thumbnailUrl?: string | null
+    durationMs?: number | null
+    width?: number | null
+    height?: number | null
+    status?: 'queued' | 'processing' | 'completed' | 'failed'
+  } | null
   postUrl?: string | null
 }
 
-export default function CivilPostMedia({ images, mediaUrl, postUrl }: CivilPostMediaProps) {
+export default function CivilPostMedia({ images, mediaUrl, video, postUrl }: CivilPostMediaProps) {
+  const playbackUrl = resolvePublicAssetUrl(video?.playbackUrl ?? null, typeof window !== 'undefined' ? window.location.origin : null)
+  const thumbnailUrl = resolvePublicAssetUrl(video?.thumbnailUrl ?? null, typeof window !== 'undefined' ? window.location.origin : null)
   const allImages = useMemo(() => {
     const rawImages = images && images.length > 0 ? images : mediaUrl ? [mediaUrl] : []
     return rawImages
@@ -19,6 +30,22 @@ export default function CivilPostMedia({ images, mediaUrl, postUrl }: CivilPostM
       .filter((value): value is string => Boolean(value))
   }, [images, mediaUrl])
   const [activeImageIndex, setActiveImageIndex] = useState<number | null>(null)
+
+  if (playbackUrl) {
+    return (
+      <div className="overflow-hidden rounded-2xl border border-slate-200 bg-slate-950">
+        <video
+          className="h-auto w-full max-h-[75vh] bg-black"
+          controls
+          playsInline
+          preload="metadata"
+          poster={thumbnailUrl ?? undefined}
+        >
+          <source src={playbackUrl} type="video/mp4" />
+        </video>
+      </div>
+    )
+  }
 
   if (allImages.length === 0) return null
 

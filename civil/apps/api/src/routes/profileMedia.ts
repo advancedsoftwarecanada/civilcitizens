@@ -3,7 +3,7 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 import { PutObjectCommand } from '@aws-sdk/client-s3'
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner'
 import { prisma } from '@civil/db'
-import { MediaCategory, ModerationStatus, Prisma } from '@prisma/client'
+import { MediaCategory, MediaTranscodeJobKind, ModerationStatus, Prisma } from '@prisma/client'
 import {
   CompleteMediaUploadInput,
   MediaAssetIdSchema,
@@ -584,7 +584,7 @@ export function registerProfileMediaRoutes(app: FastifyInstance, deps: ProfileMe
       const mediaCategory = category as MediaCategory
       const limit = deps.MEDIA_CATEGORY_LIMITS[mediaCategory]
       if (byteSize > limit) return reply.code(400).send({ error: 'file_too_large', maxBytes: limit })
-      if (!deps.ensureMimeSupported(mime)) return reply.code(400).send({ error: 'unsupported_mime' })
+      if (!deps.ensureMimeSupported(mediaCategory, mime)) return reply.code(400).send({ error: 'unsupported_mime' })
 
       const assetId = randomUUID()
       const extension = deps.extensionForMime(mime)
@@ -599,7 +599,7 @@ export function registerProfileMediaRoutes(app: FastifyInstance, deps: ProfileMe
           id: assetId,
           ownerId: ownerUserId,
           category: mediaCategory,
-          assetType: 'image',
+          assetType: mediaCategory === 'post_video' ? 'video' : 'image',
           storageType: 'minio',
           originalKey,
           mime,
@@ -646,7 +646,7 @@ export function registerProfileMediaRoutes(app: FastifyInstance, deps: ProfileMe
       const parse = CompleteMediaUploadInput.safeParse(req.body)
       if (!parse.success) return reply.code(400).send({ error: parse.error.flatten() })
 
-      const { assetId, width, height, checksum } = parse.data
+      const { assetId, width, height, durationMs, checksum } = parse.data
       const asset = await prisma.mediaAsset.findFirst({ where: { id: assetId, ownerId: ownerUserId } })
       if (!asset) return reply.code(404).send({ error: 'asset_not_found' })
       if (authContext.actor === 'family_member' && !deps.familyMemberOwnsAssetForSession(asset, authContext.member.id)) {
@@ -660,6 +660,7 @@ export function registerProfileMediaRoutes(app: FastifyInstance, deps: ProfileMe
         data: {
           width: width ?? asset.width,
           height: height ?? asset.height,
+          durationMs: durationMs ?? asset.durationMs,
           checksum: checksum ?? asset.checksum,
           status: 'processing',
           failureReason: null,
@@ -672,6 +673,41 @@ export function registerProfileMediaRoutes(app: FastifyInstance, deps: ProfileMe
         } else if (asset.category === 'cover') {
           await prisma.user.update({ where: { id: ownerUserId }, data: { coverMediaId: updatedAsset.id } })
         }
+      }
+
+      if (updatedAsset.assetType === 'video') {
+        await prisma.mediaTranscodeJob.upsert({
+          where: {
+            assetId_kind: {
+              assetId: updatedAsset.id,
+              kind: MediaTranscodeJobKind.VIDEO_720P,
+            },
+          },
+          create: {
+            assetId: updatedAsset.id,
+            kind: MediaTranscodeJobKind.VIDEO_720P,
+            status: 'QUEUED',
+            queuedAt: new Date(),
+            payload: {
+              maxDurationMs: 5 * 60 * 1000,
+              targetHeight: 720,
+              targetWidth: 1280,
+            },
+          },
+          update: {
+            status: 'QUEUED',
+            queuedAt: new Date(),
+            startedAt: null,
+            completedAt: null,
+            lastError: null,
+            result: Prisma.DbNull,
+            payload: {
+              maxDurationMs: 5 * 60 * 1000,
+              targetHeight: 720,
+              targetWidth: 1280,
+            },
+          },
+        })
       }
 
       await deps.mediaQueue.add(
@@ -744,16 +780,41 @@ export function registerProfileMediaRoutes(app: FastifyInstance, deps: ProfileMe
         return reply.code(403).send({ error: 'asset_not_owned_by_family_member' })
       }
 
+      const transcodeJob =
+        asset.assetType === 'video'
+          ? await prisma.mediaTranscodeJob.findUnique({
+              where: {
+                assetId_kind: {
+                  assetId: asset.id,
+                  kind: MediaTranscodeJobKind.VIDEO_720P,
+                },
+              },
+            })
+          : null
+
       return reply.send({
         asset: {
           id: asset.id,
           category: asset.category,
+          assetType: asset.assetType,
           status: asset.status,
           variants: deps.normalizeMediaVariants(asset.variants),
           width: asset.width,
           height: asset.height,
+          durationMs: asset.durationMs,
           failureReason: asset.failureReason,
           readyAt: asset.readyAt,
+          transcodeJob: transcodeJob
+            ? {
+                kind: transcodeJob.kind,
+                status: transcodeJob.status,
+                queuedAt: transcodeJob.queuedAt,
+                startedAt: transcodeJob.startedAt,
+                completedAt: transcodeJob.completedAt,
+                attempts: transcodeJob.attempts,
+                lastError: transcodeJob.lastError,
+              }
+            : null,
         },
       })
     }),

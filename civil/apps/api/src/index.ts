@@ -1172,6 +1172,26 @@ function normalizeMediaVariants(variants: unknown): unknown {
   return mutated ? copy : variants
 }
 
+function normalizeStoredPostVideo(video: unknown) {
+  if (!video || typeof video !== 'object' || Array.isArray(video)) return null
+  const record = video as Record<string, unknown>
+  const playbackUrl = typeof record.playbackUrl === 'string' ? normalizeMediaUrl(record.playbackUrl) : null
+  const thumbnailUrl = typeof record.thumbnailUrl === 'string' ? normalizeMediaUrl(record.thumbnailUrl) : null
+  const status: 'queued' | 'processing' | 'completed' | 'failed' =
+    record.status === 'queued' || record.status === 'processing' || record.status === 'failed' || record.status === 'completed'
+      ? record.status
+      : 'completed'
+  return {
+    assetId: typeof record.assetId === 'string' ? record.assetId : '',
+    playbackUrl,
+    thumbnailUrl,
+    durationMs: typeof record.durationMs === 'number' && Number.isFinite(record.durationMs) ? Math.max(0, Math.round(record.durationMs)) : null,
+    width: typeof record.width === 'number' && Number.isFinite(record.width) ? Math.max(1, Math.round(record.width)) : null,
+    height: typeof record.height === 'number' && Number.isFinite(record.height) ? Math.max(1, Math.round(record.height)) : null,
+    status,
+  }
+}
+
 function normalizeUserMedia<T extends { avatarUrl?: string | null; coverUrl?: string | null }>(user: T): T {
   const normalizedAvatar = normalizeMediaUrl(user.avatarUrl ?? null)
   const normalizedCover = normalizeMediaUrl(user.coverUrl ?? null)
@@ -1192,11 +1212,13 @@ const MEDIA_CATEGORY_LIMITS: Record<MediaCategory, number> = {
   business_logo: 8 * MB,
   business_cover: 20 * MB,
   post_image: 80 * MB,
+  post_video: 500 * MB,
   attachment: 200 * MB,
 }
-const MEDIA_PROXY_UPLOAD_LIMIT = 250 * MB
+const MEDIA_PROXY_UPLOAD_LIMIT = 500 * MB
 
 const IMAGE_MIME_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/avif', 'image/heic', 'image/heif'])
+const VIDEO_MIME_TYPES = new Set(['video/mp4', 'video/quicktime', 'video/webm', 'video/x-m4v'])
 const MIME_EXTENSION_MAP: Record<string, string> = {
   'image/jpeg': 'jpg',
   'image/png': 'png',
@@ -1204,8 +1226,12 @@ const MIME_EXTENSION_MAP: Record<string, string> = {
   'image/avif': 'avif',
   'image/heic': 'heic',
   'image/heif': 'heif',
+  'video/mp4': 'mp4',
+  'video/quicktime': 'mov',
+  'video/webm': 'webm',
+  'video/x-m4v': 'm4v',
 }
-const BINARY_UPLOAD_MIME_TYPES = ['application/octet-stream', ...IMAGE_MIME_TYPES]
+const BINARY_UPLOAD_MIME_TYPES = ['application/octet-stream', ...IMAGE_MIME_TYPES, ...VIDEO_MIME_TYPES]
 
 const s3Client = new S3Client({
   region: MEDIA_S3_REGION,
@@ -3266,8 +3292,12 @@ async function withSchemaGuard<T>(
   }
 }
 
-function ensureMimeSupported(mime: string) {
-  return IMAGE_MIME_TYPES.has(mime.toLowerCase())
+function ensureMimeSupported(category: MediaCategory, mime: string) {
+  const normalizedMime = mime.toLowerCase()
+  if (category === 'post_video') {
+    return VIDEO_MIME_TYPES.has(normalizedMime)
+  }
+  return IMAGE_MIME_TYPES.has(normalizedMime)
 }
 
 function extensionForMime(mime: string) {
@@ -4114,6 +4144,15 @@ type FormattedPost = {
   }>
   mediaUrl: string | null
   images: string[] | null
+  video: {
+    assetId: string
+    playbackUrl: string | null
+    thumbnailUrl: string | null
+    durationMs: number | null
+    width: number | null
+    height: number | null
+    status: 'queued' | 'processing' | 'completed' | 'failed'
+  } | null
   linkPreview: {
     kind: string
     title: string
@@ -4560,6 +4599,7 @@ function formatPost(
     })),
     mediaUrl: normalizeMediaUrl(post.mediaUrl ?? null),
     images: (post.images as string[] | null)?.map(normalizeMediaUrl).filter((url): url is string => url !== null) ?? null,
+    video: normalizeStoredPostVideo((post as any).video ?? null),
     linkPreview: normalizeStoredLinkPreview((post as any).linkPreview ?? null, normalizeMediaUrl),
     createdAt: post.createdAt,
     updatedAt: post.updatedAt,

@@ -172,6 +172,7 @@ model Post {
   type           String        @default("post")
   mediaUrl       String?
   images         Json?
+  video          Json?
   linkPreview    Json?
   seoSlug        String?       @unique
   jurisdiction   String        @default("self")
@@ -961,9 +962,30 @@ model MediaAsset {
   owner         User             @relation("UserMediaAssets", fields: [ownerId], references: [id], onDelete: Cascade)
   avatarOwner   User?            @relation("AvatarMedia")
   coverOwner    User?            @relation("CoverMedia")
+  transcodeJobs MediaTranscodeJob[]
 
   @@index([ownerId, category])
   @@index([status])
+}
+
+model MediaTranscodeJob {
+  id          String                  @id @default(cuid())
+  assetId     String
+  kind        MediaTranscodeJobKind   @default(VIDEO_720P)
+  status      MediaTranscodeJobStatus @default(QUEUED)
+  queuedAt    DateTime                @default(now())
+  startedAt   DateTime?
+  completedAt DateTime?
+  attempts    Int                     @default(0)
+  lastError   String?
+  payload     Json?
+  result      Json?
+  createdAt   DateTime                @default(now())
+  updatedAt   DateTime                @updatedAt
+  asset       MediaAsset              @relation(fields: [assetId], references: [id], onDelete: Cascade)
+
+  @@unique([assetId, kind])
+  @@index([status, queuedAt])
 }
 
 model Business {
@@ -1269,6 +1291,7 @@ enum MediaCategory {
   business_logo
   business_cover
   post_image
+  post_video
   attachment
 }
 
@@ -1282,6 +1305,17 @@ enum MediaStatus {
 enum MediaAssetType {
   image
   video
+}
+
+enum MediaTranscodeJobKind {
+  VIDEO_720P
+}
+
+enum MediaTranscodeJobStatus {
+  QUEUED
+  PROCESSING
+  COMPLETED
+  FAILED
 }
 
 enum MediaStorageType {

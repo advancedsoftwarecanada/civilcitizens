@@ -22,6 +22,15 @@ type CivilPostSharedReferenceProps = {
   }>
   images?: string[] | null
   mediaUrl?: string | null
+  video?: {
+    assetId: string
+    playbackUrl?: string | null
+    thumbnailUrl?: string | null
+    durationMs?: number | null
+    width?: number | null
+    height?: number | null
+    status?: 'queued' | 'processing' | 'completed' | 'failed'
+  } | null
 }
 
 export default function CivilPostSharedReference({
@@ -38,6 +47,7 @@ export default function CivilPostSharedReference({
   mentions,
   images,
   mediaUrl,
+  video,
 }: CivilPostSharedReferenceProps) {
   return (
     <div className="mt-3 w-full min-w-0 max-w-full overflow-hidden rounded-xl border border-slate-200 bg-slate-50 p-4 transition-colors hover:bg-slate-100">
@@ -57,9 +67,9 @@ export default function CivilPostSharedReference({
       </Link>
       <div className="text-sm text-slate-800 [overflow-wrap:anywhere] break-words">
         {body ? <LinkifiedText text={body} className="whitespace-pre-wrap" mentions={mentions} /> : null}
-        {images && images.length > 0 ? (
+        {video || (images && images.length > 0) ? (
           <Link href={href} className="mt-2 block">
-            <CivilPostMedia images={images} mediaUrl={mediaUrl} postUrl={href} />
+            <CivilPostMedia images={images} mediaUrl={mediaUrl} video={video} postUrl={href} />
           </Link>
         ) : null}
       </div>
