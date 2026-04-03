@@ -5,6 +5,8 @@ import { normalizePostalCodeInput } from './communityGeo.js'
 const DEFAULT_MAP_TILE_SERVER = 'http://tileserver-gl:8080'
 const PUBLIC_MAP_PROXY_BASE = '/maps'
 
+let userLocationIndexesReady: Promise<void> | null = null
+
 type DistrictQueryRow = {
   code: number
   slug: string
@@ -15,6 +17,24 @@ type DistrictQueryRow = {
   geometryJson: string
   bounds: [number, number, number, number] | string
   matchMethod: 'contains' | 'nearest'
+}
+
+function ensureUserLocationIndexes(): Promise<void> {
+  if (userLocationIndexesReady) return userLocationIndexesReady
+
+  userLocationIndexesReady = (async () => {
+    await prisma.$executeRawUnsafe(
+      'CREATE UNIQUE INDEX IF NOT EXISTS "UserLocation_userId_key" ON "UserLocation" ("userId");',
+    )
+    await prisma.$executeRawUnsafe(
+      'CREATE INDEX IF NOT EXISTS "UserLocation_electoralDistrictCode_idx" ON "UserLocation" ("electoralDistrictCode");',
+    )
+  })().catch((err) => {
+    userLocationIndexesReady = null
+    throw err
+  })
+
+  return userLocationIndexesReady
 }
 
 type DistrictGeometry = {
@@ -776,6 +796,8 @@ async function upsertUserLocation(args: {
   postalCode?: string | null
   electoralDistrictCode?: number | null
 }) {
+  await ensureUserLocationIndexes()
+
   await prisma.$executeRaw(Prisma.sql`
     INSERT INTO "UserLocation" (
       "id",
