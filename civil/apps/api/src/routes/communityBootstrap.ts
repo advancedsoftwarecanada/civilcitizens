@@ -41,6 +41,29 @@ type CommunityBootstrapRoutesDeps = {
   registerCommunityRoute: (method: CommunityRouteMethod, path: string, handler: CommunityRouteHandler) => void
 }
 
+let communityFollowIndexesReady: Promise<void> | null = null
+
+function ensureCommunityFollowIndexes(): Promise<void> {
+  if (communityFollowIndexesReady) return communityFollowIndexesReady
+
+  communityFollowIndexesReady = (async () => {
+    await prisma.$executeRawUnsafe(
+      'CREATE UNIQUE INDEX IF NOT EXISTS "CommunityFollow_userId_provinceCode_communitySlug_key" ON "CommunityFollow" ("userId", "provinceCode", "communitySlug");',
+    )
+    await prisma.$executeRawUnsafe(
+      'CREATE INDEX IF NOT EXISTS "CommunityFollow_userId_idx" ON "CommunityFollow" ("userId");',
+    )
+    await prisma.$executeRawUnsafe(
+      'CREATE INDEX IF NOT EXISTS "CommunityFollow_provinceCode_communitySlug_idx" ON "CommunityFollow" ("provinceCode", "communitySlug");',
+    )
+  })().catch((err) => {
+    communityFollowIndexesReady = null
+    throw err
+  })
+
+  return communityFollowIndexesReady
+}
+
 export function registerCommunityBootstrapRoutes(app: FastifyInstance, deps: CommunityBootstrapRoutesDeps) {
   deps.registerCommunityRoute('get', '/communities', async (req: FastifyRequest, reply: FastifyReply) => {
     const query = z.object({ province: z.string().min(2).max(64) }).safeParse(req.query)
@@ -178,6 +201,8 @@ export function registerCommunityBootstrapRoutes(app: FastifyInstance, deps: Com
 
     const community = findCommunity(province, parse.data.communitySlug)
     if (!community) return reply.code(404).send({ error: 'community_not_found' })
+
+    await ensureCommunityFollowIndexes()
 
     await prisma.$transaction(async (tx: any) => {
       await tx.communityFollow.upsert({
@@ -358,6 +383,8 @@ export function registerCommunityBootstrapRoutes(app: FastifyInstance, deps: Com
 
     const community = findCommunity(province, parse.data.communitySlug)
     if (!community) return reply.code(404).send({ error: 'community_not_found' })
+
+    await ensureCommunityFollowIndexes()
 
     const setAsHome = parse.data.setAsHome === true
     const follow = await prisma.$transaction(async (tx: any) => {

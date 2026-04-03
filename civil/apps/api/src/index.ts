@@ -699,6 +699,9 @@ function ensureUserPostImpressionsTable(): Promise<void> {
       );
     `)
     await prisma.$executeRawUnsafe(
+      'CREATE UNIQUE INDEX IF NOT EXISTS user_post_impressions_user_post_uidx ON user_post_impressions (user_id, post_id);',
+    )
+    await prisma.$executeRawUnsafe(
       'CREATE INDEX IF NOT EXISTS user_post_impressions_user_last_seen_idx ON user_post_impressions (user_id, last_seen_at DESC);',
     )
     await prisma.$executeRawUnsafe(
