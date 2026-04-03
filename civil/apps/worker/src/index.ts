@@ -1,15 +1,19 @@
 import { Worker, QueueEvents, Job } from 'bullmq'
 import { Redis as IORedis } from 'ioredis'
 import { S3Client, GetObjectCommand, PutObjectCommand } from '@aws-sdk/client-s3'
+import ffmpegPath from 'ffmpeg-static'
+import ffprobe from 'ffprobe-static'
 import sharp from 'sharp'
 import pino from 'pino'
 import { prisma } from '@civil/db'
 import type { MediaCategory } from '@civil/db'
-import { PoliticianScrapeJobSource, PoliticianScrapeJobStatus, Prisma } from '@prisma/client'
+import { MediaTranscodeJobKind, MediaTranscodeJobStatus, PoliticianScrapeJobSource, PoliticianScrapeJobStatus, Prisma } from '@prisma/client'
 import { XMLParser } from 'fast-xml-parser'
 import { chromium, type Browser } from 'playwright'
+import { spawn } from 'node:child_process'
 import { promises as fs } from 'node:fs'
-import { resolve } from 'node:path'
+import { tmpdir } from 'node:os'
+import { join, resolve } from 'node:path'
 
 const REDIS_URL = process.env.REDIS_URL || 'redis://localhost:6379'
 const MEDIA_S3_ENDPOINT = process.env.MEDIA_S3_ENDPOINT || 'http://127.0.0.1:9000'
@@ -131,6 +135,7 @@ const VARIANT_PRESETS: Record<MediaCategory, VariantPreset[]> = {
     { name: 'post-lg', width: 1200, fit: 'inside', quality: 88 },
     { name: 'post-md', width: 900, fit: 'inside', quality: 88 },
   ],
+  post_video: [],
   attachment: [
     { name: 'attachment-lg', width: 1400, fit: 'inside', quality: 88 },
     { name: 'attachment-md', width: 900, fit: 'inside', quality: 88 },
@@ -1227,35 +1232,12 @@ async function processMediaJob(job: Job<MediaJobPayload>) {
 
   try {
     const originalBuffer = await downloadOriginal(asset.originalKey)
-    const baseMetadata = await sharp(originalBuffer).metadata()
-    const variants = await renderVariants(asset.category, originalBuffer)
-
-    const variantEntries: Record<string, { key: string; url: string; width?: number; height?: number; contentType: string }> = {}
-    for (const variant of variants) {
-      const key = buildVariantKey(asset.category, asset.ownerId, asset.id, variant.name)
-      await uploadVariant(key, variant.buffer, variant.contentType)
-      variantEntries[variant.name] = {
-        key,
-        url: buildPublicUrl(key),
-        width: variant.width,
-        height: variant.height,
-        contentType: variant.contentType,
-      }
+    if (asset.assetType === 'video') {
+      await processVideoMediaAsset(asset, originalBuffer, job)
+    } else {
+      await processImageMediaAsset(asset, originalBuffer)
     }
 
-    await prisma.mediaAsset.update({
-      where: { id: asset.id },
-      data: {
-        width: asset.width ?? baseMetadata.width ?? null,
-        height: asset.height ?? baseMetadata.height ?? null,
-        variants: variantEntries,
-        status: 'ready',
-        readyAt: new Date(),
-        failureReason: null,
-      },
-    })
-
-    await updateUserMediaReferences(asset.category, asset.id, asset.ownerId, variantEntries)
     logger.info({ assetId: asset.id }, 'media asset processed')
   } catch (error) {
     const message = error instanceof Error ? error.message : 'unknown_error'
@@ -1266,8 +1248,250 @@ async function processMediaJob(job: Job<MediaJobPayload>) {
         failureReason: message.slice(0, 500),
       },
     })
+    if (asset.assetType === 'video') {
+      await prisma.mediaTranscodeJob.upsert({
+        where: {
+          assetId_kind: {
+            assetId: asset.id,
+            kind: MediaTranscodeJobKind.VIDEO_720P,
+          },
+        },
+        create: {
+          assetId: asset.id,
+          kind: MediaTranscodeJobKind.VIDEO_720P,
+          status: MediaTranscodeJobStatus.FAILED,
+          queuedAt: asset.createdAt,
+          startedAt: new Date(),
+          completedAt: new Date(),
+          attempts: job.attemptsMade + 1,
+          lastError: message.slice(0, 500),
+        },
+        update: {
+          status: MediaTranscodeJobStatus.FAILED,
+          completedAt: new Date(),
+          attempts: job.attemptsMade + 1,
+          lastError: message.slice(0, 500),
+        },
+      })
+    }
     logger.error({ assetId: job.data.assetId, err: error }, 'failed processing media asset')
     throw error
+  }
+}
+
+async function processImageMediaAsset(asset: { id: string; ownerId: string; category: MediaCategory; width: number | null; height: number | null }, originalBuffer: Buffer) {
+  const baseMetadata = await sharp(originalBuffer).metadata()
+  const variants = await renderVariants(asset.category, originalBuffer)
+
+  const variantEntries: Record<string, { key: string; url: string; width?: number; height?: number; contentType: string }> = {}
+  for (const variant of variants) {
+    const key = buildVariantKey(asset.category, asset.ownerId, asset.id, variant.name)
+    await uploadVariant(key, variant.buffer, variant.contentType)
+    variantEntries[variant.name] = {
+      key,
+      url: buildPublicUrl(key),
+      width: variant.width,
+      height: variant.height,
+      contentType: variant.contentType,
+    }
+  }
+
+  await prisma.mediaAsset.update({
+    where: { id: asset.id },
+    data: {
+      width: asset.width ?? baseMetadata.width ?? null,
+      height: asset.height ?? baseMetadata.height ?? null,
+      variants: variantEntries,
+      status: 'ready',
+      readyAt: new Date(),
+      failureReason: null,
+    },
+  })
+
+  await updateUserMediaReferences(asset.category, asset.id, asset.ownerId, variantEntries)
+}
+
+type VideoProbeResult = {
+  width: number | null
+  height: number | null
+  durationMs: number | null
+}
+
+const FFMPEG_BINARY_CANDIDATES = buildBinaryCandidates(process.env.FFMPEG_PATH, 'ffmpeg', typeof ffmpegPath === 'string' ? ffmpegPath : null)
+const FFPROBE_BINARY_CANDIDATES = buildBinaryCandidates(process.env.FFPROBE_PATH, 'ffprobe', typeof ffprobe.path === 'string' ? ffprobe.path : null)
+const MAX_VIDEO_DURATION_MS = 5 * 60 * 1000
+
+async function processVideoMediaAsset(
+  asset: {
+    id: string
+    ownerId: string
+    category: MediaCategory
+    mime: string
+    metadata: Prisma.JsonValue | null
+  },
+  originalBuffer: Buffer,
+  job: Job<MediaJobPayload>,
+) {
+  await prisma.mediaTranscodeJob.upsert({
+    where: {
+      assetId_kind: {
+        assetId: asset.id,
+        kind: MediaTranscodeJobKind.VIDEO_720P,
+      },
+    },
+    create: {
+      assetId: asset.id,
+      kind: MediaTranscodeJobKind.VIDEO_720P,
+      status: MediaTranscodeJobStatus.PROCESSING,
+      queuedAt: new Date(),
+      startedAt: new Date(),
+      attempts: job.attemptsMade + 1,
+    },
+    update: {
+      status: MediaTranscodeJobStatus.PROCESSING,
+      startedAt: new Date(),
+      completedAt: null,
+      attempts: job.attemptsMade + 1,
+      lastError: null,
+    },
+  })
+
+  if (!FFMPEG_BINARY_CANDIDATES.length || !FFPROBE_BINARY_CANDIDATES.length) {
+    throw new Error('ffmpeg_binary_missing')
+  }
+
+  const workingDir = await fs.mkdtemp(join(tmpdir(), 'civil-video-'))
+  const inputPath = join(workingDir, 'input')
+  const outputVideoPath = join(workingDir, 'video-720p.mp4')
+  const outputThumbPath = join(workingDir, 'video-thumb.jpg')
+
+  try {
+    await fs.writeFile(inputPath, originalBuffer)
+
+    const sourceMetadata = await probeVideoFile(inputPath)
+    if (!sourceMetadata.durationMs) {
+      throw new Error('video_duration_missing')
+    }
+    if (sourceMetadata.durationMs > MAX_VIDEO_DURATION_MS) {
+      throw new Error('video_too_long')
+    }
+
+    await runBinary(FFMPEG_BINARY_CANDIDATES, [
+      '-y',
+      '-i',
+      inputPath,
+      '-map',
+      '0:v:0',
+      '-map',
+      '0:a:0?',
+      '-vf',
+      'scale=w=1280:h=720:force_original_aspect_ratio=decrease',
+      '-c:v',
+      'libx264',
+      '-preset',
+      'medium',
+      '-crf',
+      '23',
+      '-pix_fmt',
+      'yuv420p',
+      '-movflags',
+      '+faststart',
+      '-c:a',
+      'aac',
+      '-b:a',
+      '128k',
+      '-ac',
+      '2',
+      outputVideoPath,
+    ])
+
+    await runBinary(FFMPEG_BINARY_CANDIDATES, [
+      '-y',
+      '-ss',
+      '0',
+      '-i',
+      inputPath,
+      '-frames:v',
+      '1',
+      '-vf',
+      'scale=w=1280:h=720:force_original_aspect_ratio=decrease',
+      outputThumbPath,
+    ])
+
+    const [transcodedBuffer, thumbnailBuffer] = await Promise.all([fs.readFile(outputVideoPath), fs.readFile(outputThumbPath)])
+    const outputMetadata = await probeVideoFile(outputVideoPath)
+
+    const videoKey = buildVariantKey(asset.category, asset.ownerId, asset.id, 'video-720p', 'mp4')
+    const thumbKey = buildVariantKey(asset.category, asset.ownerId, asset.id, 'video-thumb', 'jpg')
+    await uploadVariant(videoKey, transcodedBuffer, 'video/mp4')
+    await uploadVariant(thumbKey, thumbnailBuffer, 'image/jpeg')
+
+    const variantEntries = {
+      'video-720p': {
+        key: videoKey,
+        url: buildPublicUrl(videoKey),
+        width: outputMetadata.width ?? sourceMetadata.width ?? undefined,
+        height: outputMetadata.height ?? sourceMetadata.height ?? undefined,
+        contentType: 'video/mp4',
+      },
+      'video-thumb': {
+        key: thumbKey,
+        url: buildPublicUrl(thumbKey),
+        width: outputMetadata.width ?? sourceMetadata.width ?? undefined,
+        height: outputMetadata.height ?? sourceMetadata.height ?? undefined,
+        contentType: 'image/jpeg',
+      },
+    }
+
+    const metadataBase =
+      asset.metadata && typeof asset.metadata === 'object' && !Array.isArray(asset.metadata)
+        ? ({ ...(asset.metadata as Record<string, unknown>) } as Record<string, unknown>)
+        : {}
+
+    metadataBase.video = {
+      durationMs: sourceMetadata.durationMs,
+      sourceWidth: sourceMetadata.width,
+      sourceHeight: sourceMetadata.height,
+      playbackVariant: 'video-720p',
+      thumbnailVariant: 'video-thumb',
+      profile: '720p-h264',
+    }
+
+    await prisma.mediaAsset.update({
+      where: { id: asset.id },
+      data: {
+        width: outputMetadata.width ?? sourceMetadata.width ?? null,
+        height: outputMetadata.height ?? sourceMetadata.height ?? null,
+        durationMs: sourceMetadata.durationMs,
+        variants: variantEntries,
+        metadata: metadataBase as Prisma.InputJsonValue,
+        status: 'ready',
+        readyAt: new Date(),
+        failureReason: null,
+      },
+    })
+
+    await prisma.mediaTranscodeJob.update({
+      where: {
+        assetId_kind: {
+          assetId: asset.id,
+          kind: MediaTranscodeJobKind.VIDEO_720P,
+        },
+      },
+      data: {
+        status: MediaTranscodeJobStatus.COMPLETED,
+        completedAt: new Date(),
+        result: {
+          playbackUrl: variantEntries['video-720p'].url,
+          thumbnailUrl: variantEntries['video-thumb'].url,
+          durationMs: sourceMetadata.durationMs,
+          width: outputMetadata.width ?? sourceMetadata.width ?? null,
+          height: outputMetadata.height ?? sourceMetadata.height ?? null,
+        },
+      },
+    })
+  } finally {
+    await fs.rm(workingDir, { recursive: true, force: true }).catch(() => undefined)
   }
 }
 
@@ -1357,8 +1581,81 @@ async function updateUserMediaReferences(
   }
 }
 
-function buildVariantKey(category: MediaCategory, ownerId: string, assetId: string, variantName: string) {
-  return `processed/${category}/${ownerId}/${assetId}/${variantName}.webp`
+function buildBinaryCandidates(...values: Array<string | null | undefined>) {
+  const seen = new Set<string>()
+  const candidates: string[] = []
+  for (const value of values) {
+    if (typeof value !== 'string') continue
+    const normalized = value.trim()
+    if (!normalized || seen.has(normalized)) continue
+    seen.add(normalized)
+    candidates.push(normalized)
+  }
+  return candidates
+}
+
+async function runBinary(binaryPathOrCandidates: string | string[], args: string[]) {
+  const candidates = Array.isArray(binaryPathOrCandidates) ? binaryPathOrCandidates : [binaryPathOrCandidates]
+  let lastMissingBinaryError: unknown = null
+
+  for (const binaryPath of candidates) {
+    try {
+      return await runSingleBinary(binaryPath, args)
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException | null)?.code === 'ENOENT') {
+        lastMissingBinaryError = error
+        continue
+      }
+      throw error
+    }
+  }
+
+  throw lastMissingBinaryError ?? new Error('ffmpeg_binary_missing')
+}
+
+async function runSingleBinary(binaryPath: string, args: string[]) {
+  return await new Promise<string>((resolvePromise, reject) => {
+    const child = spawn(binaryPath, args, { stdio: ['ignore', 'pipe', 'pipe'] })
+    let stdout = ''
+    let stderr = ''
+
+    child.stdout.on('data', (chunk) => {
+      stdout += chunk.toString()
+    })
+    child.stderr.on('data', (chunk) => {
+      stderr += chunk.toString()
+    })
+    child.on('error', reject)
+    child.on('close', (code) => {
+      if (code === 0) {
+        resolvePromise(stdout)
+        return
+      }
+      reject(new Error(stderr.trim() || `process_failed:${code ?? 'unknown'}`))
+    })
+  })
+}
+
+async function probeVideoFile(filePath: string): Promise<VideoProbeResult> {
+  if (!FFPROBE_BINARY_CANDIDATES.length) throw new Error('ffprobe_binary_missing')
+  const stdout = await runBinary(FFPROBE_BINARY_CANDIDATES, ['-v', 'error', '-print_format', 'json', '-show_streams', '-show_format', filePath])
+  const payload = JSON.parse(stdout) as {
+    streams?: Array<{ codec_type?: string; width?: number; height?: number; duration?: string }>
+    format?: { duration?: string }
+  }
+  const videoStream = Array.isArray(payload.streams) ? payload.streams.find((stream) => stream.codec_type === 'video') : null
+  const streamDurationMs = videoStream?.duration ? Number.parseFloat(videoStream.duration) * 1000 : NaN
+  const formatDurationMs = payload.format?.duration ? Number.parseFloat(payload.format.duration) * 1000 : NaN
+  const durationMs = Number.isFinite(streamDurationMs) ? Math.round(streamDurationMs) : Number.isFinite(formatDurationMs) ? Math.round(formatDurationMs) : null
+  return {
+    width: typeof videoStream?.width === 'number' ? videoStream.width : null,
+    height: typeof videoStream?.height === 'number' ? videoStream.height : null,
+    durationMs,
+  }
+}
+
+function buildVariantKey(category: MediaCategory, ownerId: string, assetId: string, variantName: string, extension = 'webp') {
+  return `processed/${category}/${ownerId}/${assetId}/${variantName}.${extension}`
 }
 
 function buildPublicUrl(key: string) {

@@ -22,6 +22,39 @@ type FamilyNotificationRelationship = {
   createdAt: string
 }
 
+function extractVideoVariantUrl(variants: Prisma.JsonValue | null | undefined, preferred: string[]) {
+  if (!variants || typeof variants !== 'object' || Array.isArray(variants)) return null
+  const record = variants as Record<string, { url?: unknown } | null>
+  for (const key of preferred) {
+    const candidate = record[key]
+    if (candidate && typeof candidate.url === 'string' && candidate.url.trim().length > 0) {
+      return candidate.url
+    }
+  }
+  return null
+}
+
+function buildReadyPostVideoPayload(asset: {
+  id: string
+  variants: Prisma.JsonValue | null
+  width: number | null
+  height: number | null
+  durationMs: number | null
+}) {
+  const playbackUrl = extractVideoVariantUrl(asset.variants, ['video-720p'])
+  const thumbnailUrl = extractVideoVariantUrl(asset.variants, ['video-thumb'])
+  if (!playbackUrl || !thumbnailUrl) return null
+  return {
+    assetId: asset.id,
+    playbackUrl,
+    thumbnailUrl,
+    durationMs: asset.durationMs ?? null,
+    width: asset.width ?? null,
+    height: asset.height ?? null,
+    status: 'completed',
+  }
+}
+
 type ReverseStoredRelationshipRow = {
   id: string
   handle: string
@@ -968,8 +1001,54 @@ export function registerFamilyRoutes(app: FastifyInstance, deps: FamilyRoutesDep
     const authContext = await deps.loadViewerAuthContext(req)
     if (!authContext) return reply.code(401).send({ error: 'unauthorized' })
 
-    const parse = z.object({ memberId: z.string().trim().min(1).optional(), body: z.string().trim().max(2000).optional().default(''), images: z.array(z.string().trim().url()).max(6).optional().default([]) }).safeParse(req.body ?? {})
+    const parse = z
+      .object({
+        memberId: z.string().trim().min(1).optional(),
+        body: z.string().trim().max(2000).optional().default(''),
+        images: z.array(z.string().trim().url()).max(6).optional().default([]),
+        videoAssetId: MediaAssetIdSchema.optional(),
+      })
+      .superRefine((value, ctx) => {
+        if (value.videoAssetId && value.images.length) {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            message: 'family_feed_posts_cannot_mix_images_and_video',
+            path: ['videoAssetId'],
+          })
+        }
+      })
+      .safeParse(req.body ?? {})
     if (!parse.success) return reply.code(400).send({ error: parse.error.flatten() })
+
+    const ownerUserId = authContext.actor === 'family_member' ? authContext.member.parentId : authContext.userId
+
+    let readyVideoPayload: ReturnType<typeof buildReadyPostVideoPayload> | null = null
+    if (parse.data.videoAssetId) {
+      const videoAsset = await prisma.mediaAsset.findFirst({
+        where: {
+          id: parse.data.videoAssetId,
+          ownerId: ownerUserId,
+          category: 'post_video',
+          assetType: 'video',
+          status: 'ready',
+        },
+        select: {
+          id: true,
+          variants: true,
+          width: true,
+          height: true,
+          durationMs: true,
+          metadata: true,
+        },
+      })
+      if (!videoAsset) return reply.code(404).send({ error: 'video_asset_not_found' })
+      if (authContext.actor === 'family_member' && !deps.familyMemberOwnsAssetForSession(videoAsset, authContext.member.id)) {
+        return reply.code(403).send({ error: 'asset_not_owned_by_family_member' })
+      }
+      if ((videoAsset.durationMs ?? 0) > 5 * 60 * 1000) return reply.code(400).send({ error: 'video_too_long' })
+      readyVideoPayload = buildReadyPostVideoPayload(videoAsset)
+      if (!readyVideoPayload) return reply.code(409).send({ error: 'video_asset_not_ready' })
+    }
 
     if (authContext.actor === 'user' && !parse.data.memberId) {
       const viewerUser = await prisma.user.findUnique({ where: { id: authContext.userId }, select: { id: true, name: true, communityMeta: true, handle: true } })
@@ -984,7 +1063,7 @@ export function registerFamilyRoutes(app: FastifyInstance, deps: FamilyRoutesDep
 
       const body = deps.sanitizePlainText(parse.data.body)
       const images = parse.data.images.filter(Boolean)
-      if (!body && images.length === 0) return reply.code(400).send({ error: 'family_feed_post_empty' })
+      if (!body && images.length === 0 && !readyVideoPayload) return reply.code(400).send({ error: 'family_feed_post_empty' })
 
       const slugBase = deps.buildPostSlugBase({ handle: viewerUser.handle, title: undefined, body })
       const created = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
@@ -993,8 +1072,10 @@ export function registerFamilyRoutes(app: FastifyInstance, deps: FamilyRoutesDep
           data: {
             authorId: authContext.userId,
             body,
+            mediaUrl: readyVideoPayload?.thumbnailUrl,
             images: images.length ? (images as any) : undefined,
-            type: images.length ? 'photo' : 'post',
+            ...(readyVideoPayload ? { video: readyVideoPayload as Prisma.InputJsonValue } : {}),
+            type: readyVideoPayload ? 'post' : images.length ? 'photo' : 'post',
             seoSlug,
             audience: 'family',
             visibility: 'public',
@@ -1030,13 +1111,15 @@ export function registerFamilyRoutes(app: FastifyInstance, deps: FamilyRoutesDep
 
     const body = deps.sanitizePlainText(parse.data.body)
     const images = parse.data.images.filter(Boolean)
-    if (!body && images.length === 0) return reply.code(400).send({ error: 'family_feed_post_empty' })
+    if (!body && images.length === 0 && !readyVideoPayload) return reply.code(400).send({ error: 'family_feed_post_empty' })
 
     const created = await prisma.post.create({
       data: {
         authorId: targetMember.parentId,
         body,
+        mediaUrl: readyVideoPayload?.thumbnailUrl,
         images: images.length ? (images as any) : undefined,
+        ...(readyVideoPayload ? { video: readyVideoPayload as Prisma.InputJsonValue } : {}),
         type: deps.FAMILY_FEED_POST_TYPE,
         title: deps.buildFamilyFeedPostTitle(targetMember.id),
         audience: 'family',

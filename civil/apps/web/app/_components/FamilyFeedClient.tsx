@@ -25,7 +25,9 @@ type FamilyFeedPost = {
   id: string
   seoSlug?: string | null
   body: string
+  mediaUrl?: string | null
   images: string[]
+  video?: ApiPost['video']
   createdAt: string
   updatedAt: string
   counts?: ApiPost['counts']
@@ -63,9 +65,29 @@ type PhotoItem = {
   error?: string | null
 }
 
+type VideoItem = {
+  id: string
+  file?: File
+  previewUrl: string
+  assetId?: string | null
+  playbackUrl?: string | null
+  thumbnailUrl?: string | null
+  durationMs?: number | null
+  width?: number | null
+  height?: number | null
+  status: 'idle' | 'uploading' | 'processing' | 'ready' | 'error'
+  progressPercent?: number | null
+  progressLabel?: string | null
+  error?: string | null
+}
+
 const PHOTO_MAX_BYTES = 25 * 1024 * 1024
+const VIDEO_MAX_BYTES = 500 * 1024 * 1024
+const VIDEO_MAX_DURATION_MS = 5 * 60 * 1000
 const ACCEPTED_IMAGE_TYPES = 'image/jpeg,image/png,image/webp,image/avif,image/heic,image/heif'
 const ACCEPTED_IMAGE_TYPE_LIST = ACCEPTED_IMAGE_TYPES.split(',')
+const ACCEPTED_VIDEO_TYPES = 'video/mp4,video/quicktime,video/webm,video/x-m4v'
+const ACCEPTED_VIDEO_TYPE_LIST = ACCEPTED_VIDEO_TYPES.split(',')
 const MAX_IMAGE_DIMENSION = 8000
 const MAX_IMAGE_MEGA_PIXELS = 40
 const FEED_COMMENT_PREVIEW_LIMIT = 3
@@ -82,6 +104,16 @@ const pickPhotoVariantUrl = (variants?: Record<string, { url?: string | null } |
   }
   const fallback = Object.values(variants).find((variant) => variant?.url)
   return fallback?.url ?? null
+}
+
+const pickVideoVariantUrl = (variants?: Record<string, { url?: string | null } | null>) => {
+  if (!variants) return null
+  return variants['video-720p']?.url ?? null
+}
+
+const pickVideoThumbnailUrl = (variants?: Record<string, { url?: string | null } | null>) => {
+  if (!variants) return null
+  return variants['video-thumb']?.url ?? null
 }
 
 const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms))
@@ -106,6 +138,78 @@ const readImageDimensions = async (file: File): Promise<{ width: number; height:
   }
 }
 
+const readVideoMetadata = async (file: File): Promise<{ width: number; height: number; durationMs: number } | null> => {
+  try {
+    const objectUrl = URL.createObjectURL(file)
+    return await new Promise((resolve) => {
+      const video = document.createElement('video')
+      video.preload = 'metadata'
+      video.onloadedmetadata = () => {
+        const durationSeconds = Number.isFinite(video.duration) ? video.duration : 0
+        resolve({
+          width: video.videoWidth || 0,
+          height: video.videoHeight || 0,
+          durationMs: Math.round(durationSeconds * 1000),
+        })
+        URL.revokeObjectURL(objectUrl)
+      }
+      video.onerror = () => {
+        resolve(null)
+        URL.revokeObjectURL(objectUrl)
+      }
+      video.src = objectUrl
+    })
+  } catch {
+    return null
+  }
+}
+
+function getVideoProgressDisplay(video: Pick<VideoItem, 'status' | 'progressPercent' | 'progressLabel'>) {
+  if (typeof video.progressPercent === 'number' && video.progressLabel) {
+    return `${video.progressPercent}% ${video.progressLabel}`
+  }
+  if (video.status === 'uploading') return 'Uploading Video'
+  if (video.status === 'processing') return 'Processing Video'
+  if (video.status === 'ready') return 'Ready'
+  if (video.status === 'error') return 'Failed'
+  return ''
+}
+
+function uploadFileWithProgress(
+  url: string,
+  method: string,
+  headers: Record<string, string> | undefined,
+  file: File,
+  onProgress: (percent: number) => void,
+) {
+  return new Promise<boolean>((resolve, reject) => {
+    const xhr = new XMLHttpRequest()
+    xhr.open(method, url, true)
+    for (const [key, value] of Object.entries(headers ?? {})) {
+      xhr.setRequestHeader(key, value)
+    }
+    xhr.upload.onprogress = (event) => {
+      if (!event.lengthComputable || !event.total) return
+      const percent = Math.max(1, Math.min(99, Math.round((event.loaded / event.total) * 100)))
+      onProgress(percent)
+    }
+    xhr.onerror = () => reject(new Error('upload_network_error'))
+    xhr.onabort = () => reject(new Error('upload_aborted'))
+    xhr.onload = () => resolve(xhr.status >= 200 && xhr.status < 300)
+    xhr.send(file)
+  })
+}
+
+function computeVideoProcessingPercent(attempt: number, maxAttempts: number, jobStatus?: string | null) {
+  if (jobStatus === 'COMPLETED') return 100
+  if (jobStatus === 'FAILED') return null
+  const bounded = Math.max(0, Math.min(attempt, maxAttempts))
+  if (jobStatus === 'QUEUED') {
+    return Math.min(24, 5 + Math.round((bounded / Math.max(1, maxAttempts)) * 15))
+  }
+  return Math.min(94, 25 + Math.round((bounded / Math.max(1, maxAttempts)) * 69))
+}
+
 function formatFamilyFeedDate(isoString: string) {
   const date = new Date(isoString)
   if (Number.isNaN(date.getTime())) return 'Just now'
@@ -126,7 +230,9 @@ function mergeFamilyFeedPostUpdate(post: FamilyFeedPost, updated: Partial<ApiPos
   return {
     ...post,
     body: typeof updated.body === 'string' ? updated.body : post.body,
+    mediaUrl: updated.mediaUrl === undefined ? post.mediaUrl : updated.mediaUrl,
     images: Array.isArray(updated.images) ? updated.images.filter((value): value is string => typeof value === 'string') : post.images,
+    video: updated.video === undefined ? post.video : updated.video,
     createdAt: typeof updated.createdAt === 'string' ? updated.createdAt : post.createdAt,
     updatedAt: typeof updated.updatedAt === 'string' ? updated.updatedAt : post.updatedAt,
     seoSlug: updated.seoSlug === undefined ? post.seoSlug : updated.seoSlug,
@@ -383,7 +489,7 @@ function FamilyFeedPostCard({ post, memberId, viewer }: FamilyFeedPostCardProps)
               {currentPost.author.badgeLabel}
             </span>
             <span className="rounded-full border border-white/35 px-2 py-0.5 text-white/85">
-              {currentPost.images.length ? 'Photo' : 'Update'}
+              {currentPost.video ? 'Video' : currentPost.images.length ? 'Photo' : 'Update'}
             </span>
           </div>
         }
@@ -393,6 +499,8 @@ function FamilyFeedPostCard({ post, memberId, viewer }: FamilyFeedPostCardProps)
         coverUrl={currentPost.author.coverUrl ?? undefined}
         body={currentPost.body || undefined}
         images={currentPost.images}
+        mediaUrl={currentPost.mediaUrl ?? undefined}
+        video={currentPost.video ?? null}
       >
         <CivilPostActions
           leading={
@@ -479,10 +587,13 @@ export default function FamilyFeedClient({
   const [loading, setLoading] = useState(true)
   const [composerText, setComposerText] = useState('')
   const [photos, setPhotos] = useState<PhotoItem[]>([])
+  const [video, setVideo] = useState<VideoItem | null>(null)
   const [submitting, setSubmitting] = useState(false)
   const [uploading, setUploading] = useState(false)
   const [composerOpen, setComposerOpen] = useState(false)
   const fileInputRef = useRef<HTMLInputElement | null>(null)
+  const photosRef = useRef<PhotoItem[]>([])
+  const videoRef = useRef<VideoItem | null>(null)
 
   const familyDisplayName = memberDisplayName ?? familyView?.displayName ?? viewer?.name ?? 'Family member'
   const familyModeBand = memberModeBand ?? familyView?.modeBand ?? 'JUNIOR'
@@ -491,10 +602,11 @@ export default function FamilyFeedClient({
   const avatarSrc = viewer?.avatarUrl ?? buildFamilyAvatarDataUrl(composerDisplayName, familyModeBand)
   const composerActions = [
     { type: 'post', label: 'Post', icon: '📝' },
-    { type: 'photo', label: 'Photos', icon: '📷' },
+    { type: 'photo', label: 'Media', icon: '🎞️' },
   ]
   const readyImages = useMemo(() => photos.map((photo) => photo.mediaUrl).filter((value): value is string => Boolean(value)), [photos])
-  const canSubmit = !readOnly && (composerText.trim().length > 0 || readyImages.length > 0) && !submitting && !uploading
+  const readyVideo = useMemo(() => (video?.status === 'ready' && video.assetId ? video : null), [video])
+  const canSubmit = !readOnly && (composerText.trim().length > 0 || readyImages.length > 0 || Boolean(readyVideo)) && !submitting && !uploading
 
   const loadFeed = useCallback(async () => {
     if (!viewerHydrated || !familyViewHydrated) return
@@ -647,16 +759,212 @@ export default function FamilyFeedClient({
     }
   }, [])
 
-  const handlePhotoSelect = useCallback(async (event: ChangeEvent<HTMLInputElement>) => {
+  const startVideoUpload = useCallback(async (nextVideo: VideoItem, file: File) => {
+    setUploading(true)
+    setVideo({ ...nextVideo, status: 'uploading', progressPercent: 1, progressLabel: 'Uploading Video', error: null })
+    const token = typeof window !== 'undefined' ? window.localStorage.getItem('token') : null
+    if (!token) {
+      redirectToAuthModal('login')
+      setUploading(false)
+      return
+    }
+
+    try {
+      const initRes = await fetch(buildApiUrl('/media/uploads'), {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          category: 'post_video',
+          mime: file.type || 'application/octet-stream',
+          byteSize: file.size,
+          filename: file.name,
+        }),
+      })
+      if (!initRes.ok) {
+        const payload = await initRes.json().catch(() => ({}))
+        throw new Error(typeof payload?.error === 'string' ? payload.error : 'upload_init_failed')
+      }
+
+      const initPayload = await initRes.json()
+      const assetId: string = initPayload.assetId
+      const upload: { url?: string; method?: string; headers?: Record<string, string> } = initPayload.upload || {}
+      const proxyPath: string | null = typeof initPayload?.proxyPath === 'string' ? initPayload.proxyPath : null
+
+      const tryDirect = async () => {
+        if (!upload.url) return false
+        if (typeof window !== 'undefined' && window.location.protocol === 'https:' && upload.url.startsWith('http:')) {
+          return false
+        }
+        const res = await fetch(upload.url, {
+          method: upload.method || 'PUT',
+          headers: upload.headers,
+          body: file,
+        })
+        return res.ok
+      }
+
+      const tryProxy = async () => {
+        if (!proxyPath) return false
+        const res = await fetch(buildApiUrl(proxyPath), {
+          method: 'PUT',
+          headers: {
+            authorization: `Bearer ${token}`,
+            'content-type': file.type || 'application/octet-stream',
+            'x-upload-byte-size': String(file.size),
+          },
+          body: file,
+        })
+        return res.ok
+      }
+
+      const directOk = upload.url ? await tryDirect().catch(() => false) : false
+      const proxyOk = directOk ? true : await tryProxy().catch(() => false)
+      if (!directOk && !proxyOk) throw new Error('upload_failed')
+
+      const completeRes = await fetch(buildApiUrl('/media/uploads/complete'), {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          assetId,
+          width: nextVideo.width,
+          height: nextVideo.height,
+          durationMs: nextVideo.durationMs,
+        }),
+      })
+      if (!completeRes.ok) {
+        throw new Error('processing_not_scheduled')
+      }
+
+      setVideo((current) => (current && current.id === nextVideo.id ? { ...current, assetId, status: 'processing', progressPercent: 5, progressLabel: 'Queued for Processing' } : current))
+
+      for (let attempt = 0; attempt < 60; attempt += 1) {
+        const res = await fetch(buildApiUrl(`/media/assets/${assetId}`), {
+          headers: { authorization: `Bearer ${token}` },
+        }).catch(() => null)
+
+        if (res?.ok) {
+          const payload = await res.json().catch(() => ({})) as {
+            asset?: {
+              status?: 'pending' | 'processing' | 'ready' | 'failed'
+              variants?: Record<string, { url?: string | null } | null>
+              durationMs?: number | null
+              width?: number | null
+              height?: number | null
+              failureReason?: string | null
+              transcodeJob?: { status?: 'QUEUED' | 'PROCESSING' | 'COMPLETED' | 'FAILED' } | null
+            }
+          }
+          const asset = payload?.asset
+          if (asset?.status === 'pending' || asset?.status === 'processing') {
+            setVideo((current) => {
+              if (!current || current.id !== nextVideo.id) return current
+              return {
+                ...current,
+                assetId,
+                status: 'processing',
+                progressPercent: computeVideoProcessingPercent(attempt, 60, asset?.transcodeJob?.status),
+                progressLabel: asset?.transcodeJob?.status === 'QUEUED' ? 'Queued for Processing' : 'Processing Video',
+              }
+            })
+          }
+          if (asset?.status === 'ready') {
+            const playbackUrl = pickVideoVariantUrl(asset.variants)
+            const thumbnailUrl = pickVideoThumbnailUrl(asset.variants)
+            if (!playbackUrl || !thumbnailUrl) throw new Error('variant_missing')
+            setVideo((current) => {
+              if (!current || current.id !== nextVideo.id) return current
+              return {
+                ...current,
+                assetId,
+                playbackUrl,
+                thumbnailUrl,
+                durationMs: asset.durationMs ?? current.durationMs,
+                width: asset.width ?? current.width,
+                height: asset.height ?? current.height,
+                status: 'ready',
+                progressPercent: 100,
+                progressLabel: 'Ready',
+                error: null,
+              }
+            })
+            setUploading(false)
+            return
+          }
+          if (asset?.status === 'failed') {
+            throw new Error(asset.failureReason ?? 'processing_failed')
+          }
+        }
+
+        await wait(1000)
+      }
+
+      throw new Error('processing_timeout')
+    } catch (error) {
+      console.error('Family feed video upload failed', error)
+      setVideo((current) => {
+        if (!current || current.id !== nextVideo.id) return current
+        return { ...current, status: 'error', progressPercent: null, progressLabel: 'Failed', error: error instanceof Error ? error.message : 'Upload failed' }
+      })
+      pushToast('Unable to upload that video right now.', 'error')
+    } finally {
+      setUploading(false)
+    }
+  }, [])
+
+  const handleMediaSelect = useCallback(async (event: ChangeEvent<HTMLInputElement>) => {
     const fileList = event.target.files
     if (!fileList || fileList.length === 0) return
     const files = Array.from(fileList)
     event.target.value = ''
 
     const newPhotos: PhotoItem[] = []
+    let newVideo: VideoItem | null = null
     for (const file of files) {
+      if (ACCEPTED_VIDEO_TYPE_LIST.includes(file.type)) {
+        if (video || newVideo || photos.length > 0 || newPhotos.length > 0) {
+          pushToast(`Skipped ${file.name}: choose either photos or one video.`, 'error')
+          continue
+        }
+        if (file.size > VIDEO_MAX_BYTES) {
+          pushToast(`Skipped ${file.name}: file too large.`, 'error')
+          continue
+        }
+        const metadata = await readVideoMetadata(file)
+        if (!metadata || metadata.durationMs <= 0) {
+          pushToast(`Skipped ${file.name}: video could not be read.`, 'error')
+          continue
+        }
+        if (metadata.durationMs > VIDEO_MAX_DURATION_MS) {
+          pushToast(`Skipped ${file.name}: videos must be 5 minutes or less.`, 'error')
+          continue
+        }
+
+        newVideo = {
+          id: Math.random().toString(36).slice(2),
+          file,
+          previewUrl: URL.createObjectURL(file),
+          durationMs: metadata.durationMs,
+          width: metadata.width,
+          height: metadata.height,
+          status: 'idle',
+          progressPercent: null,
+          progressLabel: null,
+        }
+        continue
+      }
+
       if (!ACCEPTED_IMAGE_TYPE_LIST.includes(file.type)) {
         pushToast(`Skipped ${file.name}: invalid file type.`, 'error')
+        continue
+      }
+      if (video || newVideo) {
+        pushToast(`Skipped ${file.name}: choose either photos or one video.`, 'error')
         continue
       }
       if (file.size > PHOTO_MAX_BYTES) {
@@ -678,9 +986,15 @@ export default function FamilyFeedClient({
       newPhotos.push({ id, file, previewUrl: URL.createObjectURL(file), status: 'idle' })
     }
 
-    if (!newPhotos.length) return
+    if (!newPhotos.length && !newVideo) return
     setPhotos((prev) => [...prev, ...newPhotos])
-  }, [])
+    if (newVideo) {
+      if (video) {
+        URL.revokeObjectURL(video.previewUrl)
+      }
+      setVideo(newVideo)
+    }
+  }, [photos.length, video])
 
   useEffect(() => {
     photos.forEach((photo) => {
@@ -691,10 +1005,27 @@ export default function FamilyFeedClient({
   }, [photos, startPhotoUpload])
 
   useEffect(() => {
-    return () => {
-      photos.forEach((photo) => URL.revokeObjectURL(photo.previewUrl))
+    if (video?.status === 'idle' && video.file) {
+      void startVideoUpload(video, video.file)
     }
+  }, [startVideoUpload, video])
+
+  useEffect(() => {
+    photosRef.current = photos
   }, [photos])
+
+  useEffect(() => {
+    videoRef.current = video
+  }, [video])
+
+  useEffect(() => {
+    return () => {
+      photosRef.current.forEach((photo) => URL.revokeObjectURL(photo.previewUrl))
+      if (videoRef.current) {
+        URL.revokeObjectURL(videoRef.current.previewUrl)
+      }
+    }
+  }, [])
 
   const removePhoto = useCallback((id: string) => {
     setPhotos((prev) => {
@@ -702,6 +1033,15 @@ export default function FamilyFeedClient({
       const removed = prev.find((photo) => photo.id === id)
       if (removed) URL.revokeObjectURL(removed.previewUrl)
       return next
+    })
+  }, [])
+
+  const removeVideo = useCallback(() => {
+    setVideo((current) => {
+      if (current) {
+        URL.revokeObjectURL(current.previewUrl)
+      }
+      return null
     })
   }, [])
 
@@ -725,6 +1065,7 @@ export default function FamilyFeedClient({
           memberId: effectiveMemberId ?? undefined,
           body: composerText.trim(),
           images: readyImages,
+          videoAssetId: readyVideo?.assetId,
         }),
       })
       const payload = (await response.json().catch(() => null)) as { error?: string; post?: FamilyFeedPost } | null
@@ -737,6 +1078,10 @@ export default function FamilyFeedClient({
       setComposerText('')
       photos.forEach((photo) => URL.revokeObjectURL(photo.previewUrl))
       setPhotos([])
+      if (video) {
+        URL.revokeObjectURL(video.previewUrl)
+      }
+      setVideo(null)
       return true
     } catch (error) {
       console.error('Failed to create family feed post', error)
@@ -745,7 +1090,7 @@ export default function FamilyFeedClient({
     } finally {
       setSubmitting(false)
     }
-  }, [canSubmit, composerText, effectiveMemberId, photos, readyImages])
+  }, [canSubmit, composerText, effectiveMemberId, photos, readyImages, readyVideo?.assetId, video])
 
   return (
     <DashboardShell rightRail={rightRail ?? <RightRail />} mainClassName="min-w-0 space-y-6">
@@ -784,6 +1129,41 @@ export default function FamilyFeedClient({
                   placeholder="Share an update with your family..."
                   className="min-h-[120px] w-full resize-none rounded-3xl border border-slate-200 bg-white px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-[var(--cc-primary)] focus:ring-2 focus:ring-[var(--cc-primary)]/10"
                 />
+                {video ? (
+                  <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white">
+                    <div className="aspect-video bg-slate-950">
+                      <video
+                        src={video.playbackUrl ?? video.previewUrl}
+                        poster={video.thumbnailUrl ?? undefined}
+                        className="h-full w-full"
+                        controls={video.status === 'ready'}
+                        muted
+                        playsInline
+                      />
+                    </div>
+                    <div className="flex items-center justify-between gap-3 px-3 py-2 text-xs">
+                      <span className={clsx(
+                        'font-semibold',
+                        video.status === 'ready' ? 'text-emerald-600' : video.status === 'error' ? 'text-red-600' : 'text-slate-500',
+                      )}>
+                        {getVideoProgressDisplay(video)}
+                      </span>
+                      <button type="button" className="font-semibold text-slate-500 hover:text-slate-900" onClick={removeVideo}>
+                        Remove
+                      </button>
+                    </div>
+                    {(video.status === 'uploading' || video.status === 'processing') ? (
+                      <div className="px-3 pb-3">
+                        <div className="h-2 overflow-hidden rounded-full bg-slate-200">
+                          <div
+                            className="h-full rounded-full bg-[var(--cc-primary)] transition-[width] duration-300"
+                            style={{ width: `${Math.max(6, video.progressPercent ?? (video.status === 'uploading' ? 45 : 22))}%` }}
+                          />
+                        </div>
+                      </div>
+                    ) : null}
+                  </div>
+                ) : null}
                 {photos.length ? (
                   <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
                     {photos.map((photo) => (
@@ -813,7 +1193,7 @@ export default function FamilyFeedClient({
                       onClick={() => fileInputRef.current?.click()}
                       className="inline-flex items-center rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition hover:border-slate-300 hover:text-slate-900"
                     >
-                      Add photos
+                      Add Media
                     </button>
                     <span className="text-xs text-slate-500">{composerText.trim().length}/2000</span>
                   </div>
@@ -832,7 +1212,7 @@ export default function FamilyFeedClient({
                 </div>
               </div>
             </div>
-            <input ref={fileInputRef} type="file" accept={ACCEPTED_IMAGE_TYPES} multiple className="hidden" onChange={handlePhotoSelect} />
+            <input ref={fileInputRef} type="file" accept={`${ACCEPTED_IMAGE_TYPES},${ACCEPTED_VIDEO_TYPES}`} multiple className="hidden" onChange={handleMediaSelect} />
           </div>
         </CivilComposerShell>
       </Modal>

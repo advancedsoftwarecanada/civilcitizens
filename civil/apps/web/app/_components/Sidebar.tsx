@@ -4,7 +4,7 @@ import Link from 'next/link'
 import { useMemo, type CSSProperties } from 'react'
 import clsx from 'clsx'
 import { usePathname } from 'next/navigation'
-import { FaCarSide, FaHouseUser, FaPrayingHands, FaUserTie, FaWallet } from 'react-icons/fa'
+import { FaBroadcastTower, FaCarSide, FaHouseUser, FaPlayCircle, FaPodcast, FaPrayingHands, FaUserTie, FaVideo, FaWallet } from 'react-icons/fa'
 import {
   HiOutlineChatBubbleOvalLeft,
   HiOutlineCurrencyDollar,
@@ -61,11 +61,15 @@ export const PRIMARY_NAV: SidebarNavItem[] = [
   { key: 'topics', label: 'Topics', href: '/topics', icon: HiOutlineTag },
   { key: 'events', label: 'Events', href: '/events', icon: HiOutlineCalendarDays },
   { key: 'market', label: 'Market', href: '/market', icon: HiOutlineShoppingCart },
+  { key: 'live', label: 'Live', href: '/live', icon: FaBroadcastTower },
+  { key: 'shorts', label: 'Shorts', href: '/shorts', icon: FaPlayCircle },
+  { key: 'video', label: 'Videos', href: '/video', icon: FaVideo },
+  { key: 'podcasts', label: 'Podcasts', href: '/podcasts', icon: FaPodcast },
   { key: 'work', label: 'Work', href: '/work', icon: HiOutlineCurrencyDollar },
   { key: 'drive', label: 'Drive', href: '/drive', icon: FaCarSide },
   { key: 'causes', label: 'Causes', href: '/causes', icon: FaPrayingHands },
   { key: 'wallet', label: 'Wallet', href: '/wallet', icon: FaWallet },
-  // TODO(app-store): restore News, Podcasts, Music, and Video nav items once those product areas are ready.
+  // TODO(app-store): restore News and Music nav items once those product areas are ready.
   { key: 'account', label: 'Account Settings', href: '/settings', icon: HiOutlineUserCircle },
 ]
 
@@ -225,7 +229,7 @@ export default function Sidebar({ me, active }: SidebarProps) {
         />
       )}
 
-      <nav className="mt-[var(--sidebar-top-gap)] flex flex-1 flex-col gap-[var(--sidebar-gap)]">
+      <nav className="mt-[var(--sidebar-top-gap)] flex min-h-0 flex-1 flex-col gap-[var(--sidebar-gap)] overflow-y-auto pr-1 [scrollbar-gutter:stable]">
         {navContent(navItems)}
       </nav>
     </aside>

@@ -150,10 +150,12 @@ services:
     build:
       context: .
       dockerfile: ./apps/worker/Dockerfile
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     environment:
       DATABASE_URL: ${DATABASE_URL:-postgresql://postgres:postgres@postgres:5432/civil}
       # Worker currently only needs Redis
-      REDIS_URL: redis://redis:6379
+      REDIS_URL: ${REDIS_URL:-redis://redis:6379}
       LOG_LEVEL: info
       MEDIA_S3_ENDPOINT: ${MEDIA_S3_ENDPOINT:-http://minio:9000}
       MEDIA_S3_REGION: ${MEDIA_S3_REGION:-us-east-1}
@@ -170,7 +172,11 @@ services:
       CIVIL_AI_MODEL: ${CIVIL_AI_MODEL:-}
       CIVIL_AI_API_VERSION: ${CIVIL_AI_API_VERSION:-}
       CIVIL_AI_SERVERS_FILE: ${CIVIL_AI_SERVERS_FILE:-}
+      CIVIL_AI_INSTRUCTIONS_FILE: ${CIVIL_AI_INSTRUCTIONS_FILE:-}
       CIVIL_AI_VISION_MODEL: ${CIVIL_AI_VISION_MODEL:-}
+    volumes:
+      - ./ai_servers.json:/app/ai_servers.json:ro
+      - ./CIVIL_AI.md:/app/CIVIL_AI.md:ro
     depends_on: [redis, postgres]
 
   web:

@@ -24,6 +24,9 @@ FROM base AS runtime
 ENV NODE_ENV=production
 ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 WORKDIR /app
+RUN apt-get update -y \
+	&& apt-get install -y --no-install-recommends ffmpeg ca-certificates \
+	&& rm -rf /var/lib/apt/lists/*
 COPY --from=build /app/apps/worker/dist ./apps/worker/dist
 COPY --from=build /app/node_modules ./node_modules
 COPY --from=build /app/apps/worker/node_modules ./apps/worker/node_modules

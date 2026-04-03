@@ -77,6 +77,7 @@ export const CreatePostInput = z
     body: z.string().max(20000).optional(),
     mediaUrl: z.string().url().optional(),
     images: z.array(z.string().url()).optional(),
+    videoAssetId: z.string().uuid().or(z.string().cuid()).optional(),
     hashtags: z.array(z.string().regex(/^#[A-Za-z0-9_-]{1,50}$/)).max(10).optional(),
     communityProvince: z.string().trim().min(2).max(32).optional(),
     communitySlug: z.string().trim().min(1).max(160).optional(),
@@ -107,6 +108,14 @@ export const CreatePostInput = z
         code: z.ZodIssueCode.custom,
         message: 'Community province and slug must both be provided to target a community',
         path: hasProvince ? ['communitySlug'] : ['communityProvince'],
+      })
+    }
+
+    if (data.videoAssetId && data.images?.length) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'Posts can include either images or one video, not both',
+        path: ['videoAssetId'],
       })
     }
 
@@ -728,13 +737,13 @@ export const FamilyMemberInput = z.object({
 })
 export type FamilyMemberInput = z.infer<typeof FamilyMemberInput>
 
-export const MediaCategoryEnum = z.enum(['avatar', 'cover', 'business_logo', 'business_cover', 'post_image', 'attachment'])
+export const MediaCategoryEnum = z.enum(['avatar', 'cover', 'business_logo', 'business_cover', 'post_image', 'post_video', 'attachment'])
 export type MediaCategory = z.infer<typeof MediaCategoryEnum>
 
 export const RequestMediaUploadInput = z.object({
   category: MediaCategoryEnum,
   mime: z.string().trim().min(3).max(120),
-  byteSize: z.number().int().positive().max(50 * 1024 * 1024),
+  byteSize: z.number().int().positive().max(500 * 1024 * 1024),
   filename: z.string().trim().max(180).optional(),
 })
 export type RequestMediaUploadInput = z.infer<typeof RequestMediaUploadInput>
@@ -743,6 +752,7 @@ export const CompleteMediaUploadInput = z.object({
   assetId: MediaAssetIdSchema,
   width: z.number().int().positive().max(10000).optional(),
   height: z.number().int().positive().max(10000).optional(),
+  durationMs: z.number().int().positive().max(30 * 60 * 1000).optional(),
   checksum: z.string().trim().max(160).optional(),
 })
 export type CompleteMediaUploadInput = z.infer<typeof CompleteMediaUploadInput>

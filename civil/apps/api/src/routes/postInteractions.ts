@@ -23,6 +23,39 @@ const VotePostInput = z.object({
   value: z.union([z.literal(-1), z.literal(0), z.literal(1)]),
 })
 
+function extractVideoVariantUrl(variants: Prisma.JsonValue | null | undefined, preferred: string[]) {
+  if (!variants || typeof variants !== 'object' || Array.isArray(variants)) return null
+  const record = variants as Record<string, { url?: unknown } | null>
+  for (const key of preferred) {
+    const candidate = record[key]
+    if (candidate && typeof candidate.url === 'string' && candidate.url.trim().length > 0) {
+      return candidate.url
+    }
+  }
+  return null
+}
+
+function buildReadyPostVideoPayload(asset: {
+  id: string
+  variants: Prisma.JsonValue | null
+  width: number | null
+  height: number | null
+  durationMs: number | null
+}) {
+  const playbackUrl = extractVideoVariantUrl(asset.variants, ['video-720p'])
+  const thumbnailUrl = extractVideoVariantUrl(asset.variants, ['video-thumb'])
+  if (!playbackUrl || !thumbnailUrl) return null
+  return {
+    assetId: asset.id,
+    playbackUrl,
+    thumbnailUrl,
+    durationMs: asset.durationMs ?? null,
+    width: asset.width ?? null,
+    height: asset.height ?? null,
+    status: 'completed',
+  }
+}
+
 const HTTP_URL_REGEX = /https?:\/\/[^\s<>"']+/gi
 
 function extractFirstPostUrl(value: string): string | null {
@@ -219,7 +252,7 @@ export function registerPostInteractionRoutes(app: FastifyInstance, deps: PostIn
         }
       }
 
-      const { body: rawBody, mediaUrl, images, hashtags, type, title, jurisdiction, sharedPostId, visibility, audience, poll: pollInput } = parse.data
+      const { body: rawBody, mediaUrl, images, videoAssetId, hashtags, type, title, jurisdiction, sharedPostId, visibility, audience, poll: pollInput } = parse.data
       const showBusinessAuthor = Boolean(business && parse.data.showBusinessAuthor)
 
       const isArticle = type === 'article'
@@ -245,6 +278,45 @@ export function registerPostInteractionRoutes(app: FastifyInstance, deps: PostIn
             ? 'network'
             : 'friends'
 
+      if (videoAssetId) {
+        if (type !== 'post') {
+          return reply.code(400).send({ error: 'video_posts_must_use_post_type' })
+        }
+        if (business || (provinceCode && communitySlug)) {
+          return reply.code(400).send({ error: 'video_posts_must_be_personal' })
+        }
+      }
+
+      let readyVideoPayload: ReturnType<typeof buildReadyPostVideoPayload> | null = null
+      if (videoAssetId) {
+        const videoAsset = await prisma.mediaAsset.findFirst({
+          where: {
+            id: videoAssetId,
+            ownerId: userId,
+            category: 'post_video',
+            assetType: 'video',
+            status: 'ready',
+          },
+          select: {
+            id: true,
+            variants: true,
+            width: true,
+            height: true,
+            durationMs: true,
+          },
+        })
+        if (!videoAsset) {
+          return reply.code(404).send({ error: 'video_asset_not_found' })
+        }
+        if ((videoAsset.durationMs ?? 0) > 5 * 60 * 1000) {
+          return reply.code(400).send({ error: 'video_too_long' })
+        }
+        readyVideoPayload = buildReadyPostVideoPayload(videoAsset)
+        if (!readyVideoPayload) {
+          return reply.code(409).send({ error: 'video_asset_not_ready' })
+        }
+      }
+
       const createdResult = await prisma.$transaction(async (tx: Prisma.TransactionClient) => {
         const seoSlug = await deps.generateUniquePostSlug(slugBase, tx)
 
@@ -256,8 +328,9 @@ export function registerPostInteractionRoutes(app: FastifyInstance, deps: PostIn
             ...(visibility ? { visibility } : {}),
             ...(normalizedAudience ? ({ audience: normalizedAudience } as any) : {}),
             body: normalizedBody,
-            mediaUrl,
+            mediaUrl: readyVideoPayload?.thumbnailUrl ?? mediaUrl,
             images: images ? (images as any) : undefined,
+            ...(readyVideoPayload ? { video: readyVideoPayload as Prisma.InputJsonValue } : {}),
             ...(linkPreview ? { linkPreview: linkPreview as Prisma.InputJsonValue } : {}),
             type,
             title,

@@ -34,7 +34,7 @@ Commands:
 Managed processes:
 - web    (@civil/web dev)
 - api    (@civil/api dev)
-- worker (@civil/worker dev)
+- worker (docker container)
 """
 
 from __future__ import annotations
@@ -48,6 +48,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+from urllib.parse import urlsplit, urlunsplit
 
 
 REPO_ROOT = Path(__file__).resolve().parent
@@ -57,6 +58,8 @@ EDGE_PROXY_COMPOSE = REPO_ROOT / "ops" / "dev-edge-proxy.compose.yml"
 EDGE_PROXY_CONFIG = REPO_ROOT / "ops" / "dev.civilcitizens.ca.nginx.conf"
 EDGE_PROXY_PROJECT = "civil_dev_edge"
 EDGE_PROXY_CONTAINER = "civil-dev-edge-nginx"
+CIVIL_COMPOSE_FILE = CIVIL_DIR / "docker-compose.yml"
+DEV_WORKER_PROJECT = "civil_dev_worker"
 
 WEB_PORT = int(os.environ.get("CIVIL_WEB_PORT", "33101"))
 # NOTE: In WSL2 + Docker Desktop, some ports can get mapped unexpectedly when
@@ -397,6 +400,106 @@ def _ensure_edge_proxy_up() -> None:
     )
 
 
+def _dev_worker_env(env: dict[str, str]) -> dict[str, str]:
+    def _translate_host_url(raw: str, *, default_port: int | None = None) -> str:
+        value = (raw or '').strip()
+        if not value:
+            return value
+        try:
+            parts = urlsplit(value)
+        except Exception:
+            return value
+        hostname = parts.hostname or ''
+        if hostname not in {'localhost', '127.0.0.1', '0.0.0.0'}:
+            return value
+        username = parts.username or ''
+        password = parts.password or ''
+        auth = ''
+        if username:
+            auth = username
+            if password:
+                auth += f':{password}'
+            auth += '@'
+        port = parts.port if parts.port is not None else default_port
+        netloc = f"{auth}host.docker.internal"
+        if port is not None:
+            netloc += f':{port}'
+        return urlunsplit((parts.scheme, netloc, parts.path, parts.query, parts.fragment))
+
+    worker_env = dict(env)
+    worker_env["DATABASE_URL"] = _translate_host_url(worker_env.get("DATABASE_URL", ""), default_port=CYBERTRON_POSTGRES_PORT)
+    worker_env["REDIS_URL"] = _translate_host_url(worker_env.get("REDIS_URL", ""), default_port=CYBERTRON_REDIS_PORT)
+    worker_env["MEDIA_S3_ENDPOINT"] = _translate_host_url(worker_env.get("MEDIA_S3_ENDPOINT", ""), default_port=CYBERTRON_MINIO_PORT)
+    worker_env["MEETING_RTC_SERVICE_URL"] = _translate_host_url(worker_env.get("MEETING_RTC_SERVICE_URL", ""), default_port=MEETING_RTC_PORT)
+    worker_env["CIVIL_AI_SERVERS_FILE"] = "/app/ai_servers.json"
+    worker_env["CIVIL_AI_INSTRUCTIONS_FILE"] = "/app/CIVIL_AI.md"
+    return worker_env
+
+
+def _run_dev_worker_compose(args: list[str], env: dict[str, str], *, capture_output: bool = False) -> subprocess.CompletedProcess[str] | None:
+    docker = shutil.which("docker")
+    if not docker:
+        raise RuntimeError("docker not found on PATH")
+    if not CIVIL_COMPOSE_FILE.exists():
+        raise RuntimeError(f"Missing Civil compose file at {CIVIL_COMPOSE_FILE}")
+
+    cmd = [
+        docker,
+        "compose",
+        "-p",
+        DEV_WORKER_PROJECT,
+        "-f",
+        str(CIVIL_COMPOSE_FILE),
+        "--profile",
+        "infra",
+        "--profile",
+        "app",
+        *args,
+    ]
+    if capture_output:
+        return subprocess.run(cmd, check=False, cwd=str(CIVIL_DIR), env=env, capture_output=True, text=True)
+    subprocess.run(cmd, check=True, cwd=str(CIVIL_DIR), env=env)
+    return None
+
+
+def _ensure_dev_worker_up(env: dict[str, str]) -> None:
+    worker_env = _dev_worker_env(env)
+    _run_dev_worker_compose(["up", "-d", "--build", "--no-deps", "worker"], worker_env)
+
+
+def _stop_dev_worker(env: dict[str, str] | None = None) -> bool:
+    worker_env = _dev_worker_env(env or _build_dev_env())
+    try:
+        result = _run_dev_worker_compose(["ps", "--services", "--status", "running", "worker"], worker_env, capture_output=True)
+        was_running = bool(result and "worker" in result.stdout.splitlines())
+    except Exception:
+        was_running = False
+
+    try:
+        _run_dev_worker_compose(["rm", "-f", "-s", "worker"], worker_env)
+    except Exception:
+        pass
+    return was_running
+
+
+def _dev_worker_running(env: dict[str, str] | None = None) -> bool:
+    worker_env = _dev_worker_env(env or _build_dev_env())
+    try:
+        result = _run_dev_worker_compose(["ps", "--services", "--status", "running", "worker"], worker_env, capture_output=True)
+    except Exception:
+        return False
+    return bool(result and "worker" in result.stdout.splitlines())
+
+
+def _tail_dev_worker_logs(env: dict[str, str], lines: int) -> str:
+    result = _run_dev_worker_compose(["logs", "--tail", str(lines), "worker"], _dev_worker_env(env), capture_output=True)
+    if not result:
+        return "(worker logs unavailable)"
+    combined = (result.stdout or "") + ("\n" + result.stderr if result.stderr else "")
+    output = _strip_ansi_and_controls(combined).strip()
+    return output or "(worker logs unavailable)"
+
+
 def _stop_edge_proxy() -> None:
     docker = shutil.which("docker")
     if not docker or not EDGE_PROXY_COMPOSE.exists():
@@ -529,6 +632,7 @@ def _ensure_meeting_rtc_deps(env: dict[str, str]) -> None:
 
 def stop() -> int:
     stopped_any = False
+    env = _build_dev_env()
 
     edge_proxy_was_running = _edge_proxy_running() or _port_open("127.0.0.1", EDGE_PROXY_PORT)
     _stop_edge_proxy()
@@ -561,6 +665,10 @@ def stop() -> int:
             print(f"⏹ Stopping {label} listener on port {port} (pid {pid})")
             _kill_process_group(pid)
             stopped_any = True
+
+    if _stop_dev_worker(env):
+        print("⏹ Stopping worker container")
+        stopped_any = True
 
     if not stopped_any:
         print("✅ Nothing to stop")
@@ -652,14 +760,14 @@ def start() -> int:
         env=api_env,
     )
 
-    print(f"▶ Starting worker (detached) (log: {WORKER_LOG})")
-    _spawn_detached(
-        [pnpm, "--filter", "@civil/worker", "dev"],
-        cwd=CIVIL_DIR,
-        pid_file=WORKER_PID_FILE,
-        log_file=WORKER_LOG,
-        env=env,
-    )
+    print("▶ Starting worker container (docker compose build + up)")
+    try:
+        _ensure_dev_worker_up(env)
+    except Exception as e:
+        print("❌ Worker container startup failed.")
+        print(f"   Error: {e}")
+        print("   Fix Docker/build issues, then re-run ./_DEV.py start")
+        return 1
 
     meeting_rtc_env = dict(env)
     meeting_rtc_env["PORT"] = str(MEETING_RTC_PORT)
@@ -685,12 +793,14 @@ def start() -> int:
         api_ok = _port_open("127.0.0.1", API_PORT)
         rtc_ok = _port_open("127.0.0.1", MEETING_RTC_PORT)
         edge_ok = _port_open("127.0.0.1", EDGE_PROXY_PORT)
-        if web_ok and api_ok and rtc_ok and edge_ok:
+        worker_ok = _dev_worker_running(env)
+        if web_ok and api_ok and rtc_ok and edge_ok and worker_ok:
             print("✅ Dev processes are up")
             print(f"   - Edge proxy: http://localhost:{EDGE_PROXY_PORT}/nginx-health")
             print(f"   - Web: http://localhost:{WEB_PORT}/")
             print(f"   - API: http://localhost:{API_PORT}/health")
             print(f"   - Meeting RTC: http://localhost:{MEETING_RTC_PORT}/health")
+            print("   - Worker: docker compose service running")
             return 0
         time.sleep(0.25)
 
@@ -701,6 +811,9 @@ def start() -> int:
     print()
     print("== API last 60 lines ==")
     print(_tail(API_LOG, 60))
+    print()
+    print("== Worker last 60 lines ==")
+    print(_tail_dev_worker_logs(env, 60))
     return 1
 
 
@@ -725,11 +838,7 @@ def status() -> int:
     print(line("web", WEB_PID_FILE, WEB_PORT))
     print(line("api", API_PID_FILE, API_PORT))
     print(line("meeting-rtc", MEETING_RTC_PID_FILE, MEETING_RTC_PORT))
-    worker_pid = _read_pid(WORKER_PID_FILE)
-    worker_alive = bool(worker_pid and _pid_is_alive(worker_pid))
-    worker_cmd = _cmdline(worker_pid) if worker_pid else ""
-    worker_extra = f" cmd={worker_cmd[:120]}" if worker_cmd else ""
-    print(f"- worker: pidFile={worker_pid if worker_pid else '-'} alive={worker_alive}{worker_extra}")
+    print(f"- worker: containerRunning={_dev_worker_running()}")
     return 0
 
 
@@ -740,8 +849,8 @@ def logs(lines: int) -> int:
     print(f"== API ({API_LOG}) last {lines} ==")
     print(_tail(API_LOG, lines))
     print()
-    print(f"== Worker ({WORKER_LOG}) last {lines} ==")
-    print(_tail(WORKER_LOG, lines))
+    print(f"== Worker (docker compose) last {lines} ==")
+    print(_tail_dev_worker_logs(_build_dev_env(), lines))
     print()
     print(f"== Meeting RTC ({MEETING_RTC_LOG}) last {lines} ==")
     print(_tail(MEETING_RTC_LOG, lines))
