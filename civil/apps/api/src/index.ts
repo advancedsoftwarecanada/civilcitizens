@@ -4740,7 +4740,8 @@ function hashFeedRankValue(value: string): number {
 
 function toCommunityKey(provinceCode: string | null | undefined, communitySlug: string | null | undefined): string | null {
   if (!provinceCode || !communitySlug) return null
-  return `${provinceCode.toUpperCase()}:${communitySlug.toLowerCase()}`
+  const normalizedProvinceCode = normalizeProvinceCode(provinceCode) ?? provinceCode.toLowerCase()
+  return `${normalizedProvinceCode}:${communitySlug.toLowerCase()}`
 }
 
 function parseFeedRankCursor(cursor?: string): FeedRankCursorState {
