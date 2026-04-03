@@ -20,6 +20,72 @@ const MediaAssetParam = z.object({ id: MediaAssetIdSchema })
 
 type ProfileMediaDeps = Record<string, any>
 
+let mediaTranscodeTablesReady: Promise<void> | null = null
+
+function ensureMediaTranscodeTables(): Promise<void> {
+  if (mediaTranscodeTablesReady) return mediaTranscodeTablesReady
+
+  mediaTranscodeTablesReady = (async () => {
+    await prisma.$executeRawUnsafe(`
+      DO $$
+      BEGIN
+        IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'MediaTranscodeJobKind') THEN
+          CREATE TYPE "MediaTranscodeJobKind" AS ENUM ('VIDEO_720P');
+        END IF;
+        IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'MediaTranscodeJobStatus') THEN
+          CREATE TYPE "MediaTranscodeJobStatus" AS ENUM ('QUEUED', 'PROCESSING', 'COMPLETED', 'FAILED');
+        END IF;
+      END
+      $$;
+    `)
+    await prisma.$executeRawUnsafe(`
+      CREATE TABLE IF NOT EXISTS "MediaTranscodeJob" (
+        "id" TEXT NOT NULL,
+        "assetId" TEXT NOT NULL,
+        "kind" "MediaTranscodeJobKind" NOT NULL DEFAULT 'VIDEO_720P',
+        "status" "MediaTranscodeJobStatus" NOT NULL DEFAULT 'QUEUED',
+        "queuedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        "startedAt" TIMESTAMP(3),
+        "completedAt" TIMESTAMP(3),
+        "attempts" INTEGER NOT NULL DEFAULT 0,
+        "lastError" TEXT,
+        "payload" JSONB,
+        "result" JSONB,
+        "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        "updatedAt" TIMESTAMP(3) NOT NULL,
+        CONSTRAINT "MediaTranscodeJob_pkey" PRIMARY KEY ("id")
+      )
+    `)
+    await prisma.$executeRawUnsafe(
+      `CREATE UNIQUE INDEX IF NOT EXISTS "MediaTranscodeJob_assetId_kind_key" ON "MediaTranscodeJob"("assetId", "kind")`,
+    )
+    await prisma.$executeRawUnsafe(
+      `CREATE INDEX IF NOT EXISTS "MediaTranscodeJob_status_queuedAt_idx" ON "MediaTranscodeJob"("status", "queuedAt")`,
+    )
+    await prisma.$executeRawUnsafe(`CREATE UNIQUE INDEX IF NOT EXISTS "MediaAsset_id_uidx" ON "MediaAsset"("id")`)
+    await prisma.$executeRawUnsafe(`
+      DO $$
+      BEGIN
+        IF NOT EXISTS (
+          SELECT 1
+          FROM pg_constraint
+          WHERE conname = 'MediaTranscodeJob_assetId_fkey'
+        ) THEN
+          ALTER TABLE "MediaTranscodeJob"
+          ADD CONSTRAINT "MediaTranscodeJob_assetId_fkey"
+          FOREIGN KEY ("assetId") REFERENCES "MediaAsset"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+        END IF;
+      END
+      $$;
+    `)
+  })().catch((err) => {
+    mediaTranscodeTablesReady = null
+    throw err
+  })
+
+  return mediaTranscodeTablesReady
+}
+
 export function registerProfileMediaRoutes(app: FastifyInstance, deps: ProfileMediaDeps) {
   app.get('/profile', async (req: FastifyRequest, reply: FastifyReply) => {
     const userId = (req as any).user?.id
@@ -676,6 +742,8 @@ export function registerProfileMediaRoutes(app: FastifyInstance, deps: ProfileMe
       }
 
       if (updatedAsset.assetType === 'video') {
+        await ensureMediaTranscodeTables()
+
         await prisma.mediaTranscodeJob.upsert({
           where: {
             assetId_kind: {

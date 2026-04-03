@@ -5,7 +5,8 @@ function isPrivateIpv4Address(hostname: string) {
   const octets = match.slice(1).map((part) => Number(part))
   if (octets.some((part) => Number.isNaN(part) || part < 0 || part > 255)) return false
 
-  const [first, second] = octets
+  const first = octets[0] ?? -1
+  const second = octets[1] ?? -1
   if (first === 10 || first === 127) return true
   if (first === 172 && second >= 16 && second <= 31) return true
   if (first === 192 && second === 168) return true

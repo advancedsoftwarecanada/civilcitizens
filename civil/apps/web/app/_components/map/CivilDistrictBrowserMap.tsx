@@ -9,6 +9,8 @@ type DistrictVisualStatus = 'default' | 'nearby' | 'following' | 'home'
 type DistrictParty = BrowserDistrict['party']
 type DistrictPartyStatus = BrowserDistrict['partyStatus']
 type PopupMode = 'default' | 'politicalExplorer'
+type BoundsTuple = [number, number, number, number]
+
 type DistrictPalette = {
   fillColor: string
   selectedFillColor: string
@@ -64,9 +66,9 @@ const DISTRICT_BROWSER_MAP_STYLE = {
 
 const HIDDEN_LAYER_SENTINEL_CODE = -999_999_999
 
-function extendBoundsWithPoint(bounds: [number, number, number, number] | null, lng: number, lat: number) {
+function extendBoundsWithPoint(bounds: BoundsTuple | null, lng: number, lat: number): BoundsTuple | null {
   if (!Number.isFinite(lng) || !Number.isFinite(lat)) return bounds
-  if (!bounds) return [lng, lat, lng, lat] as [number, number, number, number]
+  if (!bounds) return [lng, lat, lng, lat]
 
   return [
     Math.min(bounds[0], lng),
@@ -76,7 +78,7 @@ function extendBoundsWithPoint(bounds: [number, number, number, number] | null, 
   ]
 }
 
-function addBoundsPadding(bounds: [number, number, number, number]) {
+function addBoundsPadding(bounds: BoundsTuple): BoundsTuple {
   const lngSpan = Math.max(bounds[2] - bounds[0], 0.0001)
   const latSpan = Math.max(bounds[3] - bounds[1], 0.0001)
   const lngPadding = Math.max(lngSpan * 0.08, 1.25)
@@ -87,13 +89,13 @@ function addBoundsPadding(bounds: [number, number, number, number]) {
     Math.max(-85, bounds[1] - latPadding),
     Math.min(180, bounds[2] + lngPadding),
     Math.min(85, bounds[3] + latPadding),
-  ] as [number, number, number, number]
+  ]
 }
 
-function collectBounds(browser: ElectoralDistrictBrowserResponse) {
+function collectBounds(browser: ElectoralDistrictBrowserResponse): BoundsTuple | null {
   const useCenterOverview = browser.provinceCode.trim().toLowerCase() === 'ca' && browser.districts.length > 1
 
-  const bounds = browser.districts.reduce<[number, number, number, number] | null>((acc, district) => {
+  const bounds = browser.districts.reduce<BoundsTuple | null>((acc, district): BoundsTuple | null => {
     if (useCenterOverview) {
       return extendBoundsWithPoint(acc, district.center.lng, district.center.lat)
     }
@@ -110,7 +112,7 @@ function collectBounds(browser: ElectoralDistrictBrowserResponse) {
 
   if (!bounds && browser.userLocation) {
     const { lng, lat } = browser.userLocation
-    return [lng, lat, lng, lat] as [number, number, number, number]
+    return [lng, lat, lng, lat]
   }
 
   return bounds && useCenterOverview ? addBoundsPadding(bounds) : bounds

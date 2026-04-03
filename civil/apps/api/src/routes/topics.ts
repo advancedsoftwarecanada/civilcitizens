@@ -245,12 +245,15 @@ async function loadRandomTopics(args: { excludedSlugs?: string[]; limit: number 
     },
   })
 
-  const fallbackRandom = shuffleArray(
-    fallback
-      .map((item: { tag: string }) => normalizeHashtagSlug(item.tag))
-      .filter((slug): slug is string => Boolean(slug) && !alreadyPicked.has(slug))
-      .map((slug) => toTopicRailItem(slug)),
-  ).slice(0, args.limit - randomPrimary.length)
+  const fallbackSlugs: string[] = fallback
+    .map((item: { tag: string }): string | null => normalizeHashtagSlug(item.tag))
+    .filter((slug: string | null): slug is string => {
+      if (!slug) return false
+      return !alreadyPicked.has(slug)
+    })
+
+  const fallbackItems: TopicRailItem[] = fallbackSlugs.map((slug: string) => toTopicRailItem(slug))
+  const fallbackRandom: TopicRailItem[] = shuffleArray(fallbackItems).slice(0, args.limit - randomPrimary.length)
 
   return [...randomPrimary, ...fallbackRandom]
 }
