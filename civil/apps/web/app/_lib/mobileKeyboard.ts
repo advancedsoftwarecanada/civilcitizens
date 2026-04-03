@@ -22,6 +22,20 @@ const RECENT_EDITABLE_FOCUS_MS = 1200
 const KEYBOARD_OPEN_HOLD_MS = 220
 const VIEWPORT_BASELINE_RESET_WIDTH_DELTA_PX = 80
 
+const SERVER_SNAPSHOT: MobileKeyboardSnapshot = {
+  viewportHeight: 0,
+  viewportWidth: 0,
+  viewportOffsetTop: 0,
+  viewportOffsetLeft: 0,
+  layoutViewportHeight: 0,
+  layoutViewportWidth: 0,
+  bottomOverlap: 0,
+  heightDelta: 0,
+  keyboardHeight: 0,
+  keyboardOpen: false,
+  activeEditable: false,
+}
+
 function isEditableElement(element: Element | null): boolean {
   if (!(element instanceof HTMLElement)) return false
   if (element.isContentEditable) return true
@@ -35,19 +49,7 @@ function isEditableElement(element: Element | null): boolean {
 }
 
 function getServerSnapshot(): MobileKeyboardSnapshot {
-  return {
-    viewportHeight: 0,
-    viewportWidth: 0,
-    viewportOffsetTop: 0,
-    viewportOffsetLeft: 0,
-    layoutViewportHeight: 0,
-    layoutViewportWidth: 0,
-    bottomOverlap: 0,
-    heightDelta: 0,
-    keyboardHeight: 0,
-    keyboardOpen: false,
-    activeEditable: false,
-  }
+  return SERVER_SNAPSHOT
 }
 
 function snapshotsEqual(a: MobileKeyboardSnapshot, b: MobileKeyboardSnapshot): boolean {

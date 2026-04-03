@@ -200,24 +200,6 @@ function getErrorMessage(error: unknown): string | undefined {
   return undefined
 }
 
-function canUseMapStyle(styleUrl: string | null | undefined) {
-  if (!styleUrl) return false
-  if (typeof window === 'undefined') return true
-
-  const pageProtocol = window.location.protocol
-  const resolved = (() => {
-    try {
-      return new URL(styleUrl, window.location.href)
-    } catch {
-      return null
-    }
-  })()
-
-  if (!resolved) return false
-  if (pageProtocol === 'https:' && resolved.protocol === 'http:') return false
-  return true
-}
-
 function calculateDistanceKm(from: { lat: number; lng: number }, to: { lat: number; lng: number }) {
   const toRadians = (degrees: number) => (degrees * Math.PI) / 180
   const earthRadiusKm = 6371
@@ -1842,7 +1824,7 @@ export function CommunitiesView({ mode = 'default' }: { mode?: CommunitiesPageMo
                 {districtBusy ? <span className="text-xs font-semibold uppercase tracking-wide text-[var(--cc-primary)]">Loading Civil Maps</span> : null}
               </div>
 
-              {districtPreview?.district && canUseMapStyle(districtPreview.styleUrl) ? (
+              {districtPreview?.district ? (
                 <div className="mt-4 space-y-4">
                   <CivilDistrictMap context={districtPreview} />
                   <div className="rounded-2xl border border-slate-200 bg-white/80 px-4 py-3 text-sm text-slate-700">
@@ -1853,10 +1835,6 @@ export function CommunitiesView({ mode = 'default' }: { mode?: CommunitiesPageMo
                       {districtPreview.postalCode ? <span>Postal: {districtPreview.postalCode}</span> : null}
                     </div>
                   </div>
-                </div>
-              ) : districtPreview?.district ? (
-                <div className="mt-4 rounded-2xl border border-amber-200 bg-amber-50 px-4 py-4 text-sm text-amber-900">
-                  District data loaded, but the map preview is disabled because the configured tile server is using insecure HTTP on an HTTPS page.
                 </div>
               ) : districtBusy ? (
                 <div className="mt-4">
@@ -2065,7 +2043,7 @@ export function CommunitiesView({ mode = 'default' }: { mode?: CommunitiesPageMo
         </div>
       </div>
 
-      {districtBrowser?.districts.length && canUseMapStyle(districtBrowser.styleUrl) ? (
+      {districtBrowser?.districts.length ? (
         <CivilDistrictBrowserMap
           browser={districtBrowser}
           selectedDistrictCode={selectedBrowserDistrictCode}
@@ -2096,10 +2074,6 @@ export function CommunitiesView({ mode = 'default' }: { mode?: CommunitiesPageMo
           showActiveSeatsLayer={showActiveSeatsLayer}
           showRegisteredSeatsLayer={showRegisteredSeatsLayer}
         />
-      ) : districtBrowser?.districts.length ? (
-        <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-4 text-sm text-amber-900">
-          District data is available, but the map preview is disabled because the configured tile server is not safe for this page.
-        </div>
       ) : districtBrowserBusy ? (
         <CivilMapLoadingState />
       ) : districtBrowserError ? (
@@ -2384,13 +2358,9 @@ export function CommunitiesView({ mode = 'default' }: { mode?: CommunitiesPageMo
           </div>
 
           <div className="space-y-5 px-6 py-6 sm:px-8">
-            {districtPreview?.district && canUseMapStyle(districtPreview.styleUrl) ? (
+            {districtPreview?.district ? (
               <div>
                 <CivilDistrictMap context={districtPreview} />
-              </div>
-            ) : districtPreview?.district ? (
-              <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-4 text-sm text-amber-900">
-                The district map is available in the database, but the tile server is not configured for secure browser use yet. Confirm the chamber name above, or switch chambers.
               </div>
             ) : districtBusy ? (
               <CivilMapLoadingState className="min-h-[240px]" />

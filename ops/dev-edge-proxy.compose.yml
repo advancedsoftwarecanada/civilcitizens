@@ -1,0 +1,16 @@
+services:
+  edge-nginx:
+    image: nginx:1.25-alpine
+    container_name: civil-dev-edge-nginx
+    restart: unless-stopped
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - ./dev.civilcitizens.ca.nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    ports:
+      - "${CIVIL_EDGE_PROXY_PORT:-80}:80"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1/nginx-health >/dev/null 2>&1 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5

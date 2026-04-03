@@ -4,6 +4,7 @@ export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
 
 const DEFAULT_MAP_TILE_SERVER = 'http://tileserver-gl:8080'
+const PUBLIC_MAP_PROXY_BASE = '/maps'
 
 function trimTrailingSlash(value: string) {
   return value.replace(/\/+$/, '')
@@ -26,33 +27,10 @@ function readForwardedHeader(req: NextRequest, name: string) {
   return raw.split(',')[0]?.trim() || null
 }
 
-function readSchemeFromUrlHeader(req: NextRequest, name: string) {
-  const raw = req.headers.get(name)
-  if (!raw) return null
-  try {
-    return new URL(raw).protocol.replace(/:$/, '')
-  } catch {
-    return null
-  }
-}
-
-function readCloudflareScheme(req: NextRequest) {
-  const raw = req.headers.get('cf-visitor')
-  if (!raw) return null
-  const match = raw.match(/"scheme":"(https|http)"/i)
-  return match?.[1]?.toLowerCase() || null
-}
-
-function buildProxyBaseUrl(req: NextRequest) {
-  const forwardedHost = readForwardedHeader(req, 'x-forwarded-host')
-  const host = forwardedHost || readForwardedHeader(req, 'host') || req.nextUrl.host
-  const originProto = readSchemeFromUrlHeader(req, 'origin')
-  const refererProto = readSchemeFromUrlHeader(req, 'referer')
-  const cloudflareProto = readCloudflareScheme(req)
-  const forwardedProto = readForwardedHeader(req, 'x-forwarded-proto')
-  const inferredPublicProto = host.endsWith('civilcitizens.ca') ? 'https' : null
-  const proto = originProto || refererProto || cloudflareProto || inferredPublicProto || forwardedProto || req.nextUrl.protocol.replace(/:$/, '') || 'http'
-  return `${proto}://${host}/maps`
+function buildPublicMapBaseUrl(req: NextRequest) {
+  const host = readForwardedHeader(req, 'x-forwarded-host') || req.headers.get('host') || req.nextUrl.host
+  const proto = readForwardedHeader(req, 'x-forwarded-proto') || req.nextUrl.protocol.replace(/:$/, '') || 'http'
+  return `${proto}://${host}${PUBLIC_MAP_PROXY_BASE}`
 }
 
 function rewriteJsonUrls(value: unknown, upstreamBase: string, proxyBase: string): unknown {
@@ -100,7 +78,7 @@ async function proxyMapRequest(req: NextRequest, path: string[]) {
   }
 
   const contentType = upstreamResponse.headers.get('content-type') || ''
-  const proxyBase = buildProxyBaseUrl(req)
+  const proxyBase = buildPublicMapBaseUrl(req)
 
   if (contentType.includes('application/json') || path[path.length - 1]?.endsWith('.json')) {
     const payload = await upstreamResponse.json().catch(() => null)

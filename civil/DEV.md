@@ -5,6 +5,7 @@ This override runs web (Next.js) and api (Fastify) in dev mode with bind mounts 
 ## Shared dev infra vs test infra
 
 - `_DEV.py` points the app at CybertronDev Postgres and Redis for normal local development.
+- `_DEV.py` now brings up a local edge nginx container for `dev.civilcitizens.ca` using [../ops/dev-edge-proxy.compose.yml](../ops/dev-edge-proxy.compose.yml) and [../ops/dev.civilcitizens.ca.nginx.conf](../ops/dev.civilcitizens.ca.nginx.conf).
 - Treat that `civil` database as persistent shared dev state.
 - Destructive API tests must use a dedicated test database such as `civil_test`.
 - `pnpm --filter @civil/api test` now rewrites `DATABASE_URL` to a safe test target automatically.

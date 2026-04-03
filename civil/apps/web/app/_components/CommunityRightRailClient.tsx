@@ -57,19 +57,6 @@ type CommunityPoliticiansResponse = {
 
 type CommunityFederalSeat = NonNullable<NonNullable<CommunityPoliticiansResponse['federal']>['seat']>
 
-function canUseMapStyle(styleUrl: string | null | undefined) {
-  if (!styleUrl) return false
-  if (typeof window === 'undefined') return true
-
-  try {
-    const resolved = new URL(styleUrl, window.location.origin)
-    if (window.location.protocol === 'https:' && resolved.protocol === 'http:') return false
-    return true
-  } catch {
-    return false
-  }
-}
-
 const numberFormatter = new Intl.NumberFormat('en-CA')
 
 function buildInitials(displayName: string) {
@@ -245,13 +232,7 @@ export default function CommunityRightRailClient({
           </div>
         ) : districtPreview?.district ? (
           <div className="space-y-3">
-            {canUseMapStyle(districtPreview.styleUrl) ? (
-              <CivilDistrictMap context={districtPreview} party={federalSeat?.party ?? null} showUserLocation={false} />
-            ) : (
-              <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-4 text-sm text-amber-900">
-                District data loaded, but the map preview is unavailable because the tile server is not usable from this page.
-              </div>
-            )}
+            <CivilDistrictMap context={districtPreview} party={federalSeat?.party ?? null} showUserLocation={false} />
             <div className="rounded-xl border border-slate-200 bg-white px-3 py-3">
               <p className="text-sm font-semibold text-slate-900">{electoralDistrictName}</p>
               <div className="mt-2 flex flex-wrap items-center gap-2">

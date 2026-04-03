@@ -17,8 +17,6 @@ function sanitizePlaceholder(element: HTMLInputElement | HTMLTextAreaElement) {
   if (!hasAccessibleName) {
     element.setAttribute('aria-label', placeholder)
   }
-
-  element.removeAttribute('placeholder')
 }
 
 function sanitizePlaceholders(root: ParentNode) {

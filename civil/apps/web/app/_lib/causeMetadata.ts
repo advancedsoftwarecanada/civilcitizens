@@ -1,5 +1,6 @@
 import type { Metadata } from 'next'
 import { headers } from 'next/headers'
+import { resolvePublicAssetUrl } from './publicAssetUrl'
 
 type CauseMetadataPost = {
   id: string
@@ -51,10 +52,7 @@ function resolveApiBase(baseUrl: string) {
 }
 
 function toAbsoluteUrl(url: string | null | undefined, baseUrl: string) {
-  if (!url) return null
-  if (/^https?:\/\//i.test(url)) return url
-  const path = url.startsWith('/') ? url : `/${url}`
-  return `${trimTrailingSlash(baseUrl)}${path}`
+  return resolvePublicAssetUrl(url, baseUrl)
 }
 
 function decodeHtmlEntities(value: string) {

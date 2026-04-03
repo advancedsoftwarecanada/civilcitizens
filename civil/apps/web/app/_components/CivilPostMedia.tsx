@@ -3,6 +3,7 @@
 import Link from 'next/link'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { createPortal } from 'react-dom'
+import { resolvePublicAssetUrl } from '../_lib/publicAssetUrl'
 
 type CivilPostMediaProps = {
   images?: string[] | null
@@ -11,7 +12,12 @@ type CivilPostMediaProps = {
 }
 
 export default function CivilPostMedia({ images, mediaUrl, postUrl }: CivilPostMediaProps) {
-  const allImages = useMemo(() => (images && images.length > 0 ? images : mediaUrl ? [mediaUrl] : []), [images, mediaUrl])
+  const allImages = useMemo(() => {
+    const rawImages = images && images.length > 0 ? images : mediaUrl ? [mediaUrl] : []
+    return rawImages
+      .map((value) => resolvePublicAssetUrl(value, typeof window !== 'undefined' ? window.location.origin : null))
+      .filter((value): value is string => Boolean(value))
+  }, [images, mediaUrl])
   const [activeImageIndex, setActiveImageIndex] = useState<number | null>(null)
 
   if (allImages.length === 0) return null
