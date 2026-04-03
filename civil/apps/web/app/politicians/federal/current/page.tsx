@@ -55,24 +55,6 @@ type FederalPartyListResponse = {
 const ALL_CANADA_CODE = 'all'
 const provinceNameByCode = new Map<string, string>(PROVINCES.map((province) => [province.code, province.name]))
 
-function canUseMapStyle(styleUrl: string | null | undefined) {
-  if (!styleUrl) return false
-  if (typeof window === 'undefined') return true
-
-  const pageProtocol = window.location.protocol
-  const resolved = (() => {
-    try {
-      return new URL(styleUrl, window.location.href)
-    } catch {
-      return null
-    }
-  })()
-
-  if (!resolved) return false
-  if (pageProtocol === 'https:' && resolved.protocol === 'http:') return false
-  return true
-}
-
 export default function CurrentFederalMembersPage() {
   const [payload, setPayload] = useState<CurrentFederalMemberResponse | null>(null)
   const [status, setStatus] = useState<'loading' | 'ready' | 'error'>('loading')
@@ -442,7 +424,7 @@ export default function CurrentFederalMembersPage() {
           <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-4 py-5 text-sm text-slate-600">
             No current federal members are available yet.
           </div>
-        ) : districtBrowser?.districts.length && canUseMapStyle(districtBrowser.styleUrl) ? (
+        ) : districtBrowser?.districts.length ? (
           <CivilDistrictBrowserMap
             browser={districtBrowser}
             selectedDistrictCode={selectedDistrictCode}
@@ -462,10 +444,6 @@ export default function CurrentFederalMembersPage() {
             showRegisteredSeatsLayer={false}
             visiblePartySlugs={visiblePartySlugs}
           />
-        ) : districtBrowser?.districts.length ? (
-          <div className="rounded-2xl border border-amber-200 bg-amber-50 px-4 py-4 text-sm text-amber-900">
-            District data is available, but the map preview is disabled because the configured tile server is not safe for this page.
-          </div>
         ) : districtBrowserStatus === 'loading' ? (
           <CivilMapLoadingState />
         ) : districtBrowserStatus === 'error' ? (

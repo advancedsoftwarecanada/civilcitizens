@@ -3,7 +3,11 @@
 
 Goal: fast iteration without Docker rebuild loops.
 
-This manages on-host dev processes behind the CybertronDev nginx proxy.
+This manages on-host dev processes behind the local edge nginx proxy.
+
+Edge proxy reference config:
+- ops/dev.civilcitizens.ca.nginx.conf
+- ops/dev-edge-proxy.compose.yml
 
 Important storage rule:
 - CybertronDev Postgres/Redis/MinIO are the shared local dev services.
@@ -11,8 +15,8 @@ Important storage rule:
 - Destructive test suites must use a dedicated test database, never the
     CybertronDev `civil` database.
 
-This manages on-host dev processes behind the CybertronDev nginx proxy:
-- dev.civilcitizens.ca -> nginx_mariadb_redis -> host:3900 -> CybertronDev nginx
+This manages on-host dev processes behind the local edge nginx proxy:
+- dev.civilcitizens.ca -> edge-nginx docker -> host:3900 -> CybertronDev nginx
 - /      -> Next dev server (host :33101 by default)
 - /api/  -> API dev server (host :3012 by default)
 - /media -> MinIO in CybertronDev
@@ -49,6 +53,10 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent
 CIVIL_DIR = REPO_ROOT / "civil"
 CYBERTRON_COMPOSE = Path("/home/andre/CybertronDev/docker-compose.yml")
+EDGE_PROXY_COMPOSE = REPO_ROOT / "ops" / "dev-edge-proxy.compose.yml"
+EDGE_PROXY_CONFIG = REPO_ROOT / "ops" / "dev.civilcitizens.ca.nginx.conf"
+EDGE_PROXY_PROJECT = "civil_dev_edge"
+EDGE_PROXY_CONTAINER = "civil-dev-edge-nginx"
 
 WEB_PORT = int(os.environ.get("CIVIL_WEB_PORT", "33101"))
 # NOTE: In WSL2 + Docker Desktop, some ports can get mapped unexpectedly when
@@ -56,6 +64,7 @@ WEB_PORT = int(os.environ.get("CIVIL_WEB_PORT", "33101"))
 # avoids a collision observed in practice.
 API_PORT = int(os.environ.get("CIVIL_API_PORT", "3012"))
 MEETING_RTC_PORT = int(os.environ.get("CIVIL_MEETING_RTC_PORT", "8788"))
+EDGE_PROXY_PORT = int(os.environ.get("CIVIL_EDGE_PROXY_PORT", "80"))
 
 CYBERTRON_POSTGRES_PORT = int(os.environ.get("CYBERTRON_POSTGRES_PORT", "5542"))
 CYBERTRON_REDIS_PORT = int(os.environ.get("CYBERTRON_REDIS_PORT", "6579"))
@@ -118,12 +127,22 @@ def _cmdline(pid: int) -> str:
         return ""
 
 
+def _cwd(pid: int) -> str:
+    try:
+        return os.readlink(f"/proc/{pid}/cwd")
+    except OSError:
+        return ""
+
+
 def _is_repo_dev_process(pid: int) -> bool:
     cmd = _cmdline(pid)
+    cwd = _cwd(pid)
     if not cmd:
-        return False
+        return cwd.startswith(str(REPO_ROOT)) if cwd else False
 
     if str(REPO_ROOT) in cmd:
+        return True
+    if cwd.startswith(str(REPO_ROOT)):
         return True
 
     # Heuristics for pnpm/next/tsx started from this repo
@@ -314,6 +333,118 @@ def _ensure_cybertron_up() -> None:
     )
 
 
+def _ensure_edge_proxy_up() -> None:
+    docker = shutil.which("docker")
+    if not docker:
+        raise RuntimeError("docker not found on PATH")
+    if not EDGE_PROXY_COMPOSE.exists():
+        raise RuntimeError(f"Missing edge proxy compose at {EDGE_PROXY_COMPOSE}")
+    if not EDGE_PROXY_CONFIG.exists():
+        raise RuntimeError(f"Missing edge proxy config at {EDGE_PROXY_CONFIG}")
+
+    compose_up_cmd = [
+        docker,
+        "compose",
+        "-p",
+        EDGE_PROXY_PROJECT,
+        "-f",
+        str(EDGE_PROXY_COMPOSE),
+        "up",
+        "-d",
+    ]
+
+    result = subprocess.run(
+        compose_up_cmd,
+        check=False,
+        cwd=str(REPO_ROOT),
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode == 0:
+        return
+
+    combined_output = _strip_ansi_and_controls(f"{result.stdout}\n{result.stderr}")
+    conflict_message = f'the container name "/{EDGE_PROXY_CONTAINER}" is already in use'
+    if conflict_message in combined_output.lower():
+        subprocess.run(
+            [docker, "rm", "-f", EDGE_PROXY_CONTAINER],
+            check=False,
+            cwd=str(REPO_ROOT),
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        retry = subprocess.run(
+            compose_up_cmd,
+            check=False,
+            cwd=str(REPO_ROOT),
+            capture_output=True,
+            text=True,
+        )
+        if retry.returncode == 0:
+            return
+        raise subprocess.CalledProcessError(
+            retry.returncode,
+            compose_up_cmd,
+            output=retry.stdout,
+            stderr=retry.stderr,
+        )
+
+    raise subprocess.CalledProcessError(
+        result.returncode,
+        compose_up_cmd,
+        output=result.stdout,
+        stderr=result.stderr,
+    )
+
+
+def _stop_edge_proxy() -> None:
+    docker = shutil.which("docker")
+    if not docker or not EDGE_PROXY_COMPOSE.exists():
+        return
+
+    subprocess.run(
+        [
+            docker,
+            "compose",
+            "-p",
+            EDGE_PROXY_PROJECT,
+            "-f",
+            str(EDGE_PROXY_COMPOSE),
+            "down",
+        ],
+        check=False,
+        cwd=str(REPO_ROOT),
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+
+
+def _edge_proxy_running() -> bool:
+    docker = shutil.which("docker")
+    if not docker or not EDGE_PROXY_COMPOSE.exists():
+        return False
+
+    result = subprocess.run(
+        [
+            docker,
+            "compose",
+            "-p",
+            EDGE_PROXY_PROJECT,
+            "-f",
+            str(EDGE_PROXY_COMPOSE),
+            "ps",
+            "--services",
+            "--status",
+            "running",
+        ],
+        check=False,
+        cwd=str(REPO_ROOT),
+        capture_output=True,
+        text=True,
+    )
+    return "edge-nginx" in result.stdout.splitlines()
+
+
 def _ensure_civil_db_role_and_db() -> None:
     docker = shutil.which("docker")
     if not docker:
@@ -398,6 +529,12 @@ def _ensure_meeting_rtc_deps(env: dict[str, str]) -> None:
 
 def stop() -> int:
     stopped_any = False
+
+    edge_proxy_was_running = _edge_proxy_running() or _port_open("127.0.0.1", EDGE_PROXY_PORT)
+    _stop_edge_proxy()
+    if edge_proxy_was_running:
+        print(f"⏹ Stopping edge-proxy docker on :{EDGE_PROXY_PORT}")
+        stopped_any = True
 
     for label, pid_file in (
         ("web", WEB_PID_FILE),
@@ -484,6 +621,14 @@ def start() -> int:
         print("   Refusing to kill it. Free the port and retry.")
         return 1
 
+    try:
+        _ensure_edge_proxy_up()
+    except Exception as e:
+        print("❌ Edge proxy startup failed.")
+        print(f"   Error: {e}")
+        print("   Fix Docker/port 80 conflicts, then re-run python3 _DEV.py start")
+        return 1
+
     print(f"▶ Starting web (detached, Next Webpack) on :{WEB_PORT} (log: {WEB_LOG})")
     env["CIVIL_WEB_PORT"] = str(WEB_PORT)
     env["CIVIL_API_PORT"] = str(API_PORT)
@@ -539,8 +684,10 @@ def start() -> int:
         web_ok = _port_open("127.0.0.1", WEB_PORT)
         api_ok = _port_open("127.0.0.1", API_PORT)
         rtc_ok = _port_open("127.0.0.1", MEETING_RTC_PORT)
-        if web_ok and api_ok and rtc_ok:
+        edge_ok = _port_open("127.0.0.1", EDGE_PROXY_PORT)
+        if web_ok and api_ok and rtc_ok and edge_ok:
             print("✅ Dev processes are up")
+            print(f"   - Edge proxy: http://localhost:{EDGE_PROXY_PORT}/nginx-health")
             print(f"   - Web: http://localhost:{WEB_PORT}/")
             print(f"   - API: http://localhost:{API_PORT}/health")
             print(f"   - Meeting RTC: http://localhost:{MEETING_RTC_PORT}/health")
@@ -558,6 +705,8 @@ def start() -> int:
 
 
 def status() -> int:
+    print(f"- edge-proxy: composeRunning={_edge_proxy_running()} port={EDGE_PROXY_PORT} listening={_port_open('127.0.0.1', EDGE_PROXY_PORT)}")
+
     def line(label: str, pid_file: Path, port: int) -> str:
         pid = _read_pid(pid_file)
         alive = bool(pid and _pid_is_alive(pid))
@@ -641,6 +790,7 @@ def doctor() -> int:
     print(f"- POSTGRES_GIS_HOST_PORT={shadow_postgres_port}")
     print(f"- CYBERTRON_REDIS_PORT={CYBERTRON_REDIS_PORT}")
     print(f"- CYBERTRON_MINIO_PORT={CYBERTRON_MINIO_PORT}")
+    print(f"- CIVIL_EDGE_PROXY_PORT={EDGE_PROXY_PORT}")
     print(f"- CIVIL_PUBLIC_HOST={public_host}")
     print(f"- NEXT_PUBLIC_API_BASE={api_base}")
     print(f"- NEXT_PUBLIC_BASE_URL={base_url}")
@@ -675,6 +825,7 @@ def doctor() -> int:
     print(f"- localhost:{CYBERTRON_REDIS_PORT} open={_port_open('127.0.0.1', CYBERTRON_REDIS_PORT)} (redis)")
     print(f"- localhost:{CYBERTRON_MINIO_PORT} open={_port_open('127.0.0.1', CYBERTRON_MINIO_PORT)} (minio)")
     print(f"- localhost:{MEETING_RTC_PORT} open={_port_open('127.0.0.1', MEETING_RTC_PORT)} (meeting-rtc)")
+    print(f"- localhost:{EDGE_PROXY_PORT} open={_port_open('127.0.0.1', EDGE_PROXY_PORT)} (edge-proxy)")
 
     db_env = _load_env_file(CIVIL_DIR / "packages" / "db" / ".env")
     db_url = db_env.get("DATABASE_URL")

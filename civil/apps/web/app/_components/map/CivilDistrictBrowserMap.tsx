@@ -42,10 +42,62 @@ type CivilDistrictBrowserMapProps = {
   visiblePartySlugs?: string[] | null
 }
 
+const DISTRICT_BROWSER_MAP_STYLE = {
+  version: 8,
+  sources: {
+    osm: {
+      type: 'raster',
+      tiles: ['https://tile.openstreetmap.org/{z}/{x}/{y}.png'],
+      tileSize: 256,
+      maxzoom: 19,
+      attribution: '&copy; OpenStreetMap contributors',
+    },
+  },
+  layers: [
+    {
+      id: 'osm',
+      type: 'raster',
+      source: 'osm',
+    },
+  ],
+} as const
+
 const HIDDEN_LAYER_SENTINEL_CODE = -999_999_999
 
+function extendBoundsWithPoint(bounds: [number, number, number, number] | null, lng: number, lat: number) {
+  if (!Number.isFinite(lng) || !Number.isFinite(lat)) return bounds
+  if (!bounds) return [lng, lat, lng, lat] as [number, number, number, number]
+
+  return [
+    Math.min(bounds[0], lng),
+    Math.min(bounds[1], lat),
+    Math.max(bounds[2], lng),
+    Math.max(bounds[3], lat),
+  ]
+}
+
+function addBoundsPadding(bounds: [number, number, number, number]) {
+  const lngSpan = Math.max(bounds[2] - bounds[0], 0.0001)
+  const latSpan = Math.max(bounds[3] - bounds[1], 0.0001)
+  const lngPadding = Math.max(lngSpan * 0.08, 1.25)
+  const latPadding = Math.max(latSpan * 0.08, 0.75)
+
+  return [
+    Math.max(-180, bounds[0] - lngPadding),
+    Math.max(-85, bounds[1] - latPadding),
+    Math.min(180, bounds[2] + lngPadding),
+    Math.min(85, bounds[3] + latPadding),
+  ] as [number, number, number, number]
+}
+
 function collectBounds(browser: ElectoralDistrictBrowserResponse) {
+  const useCenterOverview = browser.provinceCode.trim().toLowerCase() === 'ca' && browser.districts.length > 1
+
   const bounds = browser.districts.reduce<[number, number, number, number] | null>((acc, district) => {
+    if (useCenterOverview) {
+      return extendBoundsWithPoint(acc, district.center.lng, district.center.lat)
+    }
+
     const [minLng, minLat, maxLng, maxLat] = district.bounds
     if (!acc) return [minLng, minLat, maxLng, maxLat]
     return [
@@ -61,7 +113,7 @@ function collectBounds(browser: ElectoralDistrictBrowserResponse) {
     return [lng, lat, lng, lat] as [number, number, number, number]
   }
 
-  return bounds
+  return bounds && useCenterOverview ? addBoundsPadding(bounds) : bounds
 }
 
 function resolveSelectedDistrict(args: {
@@ -241,21 +293,25 @@ function buildBaseFillColorExpression(selectedCode: number | null, pulseByElecti
   ]
 }
 
-function buildFillOpacityExpression(selectedCode: number | null) {
+function buildFillOpacityExpression(selectedCode: number | null, mutedOverlay: boolean) {
   return [
     'case',
     ['==', ['get', 'code'], selectedCode ?? -1],
-    ['coalesce', ['get', 'selectedFillOpacity'], 0.88],
-    ['coalesce', ['get', 'fillOpacity'], 0.5],
+    mutedOverlay
+      ? ['coalesce', ['get', 'selectedFillOpacity'], 0.32]
+      : ['coalesce', ['get', 'selectedFillOpacity'], 0.88],
+    mutedOverlay
+      ? ['coalesce', ['get', 'fillOpacity'], 0.18]
+      : ['coalesce', ['get', 'fillOpacity'], 0.5],
   ]
 }
 
-function buildBaseFillOpacityExpression(selectedCode: number | null) {
+function buildBaseFillOpacityExpression(selectedCode: number | null, mutedOverlay: boolean) {
   return [
     'case',
     ['==', ['get', 'code'], selectedCode ?? -1],
-    0.8,
-    0.58,
+    mutedOverlay ? 0.14 : 0.8,
+    mutedOverlay ? 0.06 : 0.58,
   ]
 }
 
@@ -758,6 +814,7 @@ export function CivilDistrictBrowserMap({
   showRegisteredSeatsLayer = true,
   visiblePartySlugs = null,
 }: CivilDistrictBrowserMapProps) {
+  const mutedOverlay = popupMode === 'politicalExplorer'
   const wrapperRef = useRef<HTMLDivElement | null>(null)
   const containerRef = useRef<HTMLDivElement | null>(null)
   const maplibreRef = useRef<any>(null)
@@ -912,12 +969,12 @@ export function CivilDistrictBrowserMap({
     const selectedCode = resolvedDistrict?.code ?? null
 
     if (map.getLayer('civil-district-browser-fill-base')) {
-      map.setPaintProperty('civil-district-browser-fill-base', 'fill-opacity', buildBaseFillOpacityExpression(selectedCode))
+      map.setPaintProperty('civil-district-browser-fill-base', 'fill-opacity', buildBaseFillOpacityExpression(selectedCode, mutedOverlay))
     }
 
     if (map.getLayer('civil-district-browser-fill')) {
       map.setFilter('civil-district-browser-fill', buildSeatOverlayFilter(showActiveSeatsLayer, normalizedVisiblePartySlugs) as any)
-      map.setPaintProperty('civil-district-browser-fill', 'fill-opacity', buildFillOpacityExpression(selectedCode))
+      map.setPaintProperty('civil-district-browser-fill', 'fill-opacity', buildFillOpacityExpression(selectedCode, mutedOverlay))
     }
 
     if (map.getLayer('civil-district-browser-pattern')) {
@@ -1012,10 +1069,11 @@ export function CivilDistrictBrowserMap({
         allowEmptySelection,
       })
       const selectedCode = focusedDistrict?.code ?? null
+      const mapStyle = DISTRICT_BROWSER_MAP_STYLE
 
       const map = new maplibregl.Map({
         container: containerRef.current,
-        style: browser.styleUrl,
+        style: mapStyle as any,
         center: focusedDistrict ? [focusedDistrict.center.lng, focusedDistrict.center.lat] : [browser.userLocation?.lng ?? -95, browser.userLocation?.lat ?? 56],
         zoom: focusedDistrict ? 8 : 4,
         attributionControl: false,
@@ -1086,7 +1144,7 @@ export function CivilDistrictBrowserMap({
           source: 'civil-district-browser',
           paint: {
             'fill-color': buildBaseFillColorExpression(selectedCode, animateByElections && pulsePhase) as any,
-            'fill-opacity': buildBaseFillOpacityExpression(selectedCode) as any,
+            'fill-opacity': buildBaseFillOpacityExpression(selectedCode, mutedOverlay) as any,
           },
         })
 
@@ -1097,7 +1155,7 @@ export function CivilDistrictBrowserMap({
           filter: buildSeatOverlayFilter(showActiveSeatsLayer, normalizedVisiblePartySlugs) as any,
           paint: {
             'fill-color': buildFillColorExpression(selectedCode, animateByElections && pulsePhase) as any,
-            'fill-opacity': buildFillOpacityExpression(selectedCode) as any,
+            'fill-opacity': buildFillOpacityExpression(selectedCode, mutedOverlay) as any,
           },
         })
 
