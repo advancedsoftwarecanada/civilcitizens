@@ -74,6 +74,44 @@ html.cc-keyboard-open {
   --mobile-dock-active-clearance: 0px;
 }
 
+.cc-shorts-slider {
+  -webkit-appearance: none;
+  appearance: none;
+}
+
+.cc-shorts-slider::-webkit-slider-runnable-track {
+  height: 6px;
+  border-radius: 9999px;
+  background: transparent;
+}
+
+.cc-shorts-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  margin-top: -4px;
+  border: 2px solid rgba(255, 255, 255, 0.9);
+  border-radius: 9999px;
+  background: var(--cc-primary);
+  box-shadow: 0 3px 12px rgba(0, 0, 0, 0.28);
+}
+
+.cc-shorts-slider::-moz-range-track {
+  height: 6px;
+  border-radius: 9999px;
+  background: transparent;
+}
+
+.cc-shorts-slider::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  border: 2px solid rgba(255, 255, 255, 0.9);
+  border-radius: 9999px;
+  background: var(--cc-primary);
+  box-shadow: 0 3px 12px rgba(0, 0, 0, 0.28);
+}
+
 html.cc-mobile-scroll-lock,
 body.cc-mobile-scroll-lock {
   height: 100%;

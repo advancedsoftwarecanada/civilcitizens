@@ -30,6 +30,14 @@ import { resolvePostTaggingForWrite, syncPostTaggingRelations } from '../postTag
 const CAUSE_STORY_MAX_LENGTH = 3000
 const CAUSE_STAGE_GOAL_MAX_CENTS = 1_000_000
 
+async function upsertTopicFollowsForAuthor(tx: Prisma.TransactionClient, userId: string, topicSlugs: string[]) {
+  if (!topicSlugs.length) return
+  await tx.topicFollow.createMany({
+    data: topicSlugs.map((topicSlug) => ({ userId, topicSlug })),
+    skipDuplicates: true,
+  })
+}
+
 function buildStageGoalProgress(goals: Array<{ id: string; amountCents: number }>, raisedAmountCents: number) {
   let remaining = Math.max(0, raisedAmountCents)
   return goals.map((goal) => {
@@ -439,6 +447,7 @@ export function registerCauseRoutes(app: FastifyInstance, deps: CauseRouteDeps) 
                 implicitCommunitySlugs: normalizedCommunitySlug ? [normalizedCommunitySlug] : [],
               })
               await syncPostTaggingRelations(tx, current.publishedPostId, tagging)
+              await upsertTopicFollowsForAuthor(tx, viewerId, tagging.topicSlugs)
             }
 
             return updatedDraft
@@ -576,6 +585,7 @@ export function registerCauseRoutes(app: FastifyInstance, deps: CauseRouteDeps) 
               implicitCommunitySlugs: [community.slug],
             })
             await syncPostTaggingRelations(tx, post.id, tagging)
+            await upsertTopicFollowsForAuthor(tx, viewerId, tagging.topicSlugs)
           } catch (error) {
             req.log.error({ err: error, draftId: draft.id, viewerId, postId: post.id }, 'cause_publish_tagging_failed')
             throw new Error('cause_publish_tagging_failed')

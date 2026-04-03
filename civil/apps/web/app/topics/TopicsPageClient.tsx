@@ -177,9 +177,13 @@ export default function TopicsPageClient() {
 
   const handlePostCreated = useCallback(
     (post: ApiPost) => {
+      if (!post.topicSlugs.length) return
       const matchesFollowedTopic = post.topicSlugs.some((slug) => followedTopicSlugSet.has(slug))
-      if (!matchesFollowedTopic) return
-      setPosts((current) => [post, ...current.filter((item) => item.id !== post.id)])
+      if (matchesFollowedTopic) {
+        setPosts((current) => [post, ...current.filter((item) => item.id !== post.id)])
+        return
+      }
+      void loadFeedRef.current()
     },
     [followedTopicSlugSet],
   )
@@ -280,13 +284,13 @@ export default function TopicsPageClient() {
           <section className="surface-card px-6 py-8 text-center text-sm text-slate-500">
             Sign in to see posts from the topics you follow.
           </section>
-        ) : followedTopics.length === 0 ? (
-          <section className="surface-card px-6 py-8 text-center text-sm text-slate-500">
-            Follow topics from the right rail to build your topic feed.
-          </section>
         ) : posts.length === 0 ? (
           <section className="surface-card px-6 py-8 text-center text-sm text-slate-500">
-            {loading ? 'Loading your topic feed…' : 'No posts yet across the topics you follow.'}
+            {loading
+              ? 'Loading your topic feed…'
+              : followedTopics.length === 0
+                ? 'No topic posts yet. Follow topics from the right rail and we will also mix in discovery topics for you.'
+                : 'No posts yet across the topics you follow.'}
           </section>
         ) : (
           <>

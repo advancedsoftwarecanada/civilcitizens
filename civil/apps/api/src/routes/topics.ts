@@ -1,6 +1,6 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 import { prisma } from '@civil/db'
-import { ModerationStatus } from '@prisma/client'
+import { ModerationStatus, Prisma } from '@prisma/client'
 import { CursorQuery, JurisdictionEnum, PostSortEnum, normalizeHashtagSlug } from '@civil/shared'
 import { z } from 'zod'
 
@@ -10,6 +10,13 @@ type TopicRailItem = {
   slug: string
   href: string
   recentPostCount?: number
+}
+
+type TopicFeedCursorState = {
+  mode: 'followed' | 'discover'
+  postCursor?: string
+  usedDiscoverySlugs?: string[]
+  activeDiscoverySlugs?: string[]
 }
 
 const TopicFollowBody = z.object({
@@ -23,7 +30,11 @@ const TopicSuggestionsQuery = z.object({
 const TopicFeedQuery = CursorQuery.extend({
   jurisdiction: JurisdictionEnum.optional(),
   sort: PostSortEnum.optional(),
+  mediaOnly: z.coerce.boolean().optional(),
 })
+
+const DISCOVERY_TOPIC_BATCH_SIZE = 5
+const RANDOM_TOPIC_POOL_SIZE = 80
 
 function toTopicRailItem(slug: string, recentPostCount?: number): TopicRailItem {
   return recentPostCount === undefined
@@ -36,6 +47,76 @@ function toTopicRailItem(slug: string, recentPostCount?: number): TopicRailItem 
         href: `/t/${slug}`,
         recentPostCount,
       }
+}
+
+function shuffleArray<T>(items: T[]): T[] {
+  const next = [...items]
+  for (let index = next.length - 1; index > 0; index -= 1) {
+    const swapIndex = Math.floor(Math.random() * (index + 1))
+    const current = next[index]
+    next[index] = next[swapIndex] as T
+    next[swapIndex] = current as T
+  }
+  return next
+}
+
+function encodeTopicFeedCursor(state: TopicFeedCursorState): string {
+  return Buffer.from(JSON.stringify(state), 'utf8').toString('base64')
+}
+
+function parseTopicFeedCursor(cursor: string | undefined): TopicFeedCursorState | null {
+  if (!cursor) return null
+  try {
+    const parsed = JSON.parse(Buffer.from(cursor, 'base64').toString('utf8')) as TopicFeedCursorState
+    if (parsed.mode !== 'followed' && parsed.mode !== 'discover') return null
+    return {
+      mode: parsed.mode,
+      postCursor: typeof parsed.postCursor === 'string' && parsed.postCursor.trim().length ? parsed.postCursor : undefined,
+      usedDiscoverySlugs: Array.isArray(parsed.usedDiscoverySlugs)
+        ? parsed.usedDiscoverySlugs.map((slug) => normalizeHashtagSlug(slug)).filter((slug): slug is string => Boolean(slug))
+        : [],
+      activeDiscoverySlugs: Array.isArray(parsed.activeDiscoverySlugs)
+        ? parsed.activeDiscoverySlugs.map((slug) => normalizeHashtagSlug(slug)).filter((slug): slug is string => Boolean(slug))
+        : [],
+    }
+  } catch {
+    return null
+  }
+}
+
+function buildTopicPostsWhere(args: {
+  topicSlugs: string[]
+  jurisdiction?: string
+  mediaOnly?: boolean
+  familyFeedPostType?: string | null
+}) {
+  const where: Record<string, unknown> = {
+    visibility: 'public',
+    hashtags: {
+      some: {
+        tag: {
+          in: args.topicSlugs,
+        },
+      },
+    },
+  }
+
+  if (args.jurisdiction) {
+    where.jurisdiction = args.jurisdiction
+  }
+  if (args.familyFeedPostType) {
+    where.type = { not: args.familyFeedPostType }
+  }
+  if (args.mediaOnly) {
+    where.OR = [
+      { mediaUrl: { not: null } },
+      { video: { not: Prisma.JsonNull } },
+      { video: { not: Prisma.DbNull } },
+      { video: { not: null } },
+    ]
+  }
+
+  return where
 }
 
 async function loadSuggestedTopics(args: { excludedSlugs?: string[]; limit: number }): Promise<TopicRailItem[]> {
@@ -100,6 +181,151 @@ async function loadSuggestedTopics(args: { excludedSlugs?: string[]; limit: numb
   })
 
   return [...items, ...fallback.map((item: { tag: string }) => toTopicRailItem(item.tag))]
+}
+
+async function loadRandomTopics(args: { excludedSlugs?: string[]; limit: number }): Promise<TopicRailItem[]> {
+  const excludedSlugs = new Set(
+    (args.excludedSlugs ?? [])
+      .map((slug) => normalizeHashtagSlug(slug))
+      .filter((slug): slug is string => Boolean(slug)),
+  )
+
+  const recentPosts = await prisma.post.findMany({
+    where: {
+      visibility: 'public',
+      moderationStatus: ModerationStatus.VISIBLE,
+      hashtags: {
+        some: {},
+      },
+    },
+    orderBy: [{ createdAt: 'desc' }],
+    take: 500,
+    select: {
+      hashtags: {
+        select: {
+          tag: true,
+        },
+      },
+    },
+  })
+
+  const counts = new Map<string, number>()
+  for (const post of recentPosts) {
+    for (const hashtag of post.hashtags) {
+      const slug = normalizeHashtagSlug(hashtag.tag)
+      if (!slug || excludedSlugs.has(slug)) continue
+      counts.set(slug, (counts.get(slug) ?? 0) + 1)
+    }
+  }
+
+  const rankedPool = [...counts.entries()]
+    .sort((left, right) => {
+      if (right[1] !== left[1]) return right[1] - left[1]
+      return left[0].localeCompare(right[0])
+    })
+    .slice(0, RANDOM_TOPIC_POOL_SIZE)
+    .map(([slug, recentPostCount]) => toTopicRailItem(slug, recentPostCount))
+
+  const randomPrimary = shuffleArray(rankedPool).slice(0, args.limit)
+  if (randomPrimary.length >= args.limit) {
+    return randomPrimary
+  }
+
+  const alreadyPicked = new Set([...excludedSlugs, ...randomPrimary.map((item) => item.slug)])
+  const fallback = await prisma.hashtag.findMany({
+    where: {
+      tag: {
+        notIn: [...alreadyPicked],
+      },
+    },
+    orderBy: [{ createdAt: 'desc' }],
+    take: Math.max(args.limit * 8, 40),
+    select: {
+      tag: true,
+    },
+  })
+
+  const fallbackRandom = shuffleArray(
+    fallback
+      .map((item: { tag: string }) => normalizeHashtagSlug(item.tag))
+      .filter((slug): slug is string => Boolean(slug) && !alreadyPicked.has(slug))
+      .map((slug) => toTopicRailItem(slug)),
+  ).slice(0, args.limit - randomPrimary.length)
+
+  return [...randomPrimary, ...fallbackRandom]
+}
+
+async function loadDiscoveryTopicPosts(args: {
+  excludedSlugs: string[]
+  limit: number
+  sortMode: 'hot' | 'new'
+  jurisdiction?: string
+  mediaOnly?: boolean
+  viewerBlockState: unknown
+  deps: TopicRoutesDeps
+}) {
+  const excluded = new Set(
+    args.excludedSlugs
+      .map((slug) => normalizeHashtagSlug(slug))
+      .filter((slug): slug is string => Boolean(slug)),
+  )
+
+  for (let attempt = 0; attempt < 8; attempt += 1) {
+    const topics = await loadRandomTopics({
+      excludedSlugs: [...excluded],
+      limit: DISCOVERY_TOPIC_BATCH_SIZE,
+    })
+    if (!topics.length) {
+      return {
+        items: [] as any[],
+        nextCursor: undefined,
+        activeTopicSlugs: [] as string[],
+        usedDiscoverySlugs: [...excluded],
+        canLoadMore: false,
+      }
+    }
+
+    const activeTopicSlugs = topics.map((topic) => topic.slug)
+    activeTopicSlugs.forEach((slug) => excluded.add(slug))
+
+    const where = buildTopicPostsWhere({
+      topicSlugs: activeTopicSlugs,
+      jurisdiction: args.jurisdiction,
+      mediaOnly: args.mediaOnly,
+      familyFeedPostType: args.deps.FAMILY_FEED_POST_TYPE,
+    })
+
+    args.deps.applyVisibleModerationFiltersToPostWhere(where, args.viewerBlockState)
+
+    const { items, nextCursor } = await loadTopicPostRows({
+      where,
+      limit: args.limit,
+      sortMode: args.sortMode,
+      deps: args.deps,
+    })
+
+    if (items.length || nextCursor) {
+      return {
+        items,
+        nextCursor,
+        activeTopicSlugs,
+        usedDiscoverySlugs: [...excluded],
+        canLoadMore: topics.length >= DISCOVERY_TOPIC_BATCH_SIZE,
+      }
+    }
+
+    if (topics.length < DISCOVERY_TOPIC_BATCH_SIZE) {
+      break
+    }
+  }
+
+  return {
+    items: [] as any[],
+    nextCursor: undefined,
+    activeTopicSlugs: [] as string[],
+    usedDiscoverySlugs: [...excluded],
+    canLoadMore: false,
+  }
 }
 
 async function loadTopicPostRows(args: {
@@ -311,36 +537,137 @@ export function registerTopicRoutes(app: FastifyInstance, deps: TopicRoutesDeps)
         })
       }
 
-      const { cursor, limit, jurisdiction, sort } = query.data
+      const { cursor, limit, jurisdiction, sort, mediaOnly } = query.data
+      const cursorState = parseTopicFeedCursor(cursor)
+      const sortMode = sort ?? 'hot'
       const viewerBlockState = await deps.loadViewerBlockState(userId)
 
-      const where: any = {
-        visibility: 'public',
-        hashtags: {
-          some: {
-            tag: {
-              in: followedSlugs,
-            },
-          },
-        },
-      }
+      let items: any[] = []
+      let nextCursor: string | undefined
 
-      if (jurisdiction) {
-        where.jurisdiction = jurisdiction
-      }
-      if (deps.FAMILY_FEED_POST_TYPE) {
-        where.type = { not: deps.FAMILY_FEED_POST_TYPE }
-      }
+      if ((cursorState?.mode ?? 'followed') === 'discover') {
+        const usedDiscoverySlugs = Array.from(
+          new Set([
+            ...followedSlugs,
+            ...(cursorState?.usedDiscoverySlugs ?? []),
+          ]),
+        )
+        const activeDiscoverySlugs = Array.from(
+          new Set((cursorState?.activeDiscoverySlugs ?? []).filter((slug) => !followedSlugs.includes(slug))),
+        )
 
-      deps.applyVisibleModerationFiltersToPostWhere(where, viewerBlockState)
+        if (activeDiscoverySlugs.length) {
+          const where = buildTopicPostsWhere({
+            topicSlugs: activeDiscoverySlugs,
+            jurisdiction,
+            mediaOnly,
+            familyFeedPostType: deps.FAMILY_FEED_POST_TYPE,
+          })
+          deps.applyVisibleModerationFiltersToPostWhere(where, viewerBlockState)
 
-      const { items, nextCursor } = await loadTopicPostRows({
-        where,
-        limit,
-        cursor,
-        sortMode: sort ?? 'hot',
-        deps,
-      })
+          const continuation = await loadTopicPostRows({
+            where,
+            limit,
+            cursor: cursorState?.postCursor,
+            sortMode,
+            deps,
+          })
+
+          if (continuation.items.length || continuation.nextCursor) {
+            items = continuation.items
+            nextCursor = continuation.nextCursor
+              ? encodeTopicFeedCursor({
+                  mode: 'discover',
+                  postCursor: continuation.nextCursor,
+                  usedDiscoverySlugs,
+                  activeDiscoverySlugs,
+                })
+              : encodeTopicFeedCursor({
+                  mode: 'discover',
+                  usedDiscoverySlugs,
+                  activeDiscoverySlugs: [],
+                })
+          }
+        }
+
+        if (!items.length) {
+          const discovery = await loadDiscoveryTopicPosts({
+            excludedSlugs: usedDiscoverySlugs,
+            limit,
+            sortMode,
+            jurisdiction,
+            mediaOnly,
+            viewerBlockState,
+            deps,
+          })
+          items = discovery.items
+          nextCursor = discovery.nextCursor
+            ? encodeTopicFeedCursor({
+                mode: 'discover',
+                postCursor: discovery.nextCursor,
+                usedDiscoverySlugs: discovery.usedDiscoverySlugs,
+                activeDiscoverySlugs: discovery.activeTopicSlugs,
+              })
+            : discovery.canLoadMore
+              ? encodeTopicFeedCursor({
+                  mode: 'discover',
+                  usedDiscoverySlugs: discovery.usedDiscoverySlugs,
+                  activeDiscoverySlugs: [],
+                })
+              : undefined
+        }
+      } else {
+        const where = buildTopicPostsWhere({
+          topicSlugs: followedSlugs,
+          jurisdiction,
+          mediaOnly,
+          familyFeedPostType: deps.FAMILY_FEED_POST_TYPE,
+        })
+        deps.applyVisibleModerationFiltersToPostWhere(where, viewerBlockState)
+
+        const followedResult = await loadTopicPostRows({
+          where,
+          limit,
+          cursor: cursorState?.postCursor,
+          sortMode,
+          deps,
+        })
+
+        items = followedResult.items
+        if (followedResult.nextCursor) {
+          nextCursor = encodeTopicFeedCursor({
+            mode: 'followed',
+            postCursor: followedResult.nextCursor,
+          })
+        } else {
+          const discovery = await loadDiscoveryTopicPosts({
+            excludedSlugs: followedSlugs,
+            limit,
+            sortMode,
+            jurisdiction,
+            mediaOnly,
+            viewerBlockState,
+            deps,
+          })
+          if (discovery.items.length) {
+            items = discovery.items
+          }
+          nextCursor = discovery.nextCursor
+            ? encodeTopicFeedCursor({
+                mode: 'discover',
+                postCursor: discovery.nextCursor,
+                usedDiscoverySlugs: discovery.usedDiscoverySlugs,
+                activeDiscoverySlugs: discovery.activeTopicSlugs,
+              })
+            : discovery.canLoadMore
+              ? encodeTopicFeedCursor({
+                  mode: 'discover',
+                  usedDiscoverySlugs: discovery.usedDiscoverySlugs,
+                  activeDiscoverySlugs: [],
+                })
+              : undefined
+        }
+      }
 
       return reply.send({
         topics: followedTopics,
@@ -363,25 +690,16 @@ export function registerTopicRoutes(app: FastifyInstance, deps: TopicRoutesDeps)
       const query = TopicFeedQuery.safeParse(req.query)
       if (!query.success) return reply.code(400).send({ error: query.error.flatten() })
 
-      const { cursor, limit, jurisdiction, sort } = query.data
+      const { cursor, limit, jurisdiction, sort, mediaOnly } = query.data
       const viewerId = (req as any).user?.id as string | undefined
       const viewerBlockState = await deps.loadViewerBlockState(viewerId)
 
-      const where: any = {
-        visibility: 'public',
-        hashtags: {
-          some: {
-            tag: topicSlug,
-          },
-        },
-      }
-
-      if (jurisdiction) {
-        where.jurisdiction = jurisdiction
-      }
-      if (deps.FAMILY_FEED_POST_TYPE) {
-        where.type = { not: deps.FAMILY_FEED_POST_TYPE }
-      }
+      const where = buildTopicPostsWhere({
+        topicSlugs: [topicSlug],
+        jurisdiction,
+        mediaOnly,
+        familyFeedPostType: deps.FAMILY_FEED_POST_TYPE,
+      })
 
       deps.applyVisibleModerationFiltersToPostWhere(where, viewerBlockState)
 

@@ -150,6 +150,7 @@ export default function TopicPageClient({ slug }: TopicPageClientProps) {
   const handlePostCreated = useCallback(
     (post: ApiPost) => {
       if (!post.topicSlugs.includes(slug)) return
+      setIsFollowingTopic(true)
       setPosts((current) => [post, ...current.filter((item) => item.id !== post.id)])
     },
     [slug],

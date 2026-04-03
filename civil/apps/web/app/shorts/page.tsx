@@ -1,11 +1,5 @@
-import ComingSoon from '../_components/ComingSoon'
+import ShortsPageClient from './ShortsPageClient'
 
 export default function ShortsPage() {
-  return (
-    <ComingSoon
-      activeNavKey="shorts"
-      title="Shorts are coming soon"
-      message="Short-form video is on the roadmap. The first pass will focus on quick uploads up to 60 seconds."
-    />
-  )
+  return <ShortsPageClient />
 }
