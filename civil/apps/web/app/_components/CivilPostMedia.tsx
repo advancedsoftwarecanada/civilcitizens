@@ -33,7 +33,12 @@ export default function CivilPostMedia({ images, mediaUrl, video, postUrl }: Civ
 
   if (playbackUrl) {
     return (
-      <div className="overflow-hidden rounded-2xl border border-slate-200 bg-slate-950">
+      <div
+        className="overflow-hidden rounded-2xl border border-slate-200 bg-slate-950"
+        data-prevent-card-nav="true"
+        onClickCapture={(event) => event.stopPropagation()}
+        onPointerDownCapture={(event) => event.stopPropagation()}
+      >
         <video
           className="h-auto w-full max-h-[75vh] bg-black"
           controls

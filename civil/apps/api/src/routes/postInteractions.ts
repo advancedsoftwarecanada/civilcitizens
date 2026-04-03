@@ -66,6 +66,14 @@ function extractFirstPostUrl(value: string): string | null {
 
 type PostInteractionsDeps = Record<string, any>
 
+async function upsertTopicFollowsForAuthor(tx: Prisma.TransactionClient, userId: string, topicSlugs: string[]) {
+  if (!topicSlugs.length) return
+  await tx.topicFollow.createMany({
+    data: topicSlugs.map((topicSlug) => ({ userId, topicSlug })),
+    skipDuplicates: true,
+  })
+}
+
 function buildPostCreateFallback(post: any, viewerId: string) {
   const community = post.provinceCode && post.communitySlug ? findCommunity(post.provinceCode, post.communitySlug) : null
 
@@ -375,6 +383,7 @@ export function registerPostInteractionRoutes(app: FastifyInstance, deps: PostIn
         })
 
         await syncPostTaggingRelations(tx, post.id, tagging)
+        await upsertTopicFollowsForAuthor(tx, userId, tagging.topicSlugs)
 
         const hydratedPost = await tx.post.findUnique({
           where: { id: post.id },
@@ -1100,6 +1109,7 @@ export function registerPostInteractionRoutes(app: FastifyInstance, deps: PostIn
           })
 
           await syncPostTaggingRelations(tx, params.data.id, tagging)
+          await upsertTopicFollowsForAuthor(tx, userId, tagging.topicSlugs)
 
           return tx.post.findUnique({
             where: { id: params.data.id },

@@ -14,6 +14,7 @@ import RichTextEditor from '../../../../_components/RichTextEditor'
 import CommentComposer from '../../../../_components/CommentComposer'
 import CommentThread, { type ApiComment } from '../../../../_components/CommentThread'
 import CivilCard from '../../../../_components/CivilCard'
+import CivilPostMedia from '../../../../_components/CivilPostMedia'
 import PostAuthorMiniCard from '../../../../_components/PostAuthorMiniCard'
 import CivilLinkPreviewList from '../../../../_components/CivilLinkPreviewList'
 import CauseSummaryCard from '../../../../_components/CauseSummaryCard'
@@ -38,125 +39,8 @@ import { addCommentToTree, normalizeCommentTree, removeCommentFromTree, removeCo
 import { formatUserDisplayName } from '../../../../_lib/text'
 import { useRegisterPageView } from '../../../../_components/AnalyticsTracker'
 
-function PostDetailImages({ images, mediaUrl }: { images?: string[] | null; mediaUrl?: string | null }) {
-  const [selectedIndex, setSelectedIndex] = useState<number | null>(null)
-  const allImages = images && images.length > 0 ? images : mediaUrl ? [mediaUrl] : []
-
-  const handlePrev = useCallback((e?: React.MouseEvent) => {
-    e?.stopPropagation()
-    setSelectedIndex((prev) => {
-      if (prev === null) return null
-      return prev === 0 ? allImages.length - 1 : prev - 1
-    })
-  }, [allImages.length])
-
-  const handleNext = useCallback((e?: React.MouseEvent) => {
-    e?.stopPropagation()
-    setSelectedIndex((prev) => {
-      if (prev === null) return null
-      return prev === allImages.length - 1 ? 0 : prev + 1
-    })
-  }, [allImages.length])
-
-  useEffect(() => {
-    if (selectedIndex === null) return
-    const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'ArrowLeft') handlePrev()
-      if (e.key === 'ArrowRight') handleNext()
-      if (e.key === 'Escape') setSelectedIndex(null)
-    }
-    window.addEventListener('keydown', handleKeyDown)
-    return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [selectedIndex, handleNext, handlePrev])
-
-  if (allImages.length === 0) return null
-
-  return (
-    <>
-      <div
-        className={clsx(
-          'mb-6 grid gap-2 overflow-hidden rounded-2xl border border-slate-200 bg-slate-50',
-          allImages.length === 1 ? 'grid-cols-1' : 'grid-cols-2 sm:grid-cols-3',
-        )}
-      >
-        {allImages.map((src, index) => {
-          let className = 'relative aspect-square w-full overflow-hidden bg-slate-100 hover:opacity-95 transition cursor-zoom-in'
-
-          if (allImages.length === 1) {
-            className = 'relative w-full overflow-hidden bg-slate-100 cursor-zoom-in'
-          } else if (allImages.length === 3 && index === 0) {
-            className += ' col-span-2 row-span-2'
-          }
-
-          return (
-            <button
-              key={src}
-              type="button"
-              onClick={() => setSelectedIndex(index)}
-              className={className}
-            >
-              <img
-                src={src}
-                alt={`Post image ${index + 1}`}
-                className={clsx(
-                  'h-full w-full',
-                  allImages.length === 1 ? 'max-h-[80vh] object-contain' : 'object-cover',
-                )}
-              />
-            </button>
-          )
-        })}
-      </div>
-
-      {selectedIndex !== null ? (
-        <div
-          className="fixed inset-0 z-[100] flex items-center justify-center bg-black/95 p-4 backdrop-blur-sm"
-          onClick={() => setSelectedIndex(null)}
-        >
-          <button className="absolute right-4 top-4 z-10 rounded-full bg-white/10 p-2 text-white/70 hover:bg-white/20 hover:text-white">
-            <svg
-              xmlns="http://www.w3.org/2000/svg"
-              fill="none"
-              viewBox="0 0 24 24"
-              strokeWidth={1.5}
-              stroke="currentColor"
-              className="h-8 w-8"
-            >
-              <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-            </svg>
-          </button>
-
-          {allImages.length > 1 ? (
-            <>
-              <button
-                onClick={handlePrev}
-                className="absolute left-4 top-1/2 z-10 -translate-y-1/2 rounded-full bg-white/10 p-3 text-white/70 hover:bg-white/20 hover:text-white"
-              >
-                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="h-8 w-8">
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M15.75 19.5L8.25 12l7.5-7.5" />
-                </svg>
-              </button>
-              <button
-                onClick={handleNext}
-                className="absolute right-4 top-1/2 z-10 -translate-y-1/2 rounded-full bg-white/10 p-3 text-white/70 hover:bg-white/20 hover:text-white"
-              >
-                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="h-8 w-8">
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 4.5l7.5 7.5-7.5 7.5" />
-                </svg>
-              </button>
-            </>
-          ) : null}
-
-          <img
-            src={allImages[selectedIndex]}
-            alt="Full size"
-            className="max-h-full max-w-full object-contain shadow-2xl"
-            onClick={(e) => e.stopPropagation()}
-          />
-        </div>
-      ) : null}
-    </>
-  )
+function PostDetailImages({ images, mediaUrl, video }: { images?: string[] | null; mediaUrl?: string | null; video?: ApiPost['video'] | null }) {
+  return <CivilPostMedia images={images} mediaUrl={mediaUrl} video={video} />
 }
 
 type Viewer = {
@@ -719,7 +603,7 @@ export default function UserPostPage({ params }: PageProps) {
                     />
                   </div>
                   <div className="text-[16px] leading-7 text-slate-900">
-                    <PostDetailImages images={post.images} mediaUrl={post.mediaUrl} />
+                    <PostDetailImages images={post.images} mediaUrl={post.mediaUrl} video={post.video} />
                     {(post.type === 'article' || post.type === 'cause') && post.title ? (
                       <h1 className="text-3xl font-semibold text-slate-900">{post.title}</h1>
                     ) : null}
