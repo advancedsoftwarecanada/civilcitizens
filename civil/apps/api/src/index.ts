@@ -676,6 +676,8 @@ function ensurePushDeviceRegistryTable(): Promise<void> {
 
 let postImpressionTableReady: Promise<void> | null = null
 let postBusinessAuthorColumnReady: Promise<void> | null = null
+let postVideoColumnReady: Promise<void> | null = null
+let postVideoMediaCategoryReady: Promise<void> | null = null
 
 type UserPostImpressionRow = {
   post_id: string
@@ -729,6 +731,38 @@ function ensurePostBusinessAuthorColumn(): Promise<void> {
   })
 
   return postBusinessAuthorColumnReady
+}
+
+function ensurePostVideoColumn(): Promise<void> {
+  if (postVideoColumnReady) return postVideoColumnReady
+
+  postVideoColumnReady = (async () => {
+    await prisma.$executeRawUnsafe(`
+      ALTER TABLE "Post"
+      ADD COLUMN IF NOT EXISTS "video" JSONB;
+    `)
+  })().catch((err) => {
+    postVideoColumnReady = null
+    throw err
+  })
+
+  return postVideoColumnReady
+}
+
+function ensurePostVideoMediaCategory(): Promise<void> {
+  if (postVideoMediaCategoryReady) return postVideoMediaCategoryReady
+
+  postVideoMediaCategoryReady = (async () => {
+    await prisma.$executeRawUnsafe(`
+      ALTER TYPE "MediaCategory"
+      ADD VALUE IF NOT EXISTS 'post_video';
+    `)
+  })().catch((err) => {
+    postVideoMediaCategoryReady = null
+    throw err
+  })
+
+  return postVideoMediaCategoryReady
 }
 
 async function loadUserPostImpressionMap(userId: string, postIds: string[]) {
@@ -2535,6 +2569,18 @@ function isMissingPostBusinessAuthorColumnError(err: unknown): boolean {
   return /showBusinessAuthor/i.test(haystack) && /Post/i.test(haystack)
 }
 
+function isMissingPostVideoColumnError(err: unknown): boolean {
+  const detail = schemaOutOfDateDetail(err)
+  const haystack = [detail.prismaMetaMessage, detail.message].filter(Boolean).join(' ')
+  return /(^|\W)video(\W|$)/i.test(haystack) && /Post/i.test(haystack)
+}
+
+function isMissingPostVideoMediaCategoryError(err: unknown): boolean {
+  const detail = schemaOutOfDateDetail(err)
+  const haystack = [detail.prismaMetaMessage, detail.message].filter(Boolean).join(' ')
+  return /MediaCategory/i.test(haystack) && /post_video/i.test(haystack)
+}
+
 function isVisibleModerationStatus(value: string | null | undefined) {
   return String(value ?? '').toUpperCase() === 'VISIBLE'
 }
@@ -3273,6 +3319,26 @@ async function withSchemaGuard<T>(
     if (isMissingPostBusinessAuthorColumnError(err)) {
       try {
         await ensurePostBusinessAuthorColumn()
+        return await action()
+      } catch (repairErr) {
+        if (!isSchemaOutOfDateError(repairErr)) throw repairErr
+        err = repairErr
+      }
+    }
+
+    if (isMissingPostVideoColumnError(err)) {
+      try {
+        await ensurePostVideoColumn()
+        return await action()
+      } catch (repairErr) {
+        if (!isSchemaOutOfDateError(repairErr)) throw repairErr
+        err = repairErr
+      }
+    }
+
+    if (isMissingPostVideoMediaCategoryError(err)) {
+      try {
+        await ensurePostVideoMediaCategory()
         return await action()
       } catch (repairErr) {
         if (!isSchemaOutOfDateError(repairErr)) throw repairErr
@@ -12576,6 +12642,8 @@ const start = async () => {
   try {
     validatePushEnvironment(app.log)
     await ensurePostBusinessAuthorColumn()
+    await ensurePostVideoColumn()
+    await ensurePostVideoMediaCategory()
     await app.listen({ port: PORT, host: '0.0.0.0' })
     const pollResultsInterval = setInterval(() => {
       void dispatchDuePollResultNotifications()

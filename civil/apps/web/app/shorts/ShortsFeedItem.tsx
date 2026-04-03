@@ -41,7 +41,7 @@ export default function ShortsFeedItem({ post, isActive, onVisible, onReact, onO
   const videoRef = useRef<HTMLVideoElement | null>(null)
   const [shareOpen, setShareOpen] = useState(false)
   const [playbackPaused, setPlaybackPaused] = useState(false)
-  const [isMuted, setIsMuted] = useState(false)
+  const [isMuted, setIsMuted] = useState(true)
   const [durationSeconds, setDurationSeconds] = useState(0)
   const [currentTimeSeconds, setCurrentTimeSeconds] = useState(0)
 
@@ -183,6 +183,7 @@ export default function ShortsFeedItem({ post, isActive, onVisible, onReact, onO
                   className="h-full w-full bg-black object-contain"
                   src={playbackUrl}
                   poster={posterUrl ?? undefined}
+                  autoPlay
                   muted={isMuted}
                   loop
                   playsInline

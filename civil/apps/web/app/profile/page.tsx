@@ -189,6 +189,7 @@ const MEDIA_CATEGORY_LIMITS: Record<MediaCategory, number> = {
   business_logo: 8 * MB,
   business_cover: 20 * MB,
   post_image: 25 * MB,
+  post_video: 500 * MB,
   attachment: 40 * MB,
 }
 const ACCEPTED_IMAGE_TYPES = 'image/jpeg,image/png,image/webp,image/avif,image/heic,image/heif'

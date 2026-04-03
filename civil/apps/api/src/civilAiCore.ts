@@ -660,6 +660,7 @@ export function createCivilAiCoreHelpers(deps: CivilAiRuntimeDeps) {
             last_error TEXT
           )
         `)
+        await prisma.$executeRawUnsafe(`CREATE UNIQUE INDEX IF NOT EXISTS civil_ai_conversation_id_uidx ON civil_ai_conversation (id)`)
         await prisma.$executeRawUnsafe(`CREATE INDEX IF NOT EXISTS civil_ai_conversation_last_activity_idx ON civil_ai_conversation (last_activity_at DESC)`)
         await prisma.$executeRawUnsafe(`CREATE INDEX IF NOT EXISTS civil_ai_conversation_user_id_idx ON civil_ai_conversation (user_id)`)
         await prisma.$executeRawUnsafe(`
@@ -683,6 +684,7 @@ export function createCivilAiCoreHelpers(deps: CivilAiRuntimeDeps) {
             raw_response_text TEXT
           )
         `)
+        await prisma.$executeRawUnsafe(`CREATE UNIQUE INDEX IF NOT EXISTS civil_ai_turn_id_uidx ON civil_ai_turn (id)`)
         await prisma.$executeRawUnsafe(`CREATE INDEX IF NOT EXISTS civil_ai_turn_conversation_idx ON civil_ai_turn (conversation_id, created_at DESC)`)
         await prisma.$executeRawUnsafe(`CREATE INDEX IF NOT EXISTS civil_ai_turn_user_id_idx ON civil_ai_turn (user_id, created_at DESC)`)
       })().catch((error) => {
