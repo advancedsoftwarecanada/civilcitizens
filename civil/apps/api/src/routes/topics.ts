@@ -31,6 +31,7 @@ const TopicFeedQuery = CursorQuery.extend({
   jurisdiction: JurisdictionEnum.optional(),
   sort: PostSortEnum.optional(),
   mediaOnly: z.coerce.boolean().optional(),
+  videoOnly: z.coerce.boolean().optional(),
 })
 
 const DISCOVERY_TOPIC_BATCH_SIZE = 5
@@ -88,6 +89,7 @@ function buildTopicPostsWhere(args: {
   topicSlugs: string[]
   jurisdiction?: string
   mediaOnly?: boolean
+  videoOnly?: boolean
   familyFeedPostType?: string | null
 }) {
   const where: Record<string, unknown> = {
@@ -106,6 +108,17 @@ function buildTopicPostsWhere(args: {
   }
   if (args.familyFeedPostType) {
     where.type = { not: args.familyFeedPostType }
+  }
+  if (args.videoOnly) {
+    where.AND = [
+      {
+        OR: [
+          { video: { not: Prisma.JsonNull } },
+          { video: { not: Prisma.DbNull } },
+          { video: { not: null } },
+        ],
+      },
+    ]
   }
   if (args.mediaOnly) {
     where.OR = [
@@ -264,6 +277,7 @@ async function loadDiscoveryTopicPosts(args: {
   sortMode: 'hot' | 'new'
   jurisdiction?: string
   mediaOnly?: boolean
+  videoOnly?: boolean
   viewerBlockState: unknown
   deps: TopicRoutesDeps
 }) {
@@ -295,6 +309,7 @@ async function loadDiscoveryTopicPosts(args: {
       topicSlugs: activeTopicSlugs,
       jurisdiction: args.jurisdiction,
       mediaOnly: args.mediaOnly,
+      videoOnly: args.videoOnly,
       familyFeedPostType: args.deps.FAMILY_FEED_POST_TYPE,
     })
 
@@ -540,7 +555,7 @@ export function registerTopicRoutes(app: FastifyInstance, deps: TopicRoutesDeps)
         })
       }
 
-      const { cursor, limit, jurisdiction, sort, mediaOnly } = query.data
+      const { cursor, limit, jurisdiction, sort, mediaOnly, videoOnly } = query.data
       const cursorState = parseTopicFeedCursor(cursor)
       const sortMode = sort ?? 'hot'
       const viewerBlockState = await deps.loadViewerBlockState(userId)
@@ -564,6 +579,7 @@ export function registerTopicRoutes(app: FastifyInstance, deps: TopicRoutesDeps)
             topicSlugs: activeDiscoverySlugs,
             jurisdiction,
             mediaOnly,
+            videoOnly,
             familyFeedPostType: deps.FAMILY_FEED_POST_TYPE,
           })
           deps.applyVisibleModerationFiltersToPostWhere(where, viewerBlockState)
@@ -600,6 +616,7 @@ export function registerTopicRoutes(app: FastifyInstance, deps: TopicRoutesDeps)
             sortMode,
             jurisdiction,
             mediaOnly,
+            videoOnly,
             viewerBlockState,
             deps,
           })
@@ -624,6 +641,7 @@ export function registerTopicRoutes(app: FastifyInstance, deps: TopicRoutesDeps)
           topicSlugs: followedSlugs,
           jurisdiction,
           mediaOnly,
+          videoOnly,
           familyFeedPostType: deps.FAMILY_FEED_POST_TYPE,
         })
         deps.applyVisibleModerationFiltersToPostWhere(where, viewerBlockState)
@@ -649,6 +667,7 @@ export function registerTopicRoutes(app: FastifyInstance, deps: TopicRoutesDeps)
             sortMode,
             jurisdiction,
             mediaOnly,
+            videoOnly,
             viewerBlockState,
             deps,
           })
@@ -693,7 +712,7 @@ export function registerTopicRoutes(app: FastifyInstance, deps: TopicRoutesDeps)
       const query = TopicFeedQuery.safeParse(req.query)
       if (!query.success) return reply.code(400).send({ error: query.error.flatten() })
 
-      const { cursor, limit, jurisdiction, sort, mediaOnly } = query.data
+      const { cursor, limit, jurisdiction, sort, mediaOnly, videoOnly } = query.data
       const viewerId = (req as any).user?.id as string | undefined
       const viewerBlockState = await deps.loadViewerBlockState(viewerId)
 
@@ -701,6 +720,7 @@ export function registerTopicRoutes(app: FastifyInstance, deps: TopicRoutesDeps)
         topicSlugs: [topicSlug],
         jurisdiction,
         mediaOnly,
+        videoOnly,
         familyFeedPostType: deps.FAMILY_FEED_POST_TYPE,
       })
 

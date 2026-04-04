@@ -29,8 +29,8 @@ function dedupePostsById(items: ApiPost[]) {
   return Array.from(deduped.values())
 }
 
-function isMediaPost(post: ApiPost) {
-  return Boolean(post.mediaUrl || post.video?.assetId || post.video?.playbackUrl || (post.images?.length ?? 0) > 0)
+function isShortVideoPost(post: ApiPost) {
+  return Boolean(post.video?.assetId || post.video?.playbackUrl)
 }
 
 export default function ShortsPageClient() {
@@ -139,7 +139,7 @@ export default function ShortsPageClient() {
     setError(null)
 
     try {
-      const params = new URLSearchParams({ sort: sortMode, mediaOnly: 'true' })
+      const params = new URLSearchParams({ sort: sortMode, videoOnly: 'true' })
       if (cursor) {
         params.set('cursor', cursor)
       }
@@ -169,7 +169,7 @@ export default function ShortsPageClient() {
       } | null
 
       const nextTopics = Array.isArray(payload?.topics) ? payload.topics : []
-      const nextItems = Array.isArray(payload?.items) ? payload.items.filter(isMediaPost) : []
+      const nextItems = Array.isArray(payload?.items) ? payload.items.filter(isShortVideoPost) : []
       setAuthenticated(true)
       setFollowedTopics(nextTopics)
       setPosts((current) => (cursor ? dedupePostsById([...current, ...nextItems]) : dedupePostsById(nextItems)))
@@ -249,7 +249,7 @@ export default function ShortsPageClient() {
 
   const handlePostCreated = useCallback(
     (post: ApiPost) => {
-      if (!isMediaPost(post)) return
+      if (!isShortVideoPost(post)) return
       const matchesFollowedTopic = post.topicSlugs.some((slug) => followedTopicSlugSet.has(slug))
       if (matchesFollowedTopic) {
         setPosts((current) => [post, ...current.filter((item) => item.id !== post.id)])
@@ -267,7 +267,7 @@ export default function ShortsPageClient() {
   }, [])
 
   const handlePostUpdate = useCallback((updatedPost: ApiPost) => {
-    if (!isMediaPost(updatedPost)) {
+    if (!isShortVideoPost(updatedPost)) {
       setPosts((current) => current.filter((post) => post.id !== updatedPost.id))
       return
     }
@@ -332,7 +332,7 @@ export default function ShortsPageClient() {
       if (!response.ok) return
 
       const payload = (await response.json().catch(() => null)) as { post?: ApiPost } | null
-      if (!payload?.post || !isMediaPost(payload.post)) return
+      if (!payload?.post || !isShortVideoPost(payload.post)) return
 
       mergeUpdatedPost(payload.post)
     } catch (reactError) {
@@ -462,10 +462,12 @@ export default function ShortsPageClient() {
     const getNearestSectionIndex = () => {
       const sections = getSections()
       if (!sections.length) return -1
+      const firstSection = sections[0]
+      if (!firstSection) return -1
 
       const currentScrollTop = container.scrollTop
       let nearestIndex = 0
-      let smallestDistance = Math.abs(currentScrollTop - sections[0].offsetTop)
+      let smallestDistance = Math.abs(currentScrollTop - firstSection.offsetTop)
 
       for (const [index, section] of sections.entries()) {
         const distance = Math.abs(currentScrollTop - section.offsetTop)
