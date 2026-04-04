@@ -30,6 +30,7 @@ type ShortsCommentsPanelProps = {
   onCommentReported: (commentId: string) => void
   onCommentAuthorBlocked: (authorId: string) => void
   onSignIn: () => void
+  overlayMode?: boolean
 }
 
 const COMMENT_SORT_OPTIONS: Array<{ value: 'hot' | 'new'; label: string }> = [
@@ -52,18 +53,27 @@ export default function ShortsCommentsPanel({
   onCommentReported,
   onCommentAuthorBlocked,
   onSignIn,
+  overlayMode = false,
 }: ShortsCommentsPanelProps) {
   const commentCount = post?.counts?.commentCount ?? comments.length
 
   return (
     <aside
       className={clsx(
-        'hidden min-h-0 xl:flex xl:flex-col xl:overflow-hidden xl:transition-[width,opacity,transform] xl:duration-300',
-        open ? 'xl:w-[26rem] xl:translate-x-0 xl:opacity-100' : 'xl:w-0 xl:translate-x-8 xl:opacity-0 xl:pointer-events-none',
+        overlayMode
+          ? 'hidden xl:absolute xl:inset-0 xl:z-20 xl:flex xl:min-h-0 xl:flex-col xl:overflow-hidden xl:transition-[opacity,transform] xl:duration-300'
+          : 'hidden min-h-0 xl:flex xl:flex-col xl:overflow-hidden xl:transition-[width,opacity,transform] xl:duration-300',
+        overlayMode
+          ? open
+            ? 'xl:translate-x-0 xl:opacity-100'
+            : 'xl:translate-x-8 xl:opacity-0 xl:pointer-events-none'
+          : open
+            ? 'xl:w-[26rem] xl:translate-x-0 xl:opacity-100'
+            : 'xl:w-0 xl:translate-x-8 xl:opacity-0 xl:pointer-events-none',
       )}
       aria-hidden={!open}
     >
-      <div className="flex h-full min-h-0 flex-col overflow-hidden rounded-[2rem] border border-slate-200 bg-white shadow-[0_24px_80px_rgba(15,23,42,0.12)]">
+      <div className={clsx('flex h-full min-h-0 flex-col overflow-hidden rounded-[2rem] border border-slate-200 bg-white shadow-[0_24px_80px_rgba(15,23,42,0.12)]', overlayMode && 'xl:bg-white/98 xl:backdrop-blur-xl')}>
         <div className="flex items-center justify-between gap-3 border-b border-slate-200 px-5 py-4">
           <div className="min-w-0">
             <div className="flex items-center gap-2 text-sm font-semibold text-slate-900">
