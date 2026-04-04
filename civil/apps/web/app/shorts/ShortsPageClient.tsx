@@ -36,6 +36,11 @@ function isMediaPost(post: ApiPost) {
 export default function ShortsPageClient() {
   const scrollContainerRef = useRef<HTMLDivElement | null>(null)
   const wheelLockRef = useRef(false)
+  const scrollSettleTimeoutRef = useRef<number | null>(null)
+  const snapLockRef = useRef(false)
+  const touchStartYRef = useRef<number | null>(null)
+  const touchStartIndexRef = useRef<number | null>(null)
+  const commentsLoadTimeoutRef = useRef<number | null>(null)
   const cachedMe = useViewerStore((state) => state.me)
   const [posts, setPosts] = useState<ApiPost[]>([])
   const [loading, setLoading] = useState(true)
@@ -288,8 +293,24 @@ export default function ShortsPageClient() {
   }, [activePostId, hasMore, loadFeed, loading, nextCursor, posts])
 
   useEffect(() => {
+    if (commentsLoadTimeoutRef.current) {
+      window.clearTimeout(commentsLoadTimeoutRef.current)
+      commentsLoadTimeoutRef.current = null
+    }
+
     if (!commentsDrawerOpen || !activePostId) return
-    void loadComments(activePostId, commentSort)
+
+    commentsLoadTimeoutRef.current = window.setTimeout(() => {
+      void loadComments(activePostId, commentSort)
+      commentsLoadTimeoutRef.current = null
+    }, 180)
+
+    return () => {
+      if (commentsLoadTimeoutRef.current) {
+        window.clearTimeout(commentsLoadTimeoutRef.current)
+        commentsLoadTimeoutRef.current = null
+      }
+    }
   }, [activePostId, commentSort, commentsDrawerOpen, loadComments])
 
   const handleReact = useCallback(async (postId: string, reaction: ReactionType | null) => {
@@ -325,10 +346,7 @@ export default function ShortsPageClient() {
       return nextOpen
     })
     setActivePostId(postId)
-    if (activePostId !== postId || !commentsDrawerOpen) {
-      void loadComments(postId, commentSort)
-    }
-  }, [activePostId, commentSort, commentsDrawerOpen, loadComments])
+  }, [activePostId])
 
   const handleReply = useCallback(async (parentId: string | null, body: string) => {
     if (!activePost) throw new Error('post_not_loaded')
@@ -407,6 +425,30 @@ export default function ShortsPageClient() {
   }, [])
 
   const hasFollowedTopics = useMemo(() => followedTopics.length > 0, [followedTopics])
+  const desktopRightRail = (
+    <div className="relative min-h-0 h-full">
+      <div className={clsx(commentsDrawerOpen && 'xl:hidden')}>
+        <ShortsRightRail onPostCreated={handlePostCreated} onFollowedTopicsChange={handleRightRailTopicsChange} />
+      </div>
+      <ShortsCommentsPanel
+        open={commentsDrawerOpen}
+        post={activePost}
+        comments={comments}
+        loading={commentsLoading}
+        error={commentsError}
+        sortMode={commentSort}
+        currentUser={viewer}
+        onClose={() => setCommentsDrawerOpen(false)}
+        onSortChange={setCommentSort}
+        onReply={handleReply}
+        onVote={handleCommentVote}
+        onCommentReported={handleCommentReported}
+        onCommentAuthorBlocked={handleCommentAuthorBlocked}
+        onSignIn={() => redirectToAuthModal('login')}
+        overlayMode
+      />
+    </div>
+  )
 
   useEffect(() => {
     const container = scrollContainerRef.current
@@ -415,11 +457,68 @@ export default function ShortsPageClient() {
     const getSections = () =>
       Array.from(container.querySelectorAll<HTMLElement>('[data-shorts-post-id]'))
 
-    const scrollToIndex = (index: number) => {
+    const isDesktopViewport = () => window.matchMedia('(min-width: 1280px)').matches
+
+    const getNearestSectionIndex = () => {
+      const sections = getSections()
+      if (!sections.length) return -1
+
+      const currentScrollTop = container.scrollTop
+      let nearestIndex = 0
+      let smallestDistance = Math.abs(currentScrollTop - sections[0].offsetTop)
+
+      for (const [index, section] of sections.entries()) {
+        const distance = Math.abs(currentScrollTop - section.offsetTop)
+        if (distance < smallestDistance) {
+          nearestIndex = index
+          smallestDistance = distance
+        }
+      }
+
+      return nearestIndex
+    }
+
+    const scrollToIndex = (index: number, behavior: ScrollBehavior = 'smooth') => {
       const sections = getSections()
       const target = sections[index]
       if (!target) return
-      target.scrollIntoView({ block: 'start', behavior: 'smooth' })
+      if (posts[index]?.id) {
+        setActivePostId(posts[index]!.id)
+      }
+      container.scrollTo({ top: target.offsetTop, behavior })
+    }
+
+    const snapToNearestSection = () => {
+      if (isDesktopViewport() || snapLockRef.current) return
+
+      const nearestIndex = getNearestSectionIndex()
+      if (nearestIndex < 0) return
+
+      const sections = getSections()
+      const nearestSection = sections[nearestIndex]
+      const currentScrollTop = container.scrollTop
+      const targetTop = nearestSection?.offsetTop ?? 0
+      if (Math.abs(currentScrollTop - targetTop) <= 2) return
+
+      snapLockRef.current = true
+      container.scrollTo({ top: targetTop, behavior: 'auto' })
+      if (posts[nearestIndex]?.id) {
+        setActivePostId(posts[nearestIndex]!.id)
+      }
+      window.setTimeout(() => {
+        snapLockRef.current = false
+      }, 140)
+    }
+
+    const scheduleMobileSnap = () => {
+      if (isDesktopViewport()) return
+      if (scrollSettleTimeoutRef.current) {
+        window.clearTimeout(scrollSettleTimeoutRef.current)
+      }
+      scrollSettleTimeoutRef.current = window.setTimeout(() => {
+        scrollSettleTimeoutRef.current = null
+        snapToNearestSection()
+      }, 110)
     }
 
     const navigate = (direction: 'prev' | 'next') => {
@@ -457,22 +556,77 @@ export default function ShortsPageClient() {
       }
     }
 
+    const handleScroll = () => {
+      scheduleMobileSnap()
+    }
+
+    const handleTouchStart = () => {
+      if (scrollSettleTimeoutRef.current) {
+        window.clearTimeout(scrollSettleTimeoutRef.current)
+        scrollSettleTimeoutRef.current = null
+      }
+      touchStartIndexRef.current = getNearestSectionIndex()
+    }
+
+    const handleTouchStartCapture = (event: TouchEvent) => {
+      touchStartYRef.current = event.touches[0]?.clientY ?? null
+    }
+
+    const handleTouchEnd = (event: TouchEvent) => {
+      const startY = touchStartYRef.current
+      const endY = event.changedTouches[0]?.clientY ?? null
+      const startIndex = touchStartIndexRef.current ?? getNearestSectionIndex()
+      touchStartYRef.current = null
+      touchStartIndexRef.current = null
+
+      if (startY != null && endY != null && startIndex >= 0) {
+        const deltaY = endY - startY
+        if (Math.abs(deltaY) >= 48) {
+          const nextIndex = deltaY < 0
+            ? Math.min(posts.length - 1, startIndex + 1)
+            : Math.max(0, startIndex - 1)
+          if (nextIndex !== startIndex) {
+            if (scrollSettleTimeoutRef.current) {
+              window.clearTimeout(scrollSettleTimeoutRef.current)
+              scrollSettleTimeoutRef.current = null
+            }
+            scrollToIndex(nextIndex, 'auto')
+            return
+          }
+        }
+      }
+
+      scheduleMobileSnap()
+    }
+
     container.addEventListener('wheel', handleWheel, { passive: false })
+    container.addEventListener('scroll', handleScroll, { passive: true })
+    container.addEventListener('touchstart', handleTouchStart, { passive: true })
+    container.addEventListener('touchstart', handleTouchStartCapture, { passive: true })
+    container.addEventListener('touchend', handleTouchEnd, { passive: true })
     window.addEventListener('keydown', handleKeyDown)
 
     return () => {
+      if (scrollSettleTimeoutRef.current) {
+        window.clearTimeout(scrollSettleTimeoutRef.current)
+        scrollSettleTimeoutRef.current = null
+      }
       container.removeEventListener('wheel', handleWheel)
+      container.removeEventListener('scroll', handleScroll)
+      container.removeEventListener('touchstart', handleTouchStart)
+      container.removeEventListener('touchstart', handleTouchStartCapture)
+      container.removeEventListener('touchend', handleTouchEnd)
       window.removeEventListener('keydown', handleKeyDown)
     }
   }, [activePostId, posts])
 
   return (
     <DashboardShell
-      rightRail={<ShortsRightRail onPostCreated={handlePostCreated} onFollowedTopicsChange={handleRightRailTopicsChange} />}
+      rightRail={desktopRightRail}
       showMobileRightRail
       mainClassName="min-h-0 xl:h-[calc(var(--cc-viewport-height)-var(--cc-top-nav-height))] xl:overflow-hidden"
       mainTopClassName="pt-3 xl:pt-3"
-      rightRailTopClassName="pt-3"
+      rightRailTopClassName="pt-3 xl:h-[calc(var(--cc-viewport-height)-var(--cc-top-nav-height))] xl:overflow-y-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
     >
       <div className="relative min-h-0 xl:h-full">
         <div className="pointer-events-none absolute inset-x-0 top-2 z-20 flex justify-center px-3">
@@ -517,8 +671,8 @@ export default function ShortsPageClient() {
           </section>
         ) : (
           <div className="h-full min-h-0 xl:flex xl:gap-4">
-            <div className={clsx('min-h-0 transition-[width,padding] duration-300 xl:flex-1', commentsDrawerOpen && 'xl:pr-2')}>
-              <div ref={scrollContainerRef} className="h-full overflow-y-auto scroll-smooth snap-y snap-mandatory [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+            <div className="min-h-0 transition-[width,padding] duration-300 xl:flex-1">
+              <div ref={scrollContainerRef} className="h-full overflow-y-auto overscroll-contain snap-y snap-mandatory [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
                 {posts.map((post, index) => (
                   <ShortsFeedItem
                     key={post.id}
@@ -535,22 +689,6 @@ export default function ShortsPageClient() {
                 ) : null}
               </div>
             </div>
-            <ShortsCommentsPanel
-              open={commentsDrawerOpen}
-              post={activePost}
-              comments={comments}
-              loading={commentsLoading}
-              error={commentsError}
-              sortMode={commentSort}
-              currentUser={viewer}
-              onClose={() => setCommentsDrawerOpen(false)}
-              onSortChange={setCommentSort}
-              onReply={handleReply}
-              onVote={handleCommentVote}
-              onCommentReported={handleCommentReported}
-              onCommentAuthorBlocked={handleCommentAuthorBlocked}
-              onSignIn={() => redirectToAuthModal('login')}
-            />
           </div>
         )}
       </div>

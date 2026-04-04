@@ -39,9 +39,10 @@ function formatVideoTime(totalSeconds: number) {
 export default function ShortsFeedItem({ post, isActive, onVisible, onReact, onOpenComments, commentsDrawerOpen = false }: ShortsFeedItemProps) {
   const rootRef = useRef<HTMLElement | null>(null)
   const videoRef = useRef<HTMLVideoElement | null>(null)
+  const mediaPressRef = useRef<{ x: number; y: number; time: number } | null>(null)
   const [shareOpen, setShareOpen] = useState(false)
   const [playbackPaused, setPlaybackPaused] = useState(false)
-  const [isMuted, setIsMuted] = useState(true)
+  const [isMuted, setIsMuted] = useState(false)
   const [durationSeconds, setDurationSeconds] = useState(0)
   const [currentTimeSeconds, setCurrentTimeSeconds] = useState(0)
 
@@ -51,6 +52,7 @@ export default function ShortsFeedItem({ post, isActive, onVisible, onReact, onO
   const playbackUrl = resolvePublicAssetUrl(post.video?.playbackUrl ?? null, preferredBaseUrl)
   const posterUrl = resolvePublicAssetUrl(post.video?.thumbnailUrl ?? post.mediaUrl ?? null, preferredBaseUrl)
   const primaryImageUrl = resolvePublicAssetUrl(post.images?.[0] ?? post.mediaUrl ?? null, preferredBaseUrl)
+  const backdropUrl = posterUrl ?? primaryImageUrl
   const isVideo = Boolean(playbackUrl)
   const viewerReaction = post.viewer?.reaction ?? null
   const reactionCount = post.reactions?.total ?? post.counts?.reactions ?? 0
@@ -155,11 +157,80 @@ export default function ShortsFeedItem({ post, isActive, onVisible, onReact, onO
     setCurrentTimeSeconds(value)
   }
 
+  const handleMediaPointerDown = (event: React.PointerEvent<HTMLDivElement>) => {
+    const target = event.target
+    if (target instanceof HTMLElement && target.closest('[data-shorts-control="true"]')) {
+      mediaPressRef.current = null
+      return
+    }
+    mediaPressRef.current = {
+      x: event.clientX,
+      y: event.clientY,
+      time: Date.now(),
+    }
+  }
+
+  const handleMediaPointerUp = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (!isVideo) return
+    const target = event.target
+    if (target instanceof HTMLElement && target.closest('[data-shorts-control="true"]')) {
+      mediaPressRef.current = null
+      return
+    }
+    const press = mediaPressRef.current
+    mediaPressRef.current = null
+    if (!press) return
+
+    const deltaX = Math.abs(event.clientX - press.x)
+    const deltaY = Math.abs(event.clientY - press.y)
+    const elapsedMs = Date.now() - press.time
+    if (deltaX <= 12 && deltaY <= 12 && elapsedMs <= 260) {
+      handleMediaToggle()
+    }
+  }
+
+  const handleMediaPointerCancel = () => {
+    mediaPressRef.current = null
+  }
+
+  const mobileOverlay = (
+    <div className="pointer-events-none absolute inset-x-0 bottom-0 z-[3] px-5 pb-[calc(var(--mobile-dock-active-clearance)+1.25rem)] xl:hidden">
+      <div className="flex items-end justify-between gap-3">
+        <div className="min-w-0 max-w-[70%] text-white drop-shadow-[0_8px_24px_rgba(0,0,0,0.35)]">
+          <Link href={profileHref} className="pointer-events-auto text-base font-semibold hover:underline">
+            {authorLabel}
+          </Link>
+          <p className="mt-1 text-sm text-white/80">@{post.author.handle}</p>
+          {description ? <p className="mt-2 text-sm leading-6 text-white/90">{description}</p> : null}
+        </div>
+        <div className="pointer-events-auto flex flex-col items-center gap-3 text-white">
+          <button
+            type="button"
+            onClick={() => void onReact?.(post.id, viewerReaction === 'heart' ? null : 'heart')}
+            className={clsx('flex h-12 w-12 items-center justify-center rounded-full border backdrop-blur-md transition', viewerReaction === 'heart' ? 'border-rose-400 bg-rose-500 text-white' : 'border-white/20 bg-black/30 text-white')}
+          >
+            <LuHeart className="h-5 w-5" />
+          </button>
+          <Link href={postHref} className="flex h-12 w-12 items-center justify-center rounded-full border border-white/20 bg-black/30 text-white backdrop-blur-md">
+            <LuMessageCircle className="h-5 w-5" />
+          </Link>
+          <button
+            type="button"
+            onClick={() => setShareOpen(true)}
+            className="flex h-12 w-12 items-center justify-center rounded-full border border-white/20 bg-black/30 text-white backdrop-blur-md"
+          >
+            <LuShare2 className="h-5 w-5" />
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+
   return (
     <section
       ref={rootRef}
       data-shorts-post-id={post.id}
-      className="relative flex min-h-[calc(var(--cc-viewport-height)-var(--cc-native-safe-top-offset)-var(--cc-native-shell-top-gap)-var(--mobile-dock-active-clearance)-1rem)] snap-start items-center justify-center px-3 py-3 sm:px-4 xl:h-full xl:min-h-0 xl:px-6"
+      className="relative flex h-[calc(var(--cc-viewport-height)-var(--cc-native-safe-top-offset)-var(--cc-native-shell-top-gap)-var(--mobile-dock-active-clearance)-1rem)] min-h-[calc(var(--cc-viewport-height)-var(--cc-native-safe-top-offset)-var(--cc-native-shell-top-gap)-var(--mobile-dock-active-clearance)-1rem)] snap-start [scroll-snap-stop:always] items-center justify-center px-3 py-3 sm:px-4 xl:h-full xl:min-h-0 xl:px-6"
     >
       <div className="absolute inset-0 overflow-hidden rounded-[2rem] bg-slate-950">
         {posterUrl || primaryImageUrl ? (
@@ -177,10 +248,26 @@ export default function ShortsFeedItem({ post, isActive, onVisible, onReact, onO
         <div className="flex min-h-0 items-center justify-center">
           <div className="relative h-full w-full overflow-hidden rounded-[2rem] border border-white/10 bg-black shadow-[0_35px_90px_rgba(0,0,0,0.45)]">
             {isVideo && playbackUrl ? (
-              <div className="group relative h-full w-full">
+              <div
+                className="group relative h-full w-full"
+                onPointerDown={handleMediaPointerDown}
+                onPointerUp={handleMediaPointerUp}
+                onPointerCancel={handleMediaPointerCancel}
+              >
+                {backdropUrl ? (
+                  <div className="pointer-events-none absolute inset-0 overflow-hidden">
+                    <img
+                      src={backdropUrl}
+                      alt=""
+                      className="h-full w-full scale-110 object-cover opacity-50 blur-3xl"
+                      aria-hidden="true"
+                    />
+                    <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,transparent_22%,rgba(2,6,23,0.3)_68%,rgba(2,6,23,0.72)_100%)]" />
+                  </div>
+                ) : null}
                 <video
                   ref={videoRef}
-                  className="h-full w-full bg-black object-contain"
+                  className="pointer-events-none absolute inset-0 z-[1] h-full w-full bg-transparent object-contain"
                   src={playbackUrl}
                   poster={posterUrl ?? undefined}
                   autoPlay
@@ -196,19 +283,12 @@ export default function ShortsFeedItem({ post, isActive, onVisible, onReact, onO
                     setIsMuted((current) => !current)
                   }}
                   onPointerDown={(event) => event.stopPropagation()}
+                  data-shorts-control="true"
                   className="absolute left-4 top-4 z-[3] inline-flex items-center gap-2 rounded-full border border-white/15 bg-black/45 px-3 py-2 text-xs font-semibold text-white backdrop-blur-md transition hover:bg-black/60"
                   aria-label={isMuted ? 'Unmute video' : 'Mute video'}
                 >
                   {isMuted ? <LuVolumeX className="h-4 w-4" /> : <LuVolume2 className="h-4 w-4" />}
                   <span>{isMuted ? 'Unmute' : 'Mute'}</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={handleMediaToggle}
-                  className="absolute inset-0 block h-full w-full text-left"
-                  aria-label={playbackPaused ? 'Resume video' : 'Pause video'}
-                >
-                  <span className="sr-only">{playbackPaused ? 'Resume video' : 'Pause video'}</span>
                 </button>
                 <div className="pointer-events-none absolute inset-x-0 bottom-0 h-36 bg-gradient-to-t from-black via-black/45 to-transparent" />
                 <div className={clsx('pointer-events-none absolute inset-0 flex items-center justify-center transition', playbackPaused ? 'opacity-100' : 'opacity-0 group-hover:opacity-100')}>
@@ -230,6 +310,7 @@ export default function ShortsFeedItem({ post, isActive, onVisible, onReact, onO
                         onInput={(event) => handleSeek(Number((event.target as HTMLInputElement).value))}
                         onClick={(event) => event.stopPropagation()}
                         onPointerDown={(event) => event.stopPropagation()}
+                        data-shorts-control="true"
                         className="cc-shorts-slider h-1.5 w-full cursor-pointer appearance-none rounded-full bg-white/15"
                         style={progressTrackStyle}
                         aria-label="Video progress"
@@ -241,41 +322,21 @@ export default function ShortsFeedItem({ post, isActive, onVisible, onReact, onO
               </div>
             ) : primaryImageUrl ? (
               <div className="relative h-full w-full bg-black">
-                <img src={primaryImageUrl} alt={post.title ?? 'Shorts media'} className="h-full w-full object-contain" />
+                <div className="pointer-events-none absolute inset-0 overflow-hidden">
+                  <img
+                    src={primaryImageUrl}
+                    alt=""
+                    className="h-full w-full scale-110 object-cover opacity-50 blur-3xl"
+                    aria-hidden="true"
+                  />
+                  <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,transparent_22%,rgba(2,6,23,0.3)_68%,rgba(2,6,23,0.72)_100%)]" />
+                </div>
+                <img src={primaryImageUrl} alt={post.title ?? 'Shorts media'} className="absolute inset-0 z-[1] h-full w-full object-contain" />
                 <div className="pointer-events-none absolute inset-x-0 bottom-0 h-36 bg-gradient-to-t from-black via-black/45 to-transparent" />
               </div>
             ) : (
               <div className="flex h-full items-center justify-center bg-slate-950 text-sm text-white/70">Media unavailable</div>
             )}
-
-            <div className="absolute inset-x-0 bottom-10 flex items-end justify-between gap-3 p-4 xl:hidden">
-              <div className="min-w-0 max-w-[70%] text-white drop-shadow-[0_8px_24px_rgba(0,0,0,0.35)]">
-                <Link href={profileHref} className="text-base font-semibold hover:underline">
-                  {authorLabel}
-                </Link>
-                <p className="mt-1 text-sm text-white/80">@{post.author.handle}</p>
-                {description ? <p className="mt-2 text-sm leading-6 text-white/90">{description}</p> : null}
-              </div>
-              <div className="flex flex-col items-center gap-3 text-white">
-                <button
-                  type="button"
-                  onClick={() => void onReact?.(post.id, viewerReaction === 'heart' ? null : 'heart')}
-                  className={clsx('flex h-12 w-12 items-center justify-center rounded-full border backdrop-blur-md transition', viewerReaction === 'heart' ? 'border-rose-400 bg-rose-500 text-white' : 'border-white/20 bg-black/30 text-white')}
-                >
-                  <LuHeart className="h-5 w-5" />
-                </button>
-                <Link href={postHref} className="flex h-12 w-12 items-center justify-center rounded-full border border-white/20 bg-black/30 text-white backdrop-blur-md">
-                  <LuMessageCircle className="h-5 w-5" />
-                </Link>
-                <button
-                  type="button"
-                  onClick={() => setShareOpen(true)}
-                  className="flex h-12 w-12 items-center justify-center rounded-full border border-white/20 bg-black/30 text-white backdrop-blur-md"
-                >
-                  <LuShare2 className="h-5 w-5" />
-                </button>
-              </div>
-            </div>
           </div>
         </div>
 
@@ -355,6 +416,8 @@ export default function ShortsFeedItem({ post, isActive, onVisible, onReact, onO
           </div>
         </aside>
       </div>
+
+      {mobileOverlay}
 
       {shareOpen ? <ShareSendModal target={shareTarget} onClose={() => setShareOpen(false)} /> : null}
     </section>
