@@ -21,6 +21,7 @@ export default function PodcastsPageClient() {
       rightRail={({ openComposer }) => <PodcastsRightRail onUploadPodcast={() => openComposer('post')} />}
       videoKindFilter="podcast"
       composerVideoKind="podcast"
+      composerPostPlaceholder="Add a description"
     />
   )
 }

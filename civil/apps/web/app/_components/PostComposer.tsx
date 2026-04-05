@@ -213,6 +213,7 @@ type PostComposerProps = {
   allowFamilyAudience?: boolean
   hideAudience?: boolean
   videoKind?: 'video' | 'podcast'
+  postPlaceholder?: string
 }
 
 const MAX_POST_LENGTH = 5000
@@ -429,6 +430,8 @@ type VideoItem = {
   progressLabel?: string | null
   error?: string | null
 }
+
+type CoverPhotoItem = PhotoItem
 
 type MentionSuggestion = {
   id: string
@@ -685,6 +688,7 @@ export default function PostComposer({
   allowFamilyAudience = false,
   hideAudience = false,
   videoKind = 'video',
+  postPlaceholder,
 }: PostComposerProps) {
   const containerRef = useRef<HTMLDivElement | null>(null)
   const composerChoices = useMemo(() => {
@@ -704,7 +708,9 @@ export default function PostComposer({
   const [causeGoalInput, setCauseGoalInput] = useState(DEFAULT_CAUSE_GOAL_DOLLARS)
   const [photos, setPhotos] = useState<PhotoItem[]>([])
   const [video, setVideo] = useState<VideoItem | null>(null)
+  const [coverPhoto, setCoverPhoto] = useState<CoverPhotoItem | null>(null)
   const fileInputRef = useRef<HTMLInputElement | null>(null)
+  const coverPhotoInputRef = useRef<HTMLInputElement | null>(null)
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [composerLinkPreview, setComposerLinkPreview] = useState<{ sourceUrl: string; preview: LinkPreviewRecord | null } | null>(null)
@@ -767,6 +773,10 @@ export default function PostComposer({
     [photos],
   )
   const readyVideo = useMemo(() => (video?.status === 'ready' && video.assetId ? video : null), [video])
+  const readyCoverPhotoUrl = useMemo(() => {
+    if (!coverPhoto || coverPhoto.status !== 'ready' || !coverPhoto.mediaUrl) return null
+    return coverPhoto.mediaUrl
+  }, [coverPhoto])
   const hasPhotoUploadsInFlight = useMemo(
     () => photos.some((photo) => photo.status === 'uploading' || photo.status === 'processing'),
     [photos],
@@ -776,6 +786,10 @@ export default function PostComposer({
   const videoReady = !video || video.status === 'ready'
   const hasVideoUploadError = video?.status === 'error'
   const hasVideoUploadInFlight = video?.status === 'uploading' || video?.status === 'processing'
+  const hasCoverPhotoUploadInFlight = coverPhoto?.status === 'uploading' || coverPhoto?.status === 'processing'
+  const hasCoverPhotoUploadError = coverPhoto?.status === 'error'
+  const coverPhotoReady = !coverPhoto || coverPhoto.status === 'ready'
+  const resolvedPostPlaceholder = postPlaceholder ?? 'Share something'
 
   const selectedOrganizationOption = useMemo(() => {
     if (businessTarget?.businessId) return null
@@ -1062,143 +1076,138 @@ export default function PostComposer({
     }
   }, [composerLinkPreview?.sourceUrl, firstComposerUrl])
 
-  const startPhotoUpload = useCallback(async (id: string, file: File) => {
-    setPhotos((prev) => prev.map((p) => (p.id === id ? { ...p, status: 'uploading', error: null } : p)))
+  const uploadImageAsset = useCallback(async (file: File) => {
     const token = typeof window !== 'undefined' ? localStorage.getItem('token') : null
     if (!token) {
       redirectToAuthModal('login')
-      setPhotos((prev) =>
-        prev.map((p) => (p.id === id ? { ...p, status: 'error', error: 'Sign in to upload a photo.' } : p)),
-      )
-      return
+      throw new Error('Sign in to upload a photo.')
     }
 
-    try {
-      const initRes = await fetch(buildApiUrl('/media/uploads'), {
-        method: 'POST',
-        headers: {
-          'content-type': 'application/json',
-          authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify({
-          category: 'post_image',
-          mime: file.type || 'application/octet-stream',
-          byteSize: file.size,
-          filename: file.name,
-        }),
-      })
+    const initRes = await fetch(buildApiUrl('/media/uploads'), {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({
+        category: 'post_image',
+        mime: file.type || 'application/octet-stream',
+        byteSize: file.size,
+        filename: file.name,
+      }),
+    })
 
-      if (!initRes.ok) {
-        const payload = await initRes.json().catch(() => ({}))
-        const reason = typeof payload?.error === 'string' ? payload.error : 'upload_init_failed'
-        throw new Error(reason)
+    if (!initRes.ok) {
+      const payload = await initRes.json().catch(() => ({}))
+      const reason = typeof payload?.error === 'string' ? payload.error : 'upload_init_failed'
+      throw new Error(reason)
+    }
+
+    const initPayload = await initRes.json()
+    const assetId: string = initPayload.assetId
+    const upload: { url?: string; method?: string; headers?: Record<string, string> } = initPayload.upload || {}
+    const proxyPath: string | null = typeof initPayload?.proxyPath === 'string' ? initPayload.proxyPath : null
+
+    const tryDirect = async () => {
+      if (!upload.url) return false
+
+      if (typeof window !== 'undefined' && window.location.protocol === 'https:' && upload.url.startsWith('http:')) {
+        console.warn('Skipping direct upload due to protocol mismatch (Mixed Content)')
+        return false
       }
 
-      const initPayload = await initRes.json()
-      const assetId: string = initPayload.assetId
-      const upload: { url?: string; method?: string; headers?: Record<string, string> } = initPayload.upload || {}
-      const proxyPath: string | null = typeof initPayload?.proxyPath === 'string' ? initPayload.proxyPath : null
+      const res = await fetch(upload.url, {
+        method: upload.method || 'PUT',
+        headers: upload.headers,
+        body: file,
+      })
+      return res.ok
+    }
 
-      const tryDirect = async () => {
-        if (!upload.url) return false
+    const tryProxy = async () => {
+      if (!proxyPath) return false
+      const res = await fetch(buildApiUrl(proxyPath), {
+        method: 'PUT',
+        headers: {
+          authorization: `Bearer ${token}`,
+          'content-type': file.type || 'application/octet-stream',
+          'x-upload-byte-size': String(file.size),
+        },
+        body: file,
+      })
+      return res.ok
+    }
 
-        // Avoid Mixed Content errors
-        if (typeof window !== 'undefined' && window.location.protocol === 'https:' && upload.url.startsWith('http:')) {
-          console.warn('Skipping direct upload due to protocol mismatch (Mixed Content)')
+    const directOk = upload.url
+      ? await tryDirect().catch((e) => {
+          console.warn('Direct upload failed', e)
           return false
-        }
-
-        const res = await fetch(upload.url, {
-          method: upload.method || 'PUT',
-          headers: upload.headers,
-          body: file,
         })
-        return res.ok
-      }
+      : false
 
-      const tryProxy = async () => {
-        if (!proxyPath) return false
-        const res = await fetch(buildApiUrl(proxyPath), {
-          method: 'PUT',
-          headers: {
-            authorization: `Bearer ${token}`,
-            'content-type': file.type || 'application/octet-stream',
-            'x-upload-byte-size': String(file.size),
-          },
-          body: file,
+    const proxyOk = directOk
+      ? true
+      : await tryProxy().catch((e) => {
+          console.warn('Proxy upload failed', e)
+          return false
         })
-        return res.ok
-      }
 
-      console.log('Starting upload for', id, 'direct:', !!upload.url, 'proxy:', !!proxyPath)
-      const directOk = upload.url
-        ? await tryDirect().catch((e) => {
-            console.warn('Direct upload failed', e)
-            return false
-          })
-        : false
+    if (!directOk && !proxyOk) {
+      throw new Error('upload_failed')
+    }
 
-      if (directOk) console.log('Direct upload succeeded')
-      else console.log('Direct upload skipped or failed, trying proxy')
+    const completeRes = await fetch(buildApiUrl('/media/uploads/complete'), {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        authorization: `Bearer ${token}`,
+      },
+      body: JSON.stringify({ assetId }),
+    })
 
-      const proxyOk = directOk
-        ? true
-        : await tryProxy().catch((e) => {
-            console.warn('Proxy upload failed', e)
-            return false
-          })
+    if (!completeRes.ok) {
+      throw new Error('processing_not_scheduled')
+    }
 
-      if (!directOk && !proxyOk) {
-        throw new Error('upload_failed')
-      }
-
-      const completeRes = await fetch(buildApiUrl('/media/uploads/complete'), {
-        method: 'POST',
+    let lastError: unknown = null
+    for (let attempt = 0; attempt < 30; attempt += 1) {
+      const res = await fetch(buildApiUrl(`/media/assets/${assetId}`), {
         headers: {
-          'content-type': 'application/json',
           authorization: `Bearer ${token}`,
         },
-        body: JSON.stringify({ assetId }),
+      }).catch((err) => {
+        lastError = err
+        return null
       })
 
-      if (!completeRes.ok) {
-        throw new Error('processing_not_scheduled')
-      }
-
-      setPhotos((prev) => prev.map((p) => (p.id === id ? { ...p, assetId, status: 'processing' } : p)))
-
-      let lastError: unknown = null
-      for (let attempt = 0; attempt < 30; attempt += 1) {
-        const res = await fetch(buildApiUrl(`/media/assets/${assetId}`), {
-          headers: {
-            authorization: `Bearer ${token}`,
-          },
-        }).catch((err) => {
-          lastError = err
-          return null
-        })
-
-        if (res && res.ok) {
-          const payload = await res.json().catch(() => ({}))
-          const asset = payload?.asset
-          if (asset?.status === 'ready') {
-            const variantUrl = pickPhotoVariantUrl(asset.variants)
-            if (!variantUrl) {
-              throw new Error('variant_missing')
-            }
-            setPhotos((prev) =>
-              prev.map((p) => (p.id === id ? { ...p, mediaUrl: variantUrl, status: 'ready' } : p)),
-            )
-            return
+      if (res && res.ok) {
+        const payload = await res.json().catch(() => ({}))
+        const asset = payload?.asset
+        if (asset?.status === 'ready') {
+          const variantUrl = pickPhotoVariantUrl(asset.variants)
+          if (!variantUrl) {
+            throw new Error('variant_missing')
           }
-          if (asset?.status === 'failed') {
-            throw new Error(asset.failureReason ?? 'processing_failed')
-          }
+          return { assetId, mediaUrl: variantUrl }
         }
-        await wait(2000)
+        if (asset?.status === 'failed') {
+          throw new Error(asset.failureReason ?? 'processing_failed')
+        }
       }
+      await wait(2000)
+    }
 
-      throw lastError ?? new Error('processing_timeout')
+    throw lastError ?? new Error('processing_timeout')
+  }, [])
+
+  const startPhotoUpload = useCallback(async (id: string, file: File) => {
+    setPhotos((prev) => prev.map((p) => (p.id === id ? { ...p, status: 'uploading', error: null } : p)))
+
+    try {
+      const uploaded = await uploadImageAsset(file)
+      setPhotos((prev) =>
+        prev.map((p) => (p.id === id ? { ...p, assetId: uploaded.assetId, mediaUrl: uploaded.mediaUrl, status: 'ready' } : p)),
+      )
     } catch (err) {
       console.error('Photo upload failed', err)
       setPhotos((prev) =>
@@ -1207,7 +1216,29 @@ export default function PostComposer({
         ),
       )
     }
-  }, [])
+  }, [uploadImageAsset])
+
+  const startCoverPhotoUpload = useCallback(async (id: string, file: File) => {
+    setCoverPhoto((current) =>
+      current && current.id === id ? { ...current, status: 'uploading', error: null } : current,
+    )
+
+    try {
+      const uploaded = await uploadImageAsset(file)
+      setCoverPhoto((current) =>
+        current && current.id === id
+          ? { ...current, assetId: uploaded.assetId, mediaUrl: uploaded.mediaUrl, status: 'ready', error: null }
+          : current,
+      )
+    } catch (err) {
+      console.error('Cover photo upload failed', err)
+      setCoverPhoto((current) =>
+        current && current.id === id
+          ? { ...current, status: 'error', error: err instanceof Error ? err.message : 'Upload failed' }
+          : current,
+      )
+    }
+  }, [uploadImageAsset])
 
   const startVideoUpload = useCallback(async (nextVideo: VideoItem, file: File) => {
     const uploadLabel = nextVideo.sourceType === 'audio' ? 'Uploading Audio' : 'Uploading Video'
@@ -1414,12 +1445,13 @@ export default function PostComposer({
         normalizedPollOptions.length === uniqueOptionCount &&
         photosReady &&
         videoReady &&
+        coverPhotoReady &&
         !submitting
       )
     }
     if (postType === 'post') {
       const trimmed = draft.trim()
-      return (trimmed.length > 0 || readyPhotoUrls.length > 0 || Boolean(readyVideo)) && trimmed.length <= MAX_POST_LENGTH && photosReady && videoReady && !submitting
+      return (trimmed.length > 0 || readyPhotoUrls.length > 0 || Boolean(readyVideo)) && trimmed.length <= MAX_POST_LENGTH && photosReady && videoReady && coverPhotoReady && !submitting
     }
     if (postType === 'cause') {
       if (video) return false
@@ -1427,14 +1459,14 @@ export default function PostComposer({
       const titleOk = articleTitle.trim().length >= MIN_ARTICLE_TITLE_LENGTH
       const bodyOk = trimmed.length >= MIN_CAUSE_BODY_LENGTH && trimmed.length <= MAX_POST_LENGTH
       const goalOk = causeGoalAmountCents >= CAUSE_MINIMUM_GOAL_CENTS && causeGoalAmountCents <= CAUSE_MAXIMUM_GOAL_CENTS
-      return titleOk && bodyOk && goalOk && photosReady && videoReady && !submitting
+      return titleOk && bodyOk && goalOk && photosReady && videoReady && coverPhotoReady && !submitting
     }
 
     if (video) return false
     const titleOk = articleTitle.trim().length >= MIN_ARTICLE_TITLE_LENGTH
     const bodyOk = articleBodyPlain.length >= MIN_ARTICLE_BODY_LENGTH
-    return titleOk && bodyOk && photosReady && videoReady && !submitting
-  }, [articleBodyPlain, articleTitle, causeGoalAmountCents, draft, normalizedPollOptions, photosReady, postType, readyPhotoUrls.length, readyVideo, submitting, video, videoReady])
+    return titleOk && bodyOk && photosReady && videoReady && coverPhotoReady && !submitting
+  }, [articleBodyPlain, articleTitle, causeGoalAmountCents, coverPhotoReady, draft, normalizedPollOptions, photosReady, postType, readyPhotoUrls.length, readyVideo, submitting, video, videoReady])
 
   const resetComposer = useCallback(() => {
     setDraft('')
@@ -1457,11 +1489,15 @@ export default function PostComposer({
     setPollQuestionScrollTop(0)
     photos.forEach((p) => URL.revokeObjectURL(p.previewUrl))
     setPhotos([])
+    if (coverPhoto) {
+      URL.revokeObjectURL(coverPhoto.previewUrl)
+    }
+    setCoverPhoto(null)
     if (video) {
       URL.revokeObjectURL(video.previewUrl)
     }
     setVideo(null)
-  }, [businessTarget, communityTarget, composerChoices, defaultAudience, defaultPostType, photos, selectableCommunityOptions, video])
+  }, [businessTarget, communityTarget, composerChoices, coverPhoto, defaultAudience, defaultPostType, photos, selectableCommunityOptions, video])
 
   const submitPost = useCallback(async () => {
     const token = typeof window !== 'undefined' ? localStorage.getItem('token') : null
@@ -1514,6 +1550,9 @@ export default function PostComposer({
       if (readyVideo?.assetId) {
         payload.videoAssetId = readyVideo.assetId
         payload.videoKind = videoKind
+        if (readyCoverPhotoUrl) {
+          payload.videoThumbnailUrl = readyCoverPhotoUrl
+        }
       }
 
       const targetCommunity = activeCommunity
@@ -1576,7 +1615,57 @@ export default function PostComposer({
     } finally {
       setSubmitting(false)
     }
-  }, [activeBusinessTarget, activeCommunity, articleBody, articleTitle, audienceSelection, canSubmit, causeGoalAmountCents, communityTarget, draft, normalizedPollOptions, onPostCreated, pollResultsVisibility, postType, readyPhotoUrls, readyVideo, resetComposer, showBusinessAuthor, submitting, videoKind, visibility])
+  }, [activeBusinessTarget, activeCommunity, articleBody, articleTitle, audienceSelection, canSubmit, causeGoalAmountCents, communityTarget, draft, normalizedPollOptions, onPostCreated, pollResultsVisibility, postType, readyCoverPhotoUrl, readyPhotoUrls, readyVideo, resetComposer, showBusinessAuthor, submitting, videoKind, visibility])
+
+  const handleCoverPhotoFile = useCallback(
+    async (event: ChangeEvent<HTMLInputElement>) => {
+      const file = event.target.files?.[0]
+      event.target.value = ''
+      if (!file) return
+
+      if (!video && !readyVideo) {
+        pushToast('Upload a video or podcast file before adding a cover photo.', 'error')
+        return
+      }
+
+      if (!ACCEPTED_IMAGE_TYPE_LIST.includes(file.type)) {
+        pushToast(`Skipped ${file.name}: Invalid file type.`, 'error')
+        return
+      }
+
+      if (file.size > PHOTO_MAX_BYTES) {
+        pushToast(`Skipped ${file.name}: File too large (max 25MB).`, 'error')
+        return
+      }
+
+      const dims = await readImageDimensions(file)
+      if (!dims) {
+        pushToast(`Skipped ${file.name}: Could not read image.`, 'error')
+        return
+      }
+
+      const megaPixels = (dims.width * dims.height) / 1_000_000
+      if (dims.width > MAX_IMAGE_DIMENSION || dims.height > MAX_IMAGE_DIMENSION || megaPixels > MAX_IMAGE_MEGA_PIXELS) {
+        pushToast(`Skipped ${file.name}: Image resolution too high.`, 'error')
+        return
+      }
+
+      const nextCover: CoverPhotoItem = {
+        id: Math.random().toString(36).slice(2),
+        file,
+        previewUrl: URL.createObjectURL(file),
+        status: 'idle',
+      }
+
+      setCoverPhoto((current) => {
+        if (current) {
+          URL.revokeObjectURL(current.previewUrl)
+        }
+        return nextCover
+      })
+    },
+    [readyVideo, video],
+  )
 
   const composerAuthorName = useMemo(() => {
     if (!me) return 'You'
@@ -1722,21 +1811,41 @@ export default function PostComposer({
     }
   }, [startVideoUpload, video])
 
+  useEffect(() => {
+    if (coverPhoto?.status === 'idle' && coverPhoto.file) {
+      void startCoverPhotoUpload(coverPhoto.id, coverPhoto.file)
+    }
+  }, [coverPhoto, startCoverPhotoUpload])
+
+  useEffect(() => {
+    if (!video && coverPhoto) {
+      URL.revokeObjectURL(coverPhoto.previewUrl)
+      setCoverPhoto(null)
+    }
+  }, [coverPhoto, video])
+
   // Keep track of photos for cleanup on unmount
   const photosRef = useRef(photos)
   const videoRef = useRef<VideoItem | null>(video)
+  const coverPhotoRef = useRef<CoverPhotoItem | null>(coverPhoto)
   useEffect(() => {
     photosRef.current = photos
   }, [photos])
   useEffect(() => {
     videoRef.current = video
   }, [video])
+  useEffect(() => {
+    coverPhotoRef.current = coverPhoto
+  }, [coverPhoto])
 
   useEffect(() => {
     return () => {
       photosRef.current.forEach((p) => URL.revokeObjectURL(p.previewUrl))
       if (videoRef.current) {
         URL.revokeObjectURL(videoRef.current.previewUrl)
+      }
+      if (coverPhotoRef.current) {
+        URL.revokeObjectURL(coverPhotoRef.current.previewUrl)
       }
     }
   }, [])
@@ -1995,7 +2104,8 @@ export default function PostComposer({
             </div>
           </div>
         ) : null}
-        <div className="flex flex-col gap-2">
+        {composerChoices.length > 1 ? (
+          <div className="flex flex-col gap-2">
           <div
             className={clsx(
               'flex w-full max-w-full items-center gap-1 rounded-full bg-slate-100 p-1 text-sm font-semibold text-slate-500',
@@ -2033,7 +2143,8 @@ export default function PostComposer({
               )
             })}
           </div>
-        </div>
+          </div>
+        ) : null}
       </header>
 
       <div className="space-y-4">
@@ -2055,7 +2166,7 @@ export default function PostComposer({
                   ref={draftTextareaRef}
                   className="relative z-10 block w-full resize-y border-0 bg-transparent px-4 py-3 text-base leading-6 text-transparent caret-slate-800 placeholder:text-slate-400 focus:outline-none focus:ring-0"
                   style={{ caretColor: '#1e293b' }}
-                  placeholder="Share something"
+                  placeholder={resolvedPostPlaceholder}
                   rows={4}
                   value={draft}
                   onChange={(event) => {
@@ -2473,7 +2584,74 @@ export default function PostComposer({
           onChange={handleMediaFile}
         />
 
-        {hasPhotoUploadErrors || hasVideoUploadError ? <p className="text-xs text-red-600">Some media failed to upload.</p> : null}
+        <input
+          ref={coverPhotoInputRef}
+          type="file"
+          accept={ACCEPTED_IMAGE_TYPES}
+          className="hidden"
+          onChange={handleCoverPhotoFile}
+        />
+
+        {video ? (
+          <div className="space-y-3 rounded-2xl border border-slate-200 bg-slate-50/80 p-4">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <p className="text-sm font-semibold text-slate-800">Cover photo</p>
+                <p className="mt-1 text-xs text-slate-500">
+                  Upload a cover photo for this {isPodcastComposer ? 'podcast' : 'video'}. If you skip it, the first frame will be used when available.
+                </p>
+              </div>
+              <button
+                type="button"
+                className="inline-flex items-center gap-2 rounded-full border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 transition hover:border-slate-300 hover:text-slate-900 disabled:cursor-not-allowed disabled:opacity-60"
+                onClick={() => coverPhotoInputRef.current?.click()}
+                disabled={submitting}
+              >
+                <LuImagePlus className="h-4 w-4" />
+                {coverPhoto ? 'Change Cover Photo' : 'Upload Cover Photo'}
+              </button>
+            </div>
+
+            {coverPhoto ? (
+              <div className="relative aspect-[16/9] overflow-hidden rounded-xl border border-slate-200 bg-slate-100">
+                <img
+                  src={coverPhoto.mediaUrl ?? coverPhoto.previewUrl}
+                  alt="Cover upload"
+                  className="h-full w-full object-cover"
+                />
+                {coverPhoto.status === 'uploading' || coverPhoto.status === 'processing' ? (
+                  <div className="absolute inset-0 flex items-center justify-center bg-black/50 text-xs font-semibold text-white">
+                    {coverPhoto.status === 'uploading' ? 'Uploading cover…' : 'Processing cover…'}
+                  </div>
+                ) : null}
+                {coverPhoto.status === 'error' ? (
+                  <div className="absolute inset-0 flex items-center justify-center bg-red-500/80 p-2 text-center text-xs font-semibold text-white">
+                    {coverPhoto.error ?? 'Error'}
+                  </div>
+                ) : null}
+                <button
+                  type="button"
+                  className="absolute right-2 top-2 rounded-full bg-black/50 p-1 text-white hover:bg-black/70"
+                  onClick={() => {
+                    URL.revokeObjectURL(coverPhoto.previewUrl)
+                    setCoverPhoto(null)
+                  }}
+                >
+                  <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    viewBox="0 0 20 20"
+                    fill="currentColor"
+                    className="h-4 w-4"
+                  >
+                    <path d="M6.28 5.22a.75.75 0 00-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 101.06 1.06L10 11.06l3.72 3.72a.75.75 0 101.06-1.06L11.06 10l3.72-3.72a.75.75 0 00-1.06-1.06L10 8.94 6.28 5.22z" />
+                  </svg>
+                </button>
+              </div>
+            ) : null}
+          </div>
+        ) : null}
+
+        {hasPhotoUploadErrors || hasVideoUploadError || hasCoverPhotoUploadError ? <p className="text-xs text-red-600">Some media failed to upload.</p> : null}
 
         <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-slate-200 bg-slate-50/70 px-3 py-2">
           <div className="flex flex-wrap items-center gap-2">
@@ -2485,9 +2663,9 @@ export default function PostComposer({
             >
               <LuImagePlus className="h-4 w-4" />
               <LuVideo className="h-4 w-4" />
-              {video || photos.length > 0 ? 'Add Media' : 'Add Media'}
+              Add Media
             </button>
-            {hasPhotoUploadsInFlight || hasVideoUploadInFlight ? <span className="text-xs text-slate-500">Finishing uploads…</span> : null}
+            {hasPhotoUploadsInFlight || hasVideoUploadInFlight || hasCoverPhotoUploadInFlight ? <span className="text-xs text-slate-500">Finishing uploads…</span> : null}
           </div>
 
           <button

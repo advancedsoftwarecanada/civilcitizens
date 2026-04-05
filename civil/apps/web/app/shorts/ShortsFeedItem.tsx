@@ -18,6 +18,7 @@ type ShortsFeedItemProps = {
   onVisible?: (postId: string) => void
   onReact?: (postId: string, reaction: ReactionType | null) => Promise<void> | void
   onOpenComments?: (postId: string) => void
+  onEnded?: (postId: string) => void
   commentsDrawerOpen?: boolean
 }
 
@@ -36,7 +37,7 @@ function formatVideoTime(totalSeconds: number) {
   return `${minutes}:${seconds.toString().padStart(2, '0')}`
 }
 
-export default function ShortsFeedItem({ post, isActive, onVisible, onReact, onOpenComments, commentsDrawerOpen = false }: ShortsFeedItemProps) {
+export default function ShortsFeedItem({ post, isActive, onVisible, onReact, onOpenComments, onEnded, commentsDrawerOpen = false }: ShortsFeedItemProps) {
   const rootRef = useRef<HTMLElement | null>(null)
   const videoRef = useRef<HTMLVideoElement | null>(null)
   const mediaPressRef = useRef<{ x: number; y: number; time: number } | null>(null)
@@ -131,19 +132,26 @@ export default function ShortsFeedItem({ post, isActive, onVisible, onReact, onO
       setCurrentTimeSeconds(Number.isFinite(node.currentTime) ? node.currentTime : 0)
     }
 
+    const handleEnded = () => {
+      syncTiming()
+      if (isActive) {
+        onEnded?.(post.id)
+      }
+    }
+
     syncTiming()
     node.addEventListener('loadedmetadata', syncTiming)
     node.addEventListener('durationchange', syncTiming)
     node.addEventListener('timeupdate', syncTiming)
-    node.addEventListener('ended', syncTiming)
+    node.addEventListener('ended', handleEnded)
 
     return () => {
       node.removeEventListener('loadedmetadata', syncTiming)
       node.removeEventListener('durationchange', syncTiming)
       node.removeEventListener('timeupdate', syncTiming)
-      node.removeEventListener('ended', syncTiming)
+      node.removeEventListener('ended', handleEnded)
     }
-  }, [isVideo])
+  }, [isActive, isVideo, onEnded, post.id])
 
   const handleMediaToggle = () => {
     if (!isVideo) return
@@ -272,7 +280,6 @@ export default function ShortsFeedItem({ post, isActive, onVisible, onReact, onO
                   poster={posterUrl ?? undefined}
                   autoPlay
                   muted={isMuted}
-                  loop
                   playsInline
                   preload="metadata"
                 />

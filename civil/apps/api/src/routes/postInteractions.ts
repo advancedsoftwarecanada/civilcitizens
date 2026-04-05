@@ -270,7 +270,22 @@ export function registerPostInteractionRoutes(app: FastifyInstance, deps: PostIn
         }
       }
 
-      const { body: rawBody, mediaUrl, images, videoAssetId, videoKind = 'video', hashtags, type, title, jurisdiction, sharedPostId, visibility, audience, poll: pollInput } = parse.data
+      const {
+        body: rawBody,
+        mediaUrl,
+        images,
+        videoAssetId,
+        videoKind = 'video',
+        videoThumbnailUrl,
+        hashtags,
+        type,
+        title,
+        jurisdiction,
+        sharedPostId,
+        visibility,
+        audience,
+        poll: pollInput,
+      } = parse.data
       const showBusinessAuthor = Boolean(business && parse.data.showBusinessAuthor)
 
       const isArticle = type === 'article'
@@ -343,6 +358,9 @@ export function registerPostInteractionRoutes(app: FastifyInstance, deps: PostIn
         readyVideoPayload = buildReadyPostVideoPayload(videoAsset, videoKind)
         if (!readyVideoPayload) {
           return reply.code(409).send({ error: 'video_asset_not_ready' })
+        }
+        if (videoThumbnailUrl) {
+          readyVideoPayload.thumbnailUrl = videoThumbnailUrl
         }
       }
 

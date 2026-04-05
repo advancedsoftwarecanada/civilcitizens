@@ -81,6 +81,7 @@ export const CreatePostInput = z
     images: z.array(z.string().url()).optional(),
     videoAssetId: z.string().uuid().or(z.string().cuid()).optional(),
     videoKind: PostVideoKindEnum.optional(),
+    videoThumbnailUrl: z.string().url().optional(),
     hashtags: z.array(z.string().regex(/^#[A-Za-z0-9_-]{1,50}$/)).max(10).optional(),
     communityProvince: z.string().trim().min(2).max(32).optional(),
     communitySlug: z.string().trim().min(1).max(160).optional(),
@@ -127,6 +128,14 @@ export const CreatePostInput = z
         code: z.ZodIssueCode.custom,
         message: 'Video kind requires a video upload',
         path: ['videoKind'],
+      })
+    }
+
+    if (data.videoThumbnailUrl && !data.videoAssetId) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'Video thumbnail requires a video upload',
+        path: ['videoThumbnailUrl'],
       })
     }
 
