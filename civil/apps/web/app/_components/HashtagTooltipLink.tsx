@@ -16,12 +16,14 @@ type TopicSummaryPayload = {
   slug: string
   href: string
   following: boolean
+  followingCount: number
   postsLast30Days: number
   postsTotal: number
 }
 
-function formatPostLabel(value: number, suffix: string) {
-  return `${value.toLocaleString()} Posts ${suffix}`
+function formatCountLabel(value: number, noun: string, suffix?: string) {
+  const base = `${value.toLocaleString()} ${noun}`
+  return suffix ? `${base} ${suffix}` : base
 }
 
 export default function HashtagTooltipLink({ slug, text, href, className }: HashtagTooltipLinkProps) {
@@ -96,21 +98,39 @@ export default function HashtagTooltipLink({ slug, text, href, className }: Hash
         <div className="absolute left-0 top-full z-30 mt-2 w-[18rem] rounded-3xl border border-slate-200 bg-white p-4 text-left shadow-[0_24px_60px_rgba(15,23,42,0.16)]">
           <div className="space-y-3">
             <div>
-              <Link href={href} className="text-sm font-semibold text-slate-900 hover:text-[var(--cc-primary)]" onClick={() => setOpen(false)}>
+              <Link href={href} className="text-sm font-semibold text-[var(--cc-primary)] hover:text-[var(--cc-primary)]/85" onClick={() => setOpen(false)}>
                 {text}
               </Link>
             </div>
 
             <div>
-              <TopicFollowButton slug={slug} initialFollowing={following} size="sm" onChange={setFollowing} className="w-full" />
+              <TopicFollowButton
+                slug={slug}
+                initialFollowing={following}
+                size="sm"
+                onChange={(nextFollowing) => {
+                  setFollowing(nextFollowing)
+                  setSummary((current) =>
+                    current
+                      ? {
+                          ...current,
+                          following: nextFollowing,
+                          followingCount: Math.max(0, current.followingCount + (nextFollowing ? 1 : -1)),
+                        }
+                      : current,
+                  )
+                }}
+                className="w-full"
+              />
             </div>
 
             {loading ? (
               <p className="text-xs text-slate-500">Loading hashtag details…</p>
             ) : summary ? (
               <div className="space-y-1 text-xs text-slate-600">
-                <p>{formatPostLabel(summary.postsLast30Days, 'in the last 30 days')}</p>
-                <p>{formatPostLabel(summary.postsTotal, 'total')}</p>
+                <p>{formatCountLabel(summary.followingCount, 'Following')}</p>
+                <p>{formatCountLabel(summary.postsLast30Days, 'Posts', 'in the last 30 days')}</p>
+                <p>{formatCountLabel(summary.postsTotal, 'Posts', 'total')}</p>
               </div>
             ) : (
               <p className="text-xs text-slate-500">Unable to load hashtag details.</p>
