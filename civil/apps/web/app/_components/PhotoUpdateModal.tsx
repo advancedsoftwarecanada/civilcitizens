@@ -22,11 +22,13 @@ export default function PhotoUpdateModal({
   onPickFile,
   uploadStatus,
   uploadError,
+  showCaption = true,
   caption,
   onCaptionChange,
   primaryLabel,
   primaryDisabled,
   primaryLoading,
+  primaryLoadingLabel,
   onPrimary,
   onClose,
 }: {
@@ -48,11 +50,13 @@ export default function PhotoUpdateModal({
   onPickFile: () => void
   uploadStatus?: 'idle' | 'uploading' | 'processing' | 'ready' | 'error'
   uploadError?: string | null
+  showCaption?: boolean
   caption: string
   onCaptionChange: (nextCaption: string) => void
   primaryLabel: string
   primaryDisabled: boolean
   primaryLoading: boolean
+  primaryLoadingLabel?: string
   onPrimary: () => void
   onClose: () => void
 }) {
@@ -140,20 +144,22 @@ export default function PhotoUpdateModal({
             {uploadError ? <span className="text-red-600">{uploadError}</span> : null}
           </div>
 
-          <div className="space-y-2">
-            <label className="block text-sm font-medium text-gray-700" htmlFor="photo-description">
-              Description
-            </label>
-            <textarea
-              id="photo-description"
-              value={caption}
-              onChange={(event) => onCaptionChange(event.target.value)}
-              rows={3}
-              className="w-full rounded-lg border px-3 py-2 text-sm focus:border-[var(--cc-primary)] focus:outline-none"
-              placeholder="Description"
-              disabled={uploadStatus === 'uploading' || uploadStatus === 'processing' || primaryLoading}
-            />
-          </div>
+          {showCaption ? (
+            <div className="space-y-2">
+              <label className="block text-sm font-medium text-gray-700" htmlFor="photo-description">
+                Description
+              </label>
+              <textarea
+                id="photo-description"
+                value={caption}
+                onChange={(event) => onCaptionChange(event.target.value)}
+                rows={3}
+                className="w-full rounded-lg border px-3 py-2 text-sm focus:border-[var(--cc-primary)] focus:outline-none"
+                placeholder="Description"
+                disabled={uploadStatus === 'uploading' || uploadStatus === 'processing' || primaryLoading}
+              />
+            </div>
+          ) : null}
         </div>
 
         <div className="mt-6 flex shrink-0 justify-end gap-3">
@@ -166,7 +172,7 @@ export default function PhotoUpdateModal({
             disabled={primaryLoading || primaryDisabled}
             className="rounded bg-[var(--cc-primary)] px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-[var(--cc-primary-700)] disabled:cursor-not-allowed disabled:bg-gray-400"
           >
-            {primaryLoading ? 'Posting…' : primaryLabel}
+            {primaryLoading ? (primaryLoadingLabel || 'Posting…') : primaryLabel}
           </button>
         </div>
       </div>

@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import Link from 'next/link'
+import { normalizeHashtagSlug, resolveHashtagTarget } from '@civil/shared'
 import {
   HiOutlineBuildingOffice2,
   HiOutlineCalendarDays,
@@ -10,10 +11,12 @@ import {
   HiOutlineMapPin,
   HiOutlinePlayCircle,
   HiOutlineShoppingBag,
+  HiOutlineRadio,
 } from 'react-icons/hi2'
 import {
   type CommunitySearchResult,
   type EventSearchResult,
+  type LiveSpaceSearchResult,
   type MarketSearchResult,
   type OrganizationSearchResult,
   type PostSearchResult,
@@ -62,6 +65,7 @@ const PEOPLE_LIMIT = 3
 const COMMUNITY_LIMIT = 3
 const ORGANIZATION_LIMIT = 2
 const EVENT_LIMIT = 2
+const LIVE_LIMIT = 2
 const MARKET_LIMIT = 2
 const POST_LIMIT = 2
 const VIDEO_LIMIT = 2
@@ -128,6 +132,17 @@ function CompactSection({ title, href, children, onResultSelect }: { title: stri
   )
 }
 
+function CompactStaticSection({ title, children }: { title: string; children: ReactNode }) {
+  return (
+    <section>
+      <div className="mb-2 flex items-center justify-between gap-2 px-1">
+        <p className="text-xs font-semibold uppercase tracking-[0.3em] text-slate-400">{title}</p>
+      </div>
+      {children}
+    </section>
+  )
+}
+
 function hasCoordinates(value: SearchAnchor | CanadianAddress | null | undefined): value is SearchAnchor {
   return value != null && Number.isFinite(value.latitude) && Number.isFinite(value.longitude)
 }
@@ -152,6 +167,7 @@ export function SearchResults({ query, open, onResultSelect, onLoadingStateChang
   const [communityResults, setCommunityResults] = useState<CommunitySearchResult[]>([])
   const [organizationResults, setOrganizationResults] = useState<OrganizationSearchResult[]>([])
   const [eventResults, setEventResults] = useState<EventSearchResult[]>([])
+  const [liveResults, setLiveResults] = useState<LiveSpaceSearchResult[]>([])
   const [marketResults, setMarketResults] = useState<MarketSearchResult[]>([])
   const [postResults, setPostResults] = useState<PostSearchResult[]>([])
   const [videoResults, setVideoResults] = useState<VideoSearchResult[]>([])
@@ -327,6 +343,7 @@ export function SearchResults({ query, open, onResultSelect, onLoadingStateChang
       setCommunityResults([])
       setOrganizationResults([])
       setEventResults([])
+      setLiveResults([])
       setMarketResults([])
       setPostResults([])
       setVideoResults([])
@@ -345,6 +362,7 @@ export function SearchResults({ query, open, onResultSelect, onLoadingStateChang
       setCommunityResults([])
       setOrganizationResults([])
       setEventResults([])
+      setLiveResults([])
       setMarketResults([])
       setPostResults([])
       setVideoResults([])
@@ -359,6 +377,7 @@ export function SearchResults({ query, open, onResultSelect, onLoadingStateChang
     setCommunityResults([])
     setOrganizationResults([])
     setEventResults([])
+    setLiveResults([])
     setMarketResults([])
     setPostResults([])
     setVideoResults([])
@@ -373,6 +392,7 @@ export function SearchResults({ query, open, onResultSelect, onLoadingStateChang
         params.set('communityLimit', String(COMMUNITY_LIMIT))
         params.set('organizationLimit', String(ORGANIZATION_LIMIT))
         params.set('eventLimit', String(EVENT_LIMIT))
+        params.set('liveLimit', String(LIVE_LIMIT))
         params.set('marketLimit', String(MARKET_LIMIT))
         params.set('postLimit', String(POST_LIMIT))
         params.set('videoLimit', String(VIDEO_LIMIT))
@@ -398,6 +418,7 @@ export function SearchResults({ query, open, onResultSelect, onLoadingStateChang
         setCommunityResults(Array.isArray(payload.communities) ? payload.communities : [])
         setOrganizationResults(Array.isArray(payload.organizations) ? payload.organizations : [])
         setEventResults(Array.isArray(payload.events) ? payload.events : [])
+        setLiveResults(Array.isArray(payload.lives) ? payload.lives : [])
         setMarketResults(Array.isArray(payload.market) ? payload.market : [])
         setPostResults(Array.isArray(payload.posts) ? payload.posts : [])
         setVideoResults(Array.isArray(payload.videos) ? payload.videos : [])
@@ -477,6 +498,7 @@ export function SearchResults({ query, open, onResultSelect, onLoadingStateChang
     communityResults.length > 0 ||
     organizationResults.length > 0 ||
     eventResults.length > 0 ||
+    liveResults.length > 0 ||
     marketResults.length > 0 ||
     postResults.length > 0 ||
     videoResults.length > 0 ||
@@ -491,6 +513,7 @@ export function SearchResults({ query, open, onResultSelect, onLoadingStateChang
       communities: `/search?q=${encodeURIComponent(trimmedQuery)}&type=communities`,
       organizations: `/search?q=${encodeURIComponent(trimmedQuery)}&type=organizations`,
       events: `/search?q=${encodeURIComponent(trimmedQuery)}&type=events`,
+      lives: `/search?q=${encodeURIComponent(trimmedQuery)}&type=lives`,
       market: `/search?q=${encodeURIComponent(trimmedQuery)}&type=market`,
       posts: `/search?q=${encodeURIComponent(trimmedQuery)}&type=posts`,
       videos: `/search?q=${encodeURIComponent(trimmedQuery)}&type=videos`,
@@ -498,6 +521,23 @@ export function SearchResults({ query, open, onResultSelect, onLoadingStateChang
     }),
     [trimmedQuery],
   )
+
+  const hashtagResult = useMemo(() => {
+    const slug = normalizeHashtagSlug(trimmedQuery)
+    if (!slug) return null
+
+    const shouldShowForPlainToken = !trimmedQuery.includes(' ') && !isUsableAddressQuery(trimmedQuery)
+    if (!trimmedQuery.startsWith('#') && !shouldShowForPlainToken) return null
+
+    const target = resolveHashtagTarget(slug)
+    return {
+      slug,
+      label: `#${slug}`,
+      target,
+      href: target === 'community' ? `/c/${encodeURIComponent(slug)}` : `/t/${encodeURIComponent(slug)}`,
+      subtitle: target === 'community' ? 'Community hashtag' : 'Topic hashtag',
+    }
+  }, [trimmedQuery])
 
   useEffect(() => {
     if (!anyLoading) {
@@ -610,6 +650,28 @@ export function SearchResults({ query, open, onResultSelect, onLoadingStateChang
         <div className="rounded-2xl border border-slate-100 bg-slate-50 px-4 py-3 text-sm text-slate-500">No Civil or map matches yet.</div>
       ) : (
         <div className="space-y-4">
+          {hashtagResult ? (
+            <CompactStaticSection title={hashtagResult.target === 'community' ? 'Community' : 'Topic'}>
+              <ul className="divide-y divide-slate-100">
+                <li>
+                  <Link
+                    href={hashtagResult.href}
+                    onClick={onResultSelect}
+                    className="flex items-start gap-3 rounded-2xl px-3 py-2.5 text-sm text-slate-600 transition hover:bg-slate-50"
+                  >
+                    <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-emerald-50 text-emerald-700">
+                      <span className="text-lg font-semibold">#</span>
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <span className="block truncate font-semibold text-slate-900">{hashtagResult.label}</span>
+                      <p className="truncate text-xs text-slate-500">{hashtagResult.subtitle}</p>
+                    </div>
+                  </Link>
+                </li>
+              </ul>
+            </CompactStaticSection>
+          ) : null}
+
           {visibleSavedAddressResults.length > 0 ? (
             <CompactSection title="My Addresses" href={sectionHref.savedAddresses} onResultSelect={onResultSelect}>
               <ul className="divide-y divide-slate-100">
@@ -790,6 +852,34 @@ export function SearchResults({ query, open, onResultSelect, onLoadingStateChang
                     </Link>
                   </li>
                 ))}
+              </ul>
+            </CompactSection>
+          ) : null}
+
+          {liveResults.length > 0 ? (
+            <CompactSection title="Live" href={sectionHref.lives} onResultSelect={onResultSelect}>
+              <ul className="divide-y divide-slate-100">
+                {liveResults.map((live) => {
+                  const hostLabel = live.host.name?.trim() || `@${live.host.handle}`
+                  return (
+                    <li key={live.id}>
+                      <Link href={live.href} onClick={onResultSelect} className="flex items-start gap-3 rounded-2xl px-3 py-2.5 text-sm text-slate-600 transition hover:bg-slate-50">
+                        {live.coverUrl ? (
+                          <img src={live.coverUrl} alt={live.title} className="h-10 w-10 shrink-0 rounded-xl object-cover" />
+                        ) : (
+                          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-emerald-50 text-emerald-700">
+                            <HiOutlineRadio className="h-5 w-5" />
+                          </div>
+                        )}
+                        <div className="min-w-0 flex-1">
+                          <span className="block truncate font-semibold text-slate-900">{live.title}</span>
+                          <p className="truncate text-xs text-slate-500">{hostLabel} • @{live.host.handle}</p>
+                          {live.description ? <p className="truncate text-xs text-slate-500">{live.description}</p> : null}
+                        </div>
+                      </Link>
+                    </li>
+                  )
+                })}
               </ul>
             </CompactSection>
           ) : null}

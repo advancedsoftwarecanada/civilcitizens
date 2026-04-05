@@ -1,5 +1,6 @@
 import type { Metadata } from 'next'
 import OrganizationMeetingRoomClient from '../../../../../../_components/OrganizationMeetingRoomClient'
+import DashboardShell from '../../../../../../../_components/DashboardShell'
 
 export const dynamic = 'force-dynamic'
 
@@ -18,11 +19,13 @@ type PageProps = {
 
 export default function OrganizationMeetingRoomPage({ params }: PageProps) {
   return (
-    <OrganizationMeetingRoomClient
-      province={params.province}
-      municipality={params.municipality}
-      organization={params.organization}
-      meetingId={params.meetingId}
-    />
+    <DashboardShell mainClassName="min-w-0" mainTopClassName="pt-4 md:pt-6">
+      <OrganizationMeetingRoomClient
+        province={params.province}
+        municipality={params.municipality}
+        organization={params.organization}
+        meetingId={params.meetingId}
+      />
+    </DashboardShell>
   )
 }

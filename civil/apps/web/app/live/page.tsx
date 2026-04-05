@@ -1,11 +1,11 @@
-import ComingSoon from '../_components/ComingSoon'
+import UserLivesDashboardClient from './_components/UserLivesDashboardClient'
+import DashboardShell from '../_components/DashboardShell'
+import LiveLandingRail from './_components/LiveLandingRail'
 
 export default function LivePage() {
   return (
-    <ComingSoon
-      activeNavKey="live"
-      title="Live is coming soon"
-      message="Live broadcasts are next in the media rollout. We will start with short uploads and grow from there."
-    />
+    <DashboardShell rightRail={<LiveLandingRail />} showMobileRightRail mainClassName="min-w-0 space-y-6" mainTopClassName="pt-4 md:pt-6">
+      <UserLivesDashboardClient />
+    </DashboardShell>
   )
 }

@@ -6,7 +6,6 @@ import clsx from 'clsx'
 import Sidebar from './Sidebar'
 import CivilAiLauncher from './CivilAiLauncher'
 import { useInviteViewStore } from '../_lib/inviteViewStore'
-import { isMeetingRoomPath } from '../_lib/meetingRoomRoute'
 import { useViewerStore } from '../_lib/viewerStore'
 
 const TOP_NAV_HIDDEN_PATHS = new Set(['/', '/login', '/register', '/forgot'])
@@ -28,7 +27,6 @@ export default function AppFrame({ children, modal }: AppFrameProps) {
   const hideForInviteGuest = isInviteRoute && inviteGuestMode !== false
 
   const hideForInstall = hasResolvedPathname && resolvedPathname.startsWith('/install/')
-  const hideForMeetingRoom = hasResolvedPathname && isMeetingRoomPath(resolvedPathname)
   const topNavHidden =
     Boolean(familyView) ||
     !hasResolvedPathname ||
@@ -37,18 +35,16 @@ export default function AppFrame({ children, modal }: AppFrameProps) {
     resolvedPathname.startsWith('/welcome') ||
     resolvedPathname.startsWith('/verify') ||
     hideForInstall ||
-    hideForInviteGuest ||
-    hideForMeetingRoom
+    hideForInviteGuest
   const sidebarHidden =
     !hasResolvedPathname ||
     SIDEBAR_HIDDEN_PATHS.has(resolvedPathname) ||
     resolvedPathname.startsWith('/welcome') ||
     resolvedPathname.startsWith('/verify') ||
     hideForInstall ||
-    hideForInviteGuest ||
-    hideForMeetingRoom
-  const showShellTopOffset = !topNavHidden && !hideForInstall && !hideForMeetingRoom
-  const showMobileDockClearance = !sidebarHidden && !hideForMeetingRoom
+    hideForInviteGuest
+  const showShellTopOffset = !topNavHidden && !hideForInstall
+  const showMobileDockClearance = !sidebarHidden
 
   return (
     <div
@@ -57,7 +53,7 @@ export default function AppFrame({ children, modal }: AppFrameProps) {
         'min-h-0',
         showShellTopOffset && 'pt-[calc(var(--cc-native-safe-top-offset)+var(--cc-native-shell-top-gap))]',
         showMobileDockClearance && 'pb-[var(--mobile-dock-active-clearance)] xl:pb-0',
-        !topNavHidden && !hideForMeetingRoom && 'md:pt-[var(--cc-top-nav-offset)]',
+        !topNavHidden && 'md:pt-[var(--cc-top-nav-offset)]',
       )}
     >
       {!sidebarHidden ? <Sidebar /> : null}

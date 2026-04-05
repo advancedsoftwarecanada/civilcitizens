@@ -23,6 +23,10 @@ const TopicFollowBody = z.object({
   slug: z.string().min(1).max(80),
 })
 
+const TopicSlugParams = z.object({
+  slug: z.string().min(1).max(80),
+})
+
 const TopicSuggestionsQuery = z.object({
   limit: z.coerce.number().int().min(1).max(20).optional(),
 })
@@ -406,6 +410,62 @@ async function formatTopicPostRows(args: {
 }
 
 export function registerTopicRoutes(app: FastifyInstance, deps: TopicRoutesDeps) {
+  app.get('/topics/:slug/summary', async (req: FastifyRequest, reply: FastifyReply) =>
+    deps.withSchemaGuard(req, reply, async () => {
+      const params = TopicSlugParams.safeParse(req.params)
+      if (!params.success) return reply.code(400).send({ error: 'invalid_params' })
+
+      const topicSlug = normalizeHashtagSlug(params.data.slug)
+      if (!topicSlug) return reply.code(400).send({ error: 'invalid_topic_slug' })
+
+      const userId = (req as any).user?.id as string | undefined
+      const now = new Date()
+      const last30Days = new Date(now)
+      last30Days.setDate(last30Days.getDate() - 30)
+
+      const baseWhere = {
+        visibility: 'public' as const,
+        moderationStatus: ModerationStatus.VISIBLE,
+        hashtags: {
+          some: {
+            tag: topicSlug,
+          },
+        },
+      }
+
+      const [postsTotal, postsLast30Days, follow] = await Promise.all([
+        prisma.post.count({ where: baseWhere }),
+        prisma.post.count({
+          where: {
+            ...baseWhere,
+            createdAt: {
+              gte: last30Days,
+            },
+          },
+        }),
+        userId
+          ? prisma.topicFollow.findUnique({
+              where: {
+                userId_topicSlug: {
+                  userId,
+                  topicSlug,
+                },
+              },
+              select: { topicSlug: true },
+            })
+          : Promise.resolve(null),
+      ])
+
+      return reply.send({
+        slug: topicSlug,
+        href: `/t/${encodeURIComponent(topicSlug)}`,
+        following: Boolean(follow),
+        postsLast30Days,
+        postsTotal,
+      })
+    }),
+  )
+
   app.get('/topics/follows', async (req: FastifyRequest, reply: FastifyReply) =>
     deps.withSchemaGuard(req, reply, async () => {
       const userId = (req as any).user?.id as string | undefined

@@ -10,6 +10,7 @@ import {
   HiOutlineMagnifyingGlass,
   HiOutlineMapPin,
   HiOutlinePlayCircle,
+  HiOutlineRadio,
   HiOutlineShoppingBag,
   HiOutlineXMark,
 } from 'react-icons/hi2'
@@ -20,6 +21,7 @@ import {
   type CommunitySearchResult,
   type EventSearchResult,
   type HomeCommunitySummary,
+  type LiveSpaceSearchResult,
   type MarketSearchResult,
   type OrganizationSearchResult,
   type PostSearchResult,
@@ -42,6 +44,7 @@ const SEARCH_TABS: Array<{ value: SearchType; label: string }> = [
   { value: 'communities', label: 'Chambers' },
   { value: 'organizations', label: 'Organizations' },
   { value: 'events', label: 'Events' },
+  { value: 'lives', label: 'Live' },
   { value: 'market', label: 'Market' },
   { value: 'videos', label: 'Videos' },
   { value: 'posts', label: 'Posts' },
@@ -95,6 +98,7 @@ export default function SearchPageClient({ initialQuery = '', initialType = 'all
   const [communityResults, setCommunityResults] = useState<CommunitySearchResult[]>([])
   const [organizationResults, setOrganizationResults] = useState<OrganizationSearchResult[]>([])
   const [eventResults, setEventResults] = useState<EventSearchResult[]>([])
+  const [liveResults, setLiveResults] = useState<LiveSpaceSearchResult[]>([])
   const [marketResults, setMarketResults] = useState<MarketSearchResult[]>([])
   const [postResults, setPostResults] = useState<PostSearchResult[]>([])
   const [videoResults, setVideoResults] = useState<VideoSearchResult[]>([])
@@ -145,6 +149,7 @@ export default function SearchPageClient({ initialQuery = '', initialType = 'all
         setCommunityResults([])
         setOrganizationResults([])
         setEventResults([])
+        setLiveResults([])
         setMarketResults([])
         setPostResults([])
         setVideoResults([])
@@ -161,6 +166,7 @@ export default function SearchPageClient({ initialQuery = '', initialType = 'all
         setCommunityResults([])
         setOrganizationResults([])
         setEventResults([])
+        setLiveResults([])
         setMarketResults([])
         setPostResults([])
         setVideoResults([])
@@ -205,6 +211,7 @@ export default function SearchPageClient({ initialQuery = '', initialType = 'all
         setCommunityResults(Array.isArray(payload.communities) ? payload.communities : [])
         setOrganizationResults(Array.isArray(payload.organizations) ? payload.organizations : [])
         setEventResults(Array.isArray(payload.events) ? payload.events : [])
+        setLiveResults(Array.isArray(payload.lives) ? payload.lives : [])
         setMarketResults(Array.isArray(payload.market) ? payload.market : [])
         setPostResults(Array.isArray(payload.posts) ? payload.posts : [])
         setVideoResults(Array.isArray(payload.videos) ? payload.videos : [])
@@ -242,8 +249,10 @@ export default function SearchPageClient({ initialQuery = '', initialType = 'all
     setCommunityResults([])
     setOrganizationResults([])
     setEventResults([])
+    setLiveResults([])
     setMarketResults([])
     setPostResults([])
+    setVideoResults([])
     setError(null)
     setFetchStatus('idle')
   }, [searchType, submitSearch])
@@ -256,6 +265,7 @@ export default function SearchPageClient({ initialQuery = '', initialType = 'all
     communityResults.length +
     organizationResults.length +
     eventResults.length +
+    liveResults.length +
     marketResults.length +
     videoResults.length +
     postResults.length
@@ -270,6 +280,8 @@ export default function SearchPageClient({ initialQuery = '', initialType = 'all
         return 'Organizations'
       case 'events':
         return 'Events'
+      case 'lives':
+        return 'Live'
       case 'market':
         return 'Market'
       case 'videos':
@@ -300,6 +312,8 @@ export default function SearchPageClient({ initialQuery = '', initialType = 'all
               ? eventResults.length
               : searchType === 'market'
                 ? marketResults.length
+                : searchType === 'lives'
+                  ? liveResults.length
                 : searchType === 'videos'
                   ? videoResults.length
                 : postResults.length
@@ -317,6 +331,7 @@ export default function SearchPageClient({ initialQuery = '', initialType = 'all
     organizationResults.length,
     eventResults.length,
     marketResults.length,
+    liveResults.length,
     videoResults.length,
     postResults.length,
   ])
@@ -481,6 +496,41 @@ export default function SearchPageClient({ initialQuery = '', initialType = 'all
     </ul>
   )
 
+  const renderLiveList = (items: LiveSpaceSearchResult[]) => (
+    <ul className="space-y-3">
+      {items.map((live) => {
+        const hostDisplayName = formatUserDisplayName(live.host.name, live.host.handle) || live.host.handle
+        return (
+          <li key={live.id}>
+            <Link
+              href={live.href}
+              className="flex gap-4 rounded-[28px] border border-white/60 bg-white/90 px-4 py-3 shadow-[0_20px_60px_rgba(15,23,42,0.08)] transition hover:border-[var(--cc-primary)]/50"
+            >
+              {live.coverUrl ? (
+                <img src={live.coverUrl} alt={live.title} className="h-20 w-20 flex-none rounded-2xl object-cover" />
+              ) : (
+                <div className="flex h-20 w-20 flex-none items-center justify-center rounded-2xl bg-emerald-50 text-emerald-700">
+                  <HiOutlineRadio className="h-8 w-8" />
+                </div>
+              )}
+              <div className="min-w-0 flex-1">
+                <div className="flex flex-wrap items-center gap-3">
+                  <p className="truncate text-lg font-semibold text-slate-900">{live.title}</p>
+                  <span className="rounded-full bg-emerald-50 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.22em] text-emerald-700">Live</span>
+                </div>
+                <div className="mt-2 flex items-center gap-2 text-sm text-slate-500">
+                  <VerifiedAvatar src={live.host.avatarUrl} alt={hostDisplayName} initials={hostDisplayName} size={28} isVerified={false} isBusiness={false} />
+                  <span className="truncate">{hostDisplayName} • @{live.host.handle}</span>
+                </div>
+                {live.description ? <p className="mt-2 line-clamp-3 text-sm text-slate-600">{live.description}</p> : null}
+              </div>
+            </Link>
+          </li>
+        )
+      })}
+    </ul>
+  )
+
   const renderPostList = (items: PostSearchResult[]) => (
     <ul className="space-y-3">
       {items.map((post) => {
@@ -587,6 +637,13 @@ export default function SearchPageClient({ initialQuery = '', initialType = 'all
       content: eventResults.length > 0 ? renderEventList(eventResults) : renderEmptyState(<>No events found for <span className="font-semibold">{trimmedActiveQuery}</span>.</>),
     },
     {
+      key: 'lives',
+      title: 'Live',
+      count: liveResults.length,
+      emptyMessage: <>No live spaces found for <span className="font-semibold">{trimmedActiveQuery}</span>.</>,
+      content: liveResults.length > 0 ? renderLiveList(liveResults) : renderEmptyState(<>No live spaces found for <span className="font-semibold">{trimmedActiveQuery}</span>.</>),
+    },
+    {
       key: 'videos',
       title: 'Videos',
       count: videoResults.length,
@@ -644,6 +701,8 @@ export default function SearchPageClient({ initialQuery = '', initialType = 'all
           ? 'Search organizations'
           : searchType === 'events'
             ? 'Search events'
+            : searchType === 'lives'
+              ? 'Search live spaces'
             : searchType === 'market'
               ? 'Search marketplace'
               : searchType === 'videos'
