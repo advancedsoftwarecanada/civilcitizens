@@ -4,7 +4,6 @@ import { useEffect, useState } from 'react'
 import { usePathname } from 'next/navigation'
 import MobileDock from './MobileDock'
 import { useInviteViewStore } from '../_lib/inviteViewStore'
-import { isMeetingRoomPath } from '../_lib/meetingRoomRoute'
 import { AUTH_SESSION_CHANGED_EVENT } from '../_lib/authSession'
 import { useViewerStore } from '../_lib/viewerStore'
 
@@ -51,8 +50,7 @@ export default function MobileDockVisibility() {
     resolvedPathname.startsWith('/welcome') ||
     resolvedPathname.startsWith('/verify') ||
     resolvedPathname.startsWith('/install/') ||
-    (isInviteRoute && inviteGuestMode !== false) ||
-    isMeetingRoomPath(resolvedPathname)
+    (isInviteRoute && inviteGuestMode !== false)
   ) {
     return null
   }

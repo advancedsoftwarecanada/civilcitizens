@@ -1,7 +1,7 @@
 import { prisma } from '@civil/db'
 import { BusinessStatus, PremiumStatus, Prisma } from '@prisma/client'
 import type { City as CityModel } from '@prisma/client'
-import { PROVINCES, findCommunity, getCommunitiesByProvince, getProvinceDisplayName, normalizeProvinceCode, slugifyCommunityName } from '@civil/shared'
+import { PROVINCES, findCommunity, getCommunitiesByProvince, getProvinceDisplayName, normalizeHashtagSlug, normalizeProvinceCode, slugifyCommunityName } from '@civil/shared'
 
 import { formatCitySummary, type ProvinceCodeLiteral } from './communityGeo.js'
 
@@ -115,6 +115,19 @@ type VideoSearchResultPayload = {
     isVerified: boolean
   } | null
   href: string
+}
+
+type LiveSpaceSearchResultPayload = {
+  id: string
+  title: string
+  description: string | null
+  coverUrl: string | null
+  href: string
+  host: {
+    handle: string
+    name: string | null
+    avatarUrl: string | null
+  }
 }
 
 type CreateSearchHelpersDeps = {
@@ -780,10 +793,81 @@ export function createSearchHelpers(deps: CreateSearchHelpersDeps) {
     return ranked.slice(0, limit).map((entry: { item: VideoSearchResultPayload; score: number; createdAt: number }) => entry.item)
   }
 
+  async function searchLiveSpacesForQuery(query: string, limit: number): Promise<LiveSpaceSearchResultPayload[]> {
+    const normalizedQuery = deps.normalizeSearchTerm(query)
+    if (!normalizedQuery) return []
+
+    const likePattern = `%${normalizedQuery.toLowerCase()}%`
+    const hashtagSlug = normalizeHashtagSlug(query)
+    const hashtagPattern = hashtagSlug ? `%#${hashtagSlug}%` : null
+
+    const rows = (await prisma.$queryRaw(Prisma.sql`
+      SELECT
+        space.id,
+        space.title,
+        space.description,
+        space.cover_url,
+        host.handle AS host_handle,
+        host.name AS host_name,
+        host."avatarUrl" AS host_avatar_url
+      FROM user_live_space space
+      INNER JOIN "User" host ON host.id = space.host_user_id
+      WHERE space.status = 'ACTIVE'
+        AND space.visibility = 'PUBLIC'
+        AND (
+          LOWER(space.title) LIKE ${likePattern}
+          OR LOWER(COALESCE(space.description, '')) LIKE ${likePattern}
+          OR LOWER(host.handle) LIKE ${likePattern}
+          OR LOWER(COALESCE(host.name, '')) LIKE ${likePattern}
+          ${hashtagPattern ? Prisma.sql`OR LOWER(COALESCE(space.description, '')) LIKE ${hashtagPattern}` : Prisma.empty}
+        )
+      ORDER BY space.updated_at DESC
+      LIMIT ${Math.max(limit * 4, 24)}
+    `)) as Array<{
+      id: string
+      title: string
+      description: string | null
+      cover_url: string | null
+      host_handle: string
+      host_name: string | null
+      host_avatar_url: string | null
+    }>
+
+    const ranked = rows
+      .map((row) => ({
+        item: {
+          id: row.id,
+          title: deps.truncatePreviewText(row.title || 'Live space', 120) || 'Live space',
+          description: deps.truncatePreviewText(deps.stripHtmlToPlainText(row.description ?? ''), 180) || null,
+          coverUrl: deps.normalizeMediaUrl(row.cover_url ?? null),
+          href: `/u/${encodeURIComponent(row.host_handle)}/live/${encodeURIComponent(row.id)}`,
+          host: {
+            handle: row.host_handle,
+            name: row.host_name,
+            avatarUrl: deps.normalizeMediaUrl(row.host_avatar_url ?? null),
+          },
+        } satisfies LiveSpaceSearchResultPayload,
+        score: deps.scoreSearchTextMatch(
+          deps.buildSearchableText(row.title, row.description, row.host_handle, row.host_name, hashtagSlug ? `#${hashtagSlug}` : null),
+          normalizedQuery,
+        ),
+      }))
+      .filter((entry) => entry.score > 0)
+
+    ranked.sort((a, b) => {
+      const scoreDelta = b.score - a.score
+      if (scoreDelta !== 0) return scoreDelta
+      return a.item.title.localeCompare(b.item.title)
+    })
+
+    return ranked.slice(0, limit).map((entry) => entry.item)
+  }
+
   return {
     searchCommunitiesForQuery,
     searchCommunityPostsForQuery,
     searchEventsForQuery,
+    searchLiveSpacesForQuery,
     searchMarketListingsForQuery,
     searchOrganizationsForQuery,
     searchVideosForQuery,

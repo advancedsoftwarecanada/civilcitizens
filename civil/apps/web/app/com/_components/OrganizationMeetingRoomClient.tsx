@@ -15,6 +15,7 @@ import {
 } from 'react-icons/hi2'
 import { FaUserTie } from 'react-icons/fa'
 import CivilCard from '../../_components/CivilCard'
+import DashboardShell from '../../_components/DashboardShell'
 import Modal from '../../_components/Modal'
 import { buildApiUrl, parseApiResponse } from '../../_lib/api'
 import { redirectToAuthModal } from '../../_lib/authModal'
@@ -2316,10 +2317,39 @@ export default function OrganizationMeetingRoomClient({
     )
   }
 
+  const readyRoomRail = (
+    <div className="rounded-[28px] border border-white/70 bg-white/90 p-4 shadow-[0_18px_45px_rgba(15,23,42,0.08)] backdrop-blur sm:p-5">
+      <p className="text-xs font-semibold uppercase tracking-[0.24em] text-slate-500">Chat rail</p>
+      <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50/80 p-4">
+        <p className="text-sm font-semibold text-slate-900">Room chat stays on the right.</p>
+        <p className="mt-2 text-sm text-slate-600">
+          {activeThreadId ? 'Open the room to continue the conversation.' : 'Meeting chat unlocks after admission.'}
+        </p>
+      </div>
+      <div className="mt-4 rounded-2xl border border-slate-200 bg-slate-50/80 p-4">
+        <p className="text-sm font-semibold text-slate-900">Who is here</p>
+        <p className="mt-2 text-sm text-slate-600">
+          {hostPresent
+            ? `${Math.max(meetingParticipants.length, meeting.participantCount ?? 0)} participants are already in the room.`
+            : 'The host has not joined yet.'}
+        </p>
+        {canManageMeetings && hostWaitingParticipants.length > 0 ? (
+          <div className="mt-3 flex flex-wrap gap-2">
+            {hostWaitingParticipants.slice(0, 8).map((participant) => (
+              <span key={participant.userId} className="rounded-full border border-amber-200 bg-white px-2.5 py-1 text-xs text-amber-800">
+                {participant.name}
+              </span>
+            ))}
+          </div>
+        ) : null}
+      </div>
+    </div>
+  )
+
   if (screen !== 'room') {
     return (
-      <div className="min-h-screen px-4 py-8 text-slate-900">
-        <div className="mx-auto w-full max-w-2xl rounded-[28px] border border-white/70 bg-white/90 p-6 shadow-[0_26px_60px_rgba(15,23,42,0.12)] backdrop-blur">
+      <DashboardShell rightRail={readyRoomRail} showMobileRightRail mainClassName="min-w-0" mainTopClassName="pt-4 md:pt-6" rightRailTopClassName="pt-4 md:pt-6">
+        <div className="rounded-[28px] border border-white/70 bg-white/90 p-6 shadow-[0_26px_60px_rgba(15,23,42,0.12)] backdrop-blur">
           <p className="text-xs font-semibold uppercase tracking-[0.32em] text-slate-400">Civil Meeting Room</p>
           <h1 className="mt-2 text-3xl font-semibold text-slate-900">{meeting.title || 'Untitled meeting'}</h1>
           {scheduleLabel ? <p className="mt-1 text-sm text-slate-500">{scheduleLabel}</p> : null}
@@ -2343,15 +2373,6 @@ export default function OrganizationMeetingRoomClient({
                   ? '1 participant is waiting for you to start hosting.'
                   : `${hostWaitingParticipants.length} participants are waiting for you to start hosting.`}
               </p>
-              {hostWaitingParticipants.length > 0 ? (
-                <div className="mt-2 flex flex-wrap gap-2">
-                  {hostWaitingParticipants.slice(0, 8).map((participant) => (
-                    <span key={participant.userId} className="rounded-full border border-amber-200 bg-white px-2.5 py-1 text-xs text-amber-800">
-                      {participant.name}
-                    </span>
-                  ))}
-                </div>
-              ) : null}
             </div>
           ) : null}
 
@@ -2410,7 +2431,7 @@ export default function OrganizationMeetingRoomClient({
             </Link>
           </div>
         </div>
-      </div>
+      </DashboardShell>
     )
   }
 

@@ -19,8 +19,10 @@ export default function SearchPage({ searchParams }: SearchPageProps) {
     rawType === 'communities' ||
     rawType === 'organizations' ||
     rawType === 'events' ||
+    rawType === 'lives' ||
     rawType === 'market' ||
-    rawType === 'posts'
+    rawType === 'posts' ||
+    rawType === 'videos'
       ? rawType
       : 'all'
   return <SearchPageClient initialQuery={initialQuery} initialType={initialType} />

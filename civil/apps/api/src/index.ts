@@ -527,6 +527,7 @@ import { registerProfileInviteRoutes } from './routes/profileInvites.js'
 import { registerProfileMediaRoutes } from './routes/profileMedia.js'
 import { registerSupportRoutes } from './routes/support.js'
 import { registerUserProfilePostRoutes } from './routes/userProfilePosts.js'
+import { registerUserLivesRoutes } from './routes/userLives.js'
 import { registerAiRoutes } from './routes/ai.js'
 import { registerAiTaskRoutes } from './routes/aiTasks.js'
 import { registerPushRoutes } from './routes/push.js'
@@ -2355,6 +2356,7 @@ const {
   searchCommunitiesForQuery,
   searchCommunityPostsForQuery,
   searchEventsForQuery,
+  searchLiveSpacesForQuery,
   searchMarketListingsForQuery,
   searchOrganizationsForQuery,
   searchVideosForQuery,
@@ -5985,6 +5987,7 @@ registerNotificationsSearchRoutes(app, {
   searchCommunitiesForQuery,
   searchCommunityPostsForQuery,
   searchEventsForQuery,
+  searchLiveSpacesForQuery,
   searchMarketListingsForQuery,
   searchOrganizationsForQuery,
   searchVideosForQuery,
@@ -9754,6 +9757,16 @@ registerOrganizationGovernanceMeetingsRoutes(app, {
   readOrganizationSystemState,
   resolveOrganizationMeetingAccess,
   resolveOrganizationPermissions,
+  resolveUserId,
+  sanitizePlainText,
+  withSchemaGuard,
+})
+
+registerUserLivesRoutes(app, {
+  disconnectMeetingRtcPeer,
+  issueMeetingRtcSession,
+  normalizeMediaUrl,
+  readMeetingRtcRoomState,
   resolveUserId,
   sanitizePlainText,
   withSchemaGuard,

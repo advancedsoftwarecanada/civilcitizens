@@ -26,7 +26,7 @@ const UserSearchQuery = z.object({
   limit: z.coerce.number().int().min(1).max(50).default(30),
 })
 
-const SearchTypeEnum = z.enum(['all', 'people', 'communities', 'organizations', 'events', 'market', 'posts', 'videos'])
+const SearchTypeEnum = z.enum(['all', 'people', 'communities', 'organizations', 'events', 'market', 'posts', 'videos', 'lives'])
 
 const CombinedSearchQuery = z.object({
   q: z.string().trim().min(1).max(120),
@@ -36,6 +36,7 @@ const CombinedSearchQuery = z.object({
   communityLimit: z.coerce.number().int().min(1).max(10).default(3),
   organizationLimit: z.coerce.number().int().min(1).max(10).default(3),
   eventLimit: z.coerce.number().int().min(1).max(10).default(3),
+  liveLimit: z.coerce.number().int().min(1).max(10).default(3),
   marketLimit: z.coerce.number().int().min(1).max(10).default(3),
   postLimit: z.coerce.number().int().min(1).max(10).default(3),
   videoLimit: z.coerce.number().int().min(1).max(10).default(3),
@@ -374,6 +375,7 @@ type NotificationsSearchDeps = {
   searchCommunitiesForQuery: (query: string, limit: number) => Promise<any[]>
   searchCommunityPostsForQuery: (query: string, limit: number) => Promise<any[]>
   searchEventsForQuery: (input: { viewerId: string; query: string; limit: number }) => Promise<any[]>
+  searchLiveSpacesForQuery: (query: string, limit: number) => Promise<any[]>
   searchMarketListingsForQuery: (query: string, limit: number) => Promise<any[]>
   searchOrganizationsForQuery: (query: string, limit: number) => Promise<any[]>
   searchVideosForQuery: (query: string, limit: number) => Promise<any[]>
@@ -696,10 +698,10 @@ export function registerNotificationsSearchRoutes(app: FastifyInstance, deps: No
       const parse = CombinedSearchQuery.safeParse(req.query)
       if (!parse.success) return reply.code(400).send({ error: parse.error.flatten() })
 
-      const { q, type, limit, peopleLimit, communityLimit, organizationLimit, eventLimit, marketLimit, postLimit, videoLimit } = parse.data
+      const { q, type, limit, peopleLimit, communityLimit, organizationLimit, eventLimit, liveLimit, marketLimit, postLimit, videoLimit } = parse.data
       const normalizedQuery = deps.normalizeSearchTerm(q)
       if (!normalizedQuery) {
-        return reply.send({ people: [], communities: [], organizations: [], events: [], market: [], posts: [], videos: [], meta: { type } })
+        return reply.send({ people: [], communities: [], organizations: [], events: [], lives: [], market: [], posts: [], videos: [], meta: { type } })
       }
 
       if (type === 'people') {
@@ -730,6 +732,13 @@ export function registerNotificationsSearchRoutes(app: FastifyInstance, deps: No
         return reply.send({ events: eventsHasMore ? eventResults.slice(0, limit) : eventResults, meta: { type, eventsHasMore } })
       }
 
+      if (type === 'lives') {
+        const take = limit + 1
+        const liveResults = await deps.searchLiveSpacesForQuery(normalizedQuery, take)
+        const livesHasMore = liveResults.length > limit
+        return reply.send({ lives: livesHasMore ? liveResults.slice(0, limit) : liveResults, meta: { type, livesHasMore } })
+      }
+
       if (type === 'market') {
         const take = limit + 1
         const marketResults = await deps.searchMarketListingsForQuery(normalizedQuery, take)
@@ -751,11 +760,12 @@ export function registerNotificationsSearchRoutes(app: FastifyInstance, deps: No
         return reply.send({ videos: videosHasMore ? videoResults.slice(0, limit) : videoResults, meta: { type, videosHasMore } })
       }
 
-      const [peopleResults, communityResults, organizationResults, eventResults, marketResults, postResults, videoResults] = await Promise.all([
+      const [peopleResults, communityResults, organizationResults, eventResults, liveResults, marketResults, postResults, videoResults] = await Promise.all([
         deps.searchUsersForQuery({ viewerId: userId, query: normalizedQuery, limit: peopleLimit + 1 }),
         deps.searchCommunitiesForQuery(normalizedQuery, communityLimit + 1),
         deps.searchOrganizationsForQuery(normalizedQuery, organizationLimit + 1),
         deps.searchEventsForQuery({ viewerId: userId, query: normalizedQuery, limit: eventLimit + 1 }),
+        deps.searchLiveSpacesForQuery(normalizedQuery, liveLimit + 1),
         deps.searchMarketListingsForQuery(normalizedQuery, marketLimit + 1),
         deps.searchCommunityPostsForQuery(normalizedQuery, postLimit + 1),
         deps.searchVideosForQuery(normalizedQuery, videoLimit + 1),
@@ -765,6 +775,7 @@ export function registerNotificationsSearchRoutes(app: FastifyInstance, deps: No
       const communitiesHasMore = communityResults.length > communityLimit
       const organizationsHasMore = organizationResults.length > organizationLimit
       const eventsHasMore = eventResults.length > eventLimit
+      const livesHasMore = liveResults.length > liveLimit
       const marketHasMore = marketResults.length > marketLimit
       const postsHasMore = postResults.length > postLimit
       const videosHasMore = videoResults.length > videoLimit
@@ -774,10 +785,11 @@ export function registerNotificationsSearchRoutes(app: FastifyInstance, deps: No
         communities: communitiesHasMore ? communityResults.slice(0, communityLimit) : communityResults,
         organizations: organizationsHasMore ? organizationResults.slice(0, organizationLimit) : organizationResults,
         events: eventsHasMore ? eventResults.slice(0, eventLimit) : eventResults,
+        lives: livesHasMore ? liveResults.slice(0, liveLimit) : liveResults,
         market: marketHasMore ? marketResults.slice(0, marketLimit) : marketResults,
         posts: postsHasMore ? postResults.slice(0, postLimit) : postResults,
         videos: videosHasMore ? videoResults.slice(0, videoLimit) : videoResults,
-        meta: { type, peopleHasMore, communitiesHasMore, organizationsHasMore, eventsHasMore, marketHasMore, postsHasMore, videosHasMore },
+        meta: { type, peopleHasMore, communitiesHasMore, organizationsHasMore, eventsHasMore, livesHasMore, marketHasMore, postsHasMore, videosHasMore },
       })
     }),
   )

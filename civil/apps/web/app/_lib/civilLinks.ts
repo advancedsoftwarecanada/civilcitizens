@@ -42,6 +42,7 @@ export type LinkedTextSegment =
       text: string
       href: string
       external: boolean
+      slug?: string
     }
 
 export function normalizeHttpUrl(raw: string): string | null {
@@ -205,6 +206,7 @@ export function extractLinkedTextSegments(text: string, options: LinkifyTextOpti
         text: token.raw,
         href: token.target === 'community' ? `/c/${encodeURIComponent(token.slug)}` : `/t/${encodeURIComponent(token.slug)}`,
         external: false,
+        slug: token.target === 'topic' ? token.slug : undefined,
         start: token.start,
         end: token.end,
       })
@@ -238,6 +240,7 @@ export function extractLinkedTextSegments(text: string, options: LinkifyTextOpti
       text: range.text,
       href: range.href,
       external: range.external,
+      ...(range.kind === 'hashtag' && 'slug' in range ? { slug: range.slug } : {}),
     })
     cursor = range.end
   }

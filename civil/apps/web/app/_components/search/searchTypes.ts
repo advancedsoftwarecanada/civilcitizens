@@ -1,4 +1,4 @@
-export type SearchType = 'all' | 'people' | 'communities' | 'organizations' | 'events' | 'market' | 'posts' | 'videos'
+export type SearchType = 'all' | 'people' | 'communities' | 'organizations' | 'events' | 'lives' | 'market' | 'posts' | 'videos'
 
 export type HomeCommunitySummary = {
   provinceCode: string
@@ -119,12 +119,26 @@ export type VideoSearchResult = {
   href: string
 }
 
+export type LiveSpaceSearchResult = {
+  id: string
+  title: string
+  description: string | null
+  coverUrl: string | null
+  href: string
+  host: {
+    handle: string
+    name: string | null
+    avatarUrl: string | null
+  }
+}
+
 export type SearchResponseMeta = {
   type?: SearchType
   peopleHasMore?: boolean
   communitiesHasMore?: boolean
   organizationsHasMore?: boolean
   eventsHasMore?: boolean
+  livesHasMore?: boolean
   marketHasMore?: boolean
   postsHasMore?: boolean
   videosHasMore?: boolean
@@ -135,6 +149,7 @@ export type SearchResponse = {
   communities?: CommunitySearchResult[]
   organizations?: OrganizationSearchResult[]
   events?: EventSearchResult[]
+  lives?: LiveSpaceSearchResult[]
   market?: MarketSearchResult[]
   posts?: PostSearchResult[]
   videos?: VideoSearchResult[]
