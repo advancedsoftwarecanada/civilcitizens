@@ -1212,6 +1212,8 @@ function normalizeStoredPostVideo(video: unknown) {
   const record = video as Record<string, unknown>
   const playbackUrl = typeof record.playbackUrl === 'string' ? normalizeMediaUrl(record.playbackUrl) : null
   const thumbnailUrl = typeof record.thumbnailUrl === 'string' ? normalizeMediaUrl(record.thumbnailUrl) : null
+  const kind: 'video' | 'podcast' = record.kind === 'podcast' ? 'podcast' : 'video'
+  const sourceType: 'video' | 'audio' = record.sourceType === 'audio' ? 'audio' : 'video'
   const status: 'queued' | 'processing' | 'completed' | 'failed' =
     record.status === 'queued' || record.status === 'processing' || record.status === 'failed' || record.status === 'completed'
       ? record.status
@@ -1220,6 +1222,9 @@ function normalizeStoredPostVideo(video: unknown) {
     assetId: typeof record.assetId === 'string' ? record.assetId : '',
     playbackUrl,
     thumbnailUrl,
+    kind,
+    sourceType,
+    mime: typeof record.mime === 'string' ? record.mime : null,
     durationMs: typeof record.durationMs === 'number' && Number.isFinite(record.durationMs) ? Math.max(0, Math.round(record.durationMs)) : null,
     width: typeof record.width === 'number' && Number.isFinite(record.width) ? Math.max(1, Math.round(record.width)) : null,
     height: typeof record.height === 'number' && Number.isFinite(record.height) ? Math.max(1, Math.round(record.height)) : null,
@@ -1254,6 +1259,7 @@ const MEDIA_PROXY_UPLOAD_LIMIT = 500 * MB
 
 const IMAGE_MIME_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/avif', 'image/heic', 'image/heif'])
 const VIDEO_MIME_TYPES = new Set(['video/mp4', 'video/quicktime', 'video/webm', 'video/x-m4v'])
+const AUDIO_MIME_TYPES = new Set(['audio/mpeg', 'audio/mp3', 'audio/mp4', 'audio/x-m4a', 'audio/aac', 'audio/wav', 'audio/webm', 'audio/ogg'])
 const MIME_EXTENSION_MAP: Record<string, string> = {
   'image/jpeg': 'jpg',
   'image/png': 'png',
@@ -1265,8 +1271,16 @@ const MIME_EXTENSION_MAP: Record<string, string> = {
   'video/quicktime': 'mov',
   'video/webm': 'webm',
   'video/x-m4v': 'm4v',
+  'audio/mpeg': 'mp3',
+  'audio/mp3': 'mp3',
+  'audio/mp4': 'm4a',
+  'audio/x-m4a': 'm4a',
+  'audio/aac': 'aac',
+  'audio/wav': 'wav',
+  'audio/webm': 'webm',
+  'audio/ogg': 'ogg',
 }
-const BINARY_UPLOAD_MIME_TYPES = ['application/octet-stream', ...IMAGE_MIME_TYPES, ...VIDEO_MIME_TYPES]
+const BINARY_UPLOAD_MIME_TYPES = ['application/octet-stream', ...IMAGE_MIME_TYPES, ...VIDEO_MIME_TYPES, ...AUDIO_MIME_TYPES]
 
 const s3Client = new S3Client({
   region: MEDIA_S3_REGION,
@@ -3364,7 +3378,7 @@ async function withSchemaGuard<T>(
 function ensureMimeSupported(category: MediaCategory, mime: string) {
   const normalizedMime = mime.toLowerCase()
   if (category === 'post_video') {
-    return VIDEO_MIME_TYPES.has(normalizedMime)
+    return VIDEO_MIME_TYPES.has(normalizedMime) || AUDIO_MIME_TYPES.has(normalizedMime)
   }
   return IMAGE_MIME_TYPES.has(normalizedMime)
 }
@@ -4217,6 +4231,9 @@ type FormattedPost = {
     assetId: string
     playbackUrl: string | null
     thumbnailUrl: string | null
+    kind: 'video' | 'podcast'
+    sourceType: 'video' | 'audio'
+    mime: string | null
     durationMs: number | null
     width: number | null
     height: number | null

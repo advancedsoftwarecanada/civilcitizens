@@ -38,17 +38,27 @@ function extractVideoVariantUrl(variants: Prisma.JsonValue | null | undefined, p
 function buildReadyPostVideoPayload(asset: {
   id: string
   variants: Prisma.JsonValue | null
+  mime: string | null
+  metadata: Prisma.JsonValue | null
   width: number | null
   height: number | null
   durationMs: number | null
-}) {
-  const playbackUrl = extractVideoVariantUrl(asset.variants, ['video-720p'])
-  const thumbnailUrl = extractVideoVariantUrl(asset.variants, ['video-thumb'])
-  if (!playbackUrl || !thumbnailUrl) return null
+}, kind: 'video' | 'podcast') {
+  const metadata =
+    asset.metadata && typeof asset.metadata === 'object' && !Array.isArray(asset.metadata)
+      ? (asset.metadata as Record<string, unknown>)
+      : {}
+  const sourceType = metadata.sourceType === 'audio' ? 'audio' : 'video'
+  const playbackUrl = extractVideoVariantUrl(asset.variants, sourceType === 'audio' ? ['audio-original'] : ['video-720p'])
+  const thumbnailUrl = sourceType === 'audio' ? null : extractVideoVariantUrl(asset.variants, ['video-thumb'])
+  if (!playbackUrl || (sourceType !== 'audio' && !thumbnailUrl)) return null
   return {
     assetId: asset.id,
     playbackUrl,
     thumbnailUrl,
+    kind,
+    sourceType,
+    mime: asset.mime,
     durationMs: asset.durationMs ?? null,
     width: asset.width ?? null,
     height: asset.height ?? null,
@@ -260,7 +270,7 @@ export function registerPostInteractionRoutes(app: FastifyInstance, deps: PostIn
         }
       }
 
-      const { body: rawBody, mediaUrl, images, videoAssetId, hashtags, type, title, jurisdiction, sharedPostId, visibility, audience, poll: pollInput } = parse.data
+      const { body: rawBody, mediaUrl, images, videoAssetId, videoKind = 'video', hashtags, type, title, jurisdiction, sharedPostId, visibility, audience, poll: pollInput } = parse.data
       const showBusinessAuthor = Boolean(business && parse.data.showBusinessAuthor)
 
       const isArticle = type === 'article'
@@ -308,6 +318,8 @@ export function registerPostInteractionRoutes(app: FastifyInstance, deps: PostIn
           select: {
             id: true,
             variants: true,
+            metadata: true,
+            mime: true,
             width: true,
             height: true,
             durationMs: true,
@@ -316,10 +328,19 @@ export function registerPostInteractionRoutes(app: FastifyInstance, deps: PostIn
         if (!videoAsset) {
           return reply.code(404).send({ error: 'video_asset_not_found' })
         }
-        if ((videoAsset.durationMs ?? 0) > 5 * 60 * 1000) {
+        const assetMetadata =
+          videoAsset.metadata && typeof videoAsset.metadata === 'object' && !Array.isArray(videoAsset.metadata)
+            ? (videoAsset.metadata as Record<string, unknown>)
+            : {}
+        const assetVideoKind = assetMetadata.videoKind === 'podcast' ? 'podcast' : 'video'
+        if (assetVideoKind !== videoKind) {
+          return reply.code(400).send({ error: 'video_kind_mismatch' })
+        }
+        const maxDurationMs = videoKind === 'podcast' ? 3 * 60 * 60 * 1000 : 5 * 60 * 1000
+        if ((videoAsset.durationMs ?? 0) > maxDurationMs) {
           return reply.code(400).send({ error: 'video_too_long' })
         }
-        readyVideoPayload = buildReadyPostVideoPayload(videoAsset)
+        readyVideoPayload = buildReadyPostVideoPayload(videoAsset, videoKind)
         if (!readyVideoPayload) {
           return reply.code(409).send({ error: 'video_asset_not_ready' })
         }

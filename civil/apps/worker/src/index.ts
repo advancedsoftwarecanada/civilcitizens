@@ -1232,7 +1232,10 @@ async function processMediaJob(job: Job<MediaJobPayload>) {
 
   try {
     const originalBuffer = await downloadOriginal(asset.originalKey)
-    if (asset.assetType === 'video') {
+    const mediaMetadata = readVideoAssetMetadata(asset.metadata)
+    if (asset.assetType === 'video' && mediaMetadata.sourceType === 'audio') {
+      await processAudioMediaAsset(asset, originalBuffer)
+    } else if (asset.assetType === 'video') {
       await processVideoMediaAsset(asset, originalBuffer, job)
     } else {
       await processImageMediaAsset(asset, originalBuffer)
@@ -1248,7 +1251,7 @@ async function processMediaJob(job: Job<MediaJobPayload>) {
         failureReason: message.slice(0, 500),
       },
     })
-    if (asset.assetType === 'video') {
+    if (asset.assetType === 'video' && readVideoAssetMetadata(asset.metadata).sourceType !== 'audio') {
       await prisma.mediaTranscodeJob.upsert({
         where: {
           assetId_kind: {
@@ -1320,6 +1323,18 @@ type VideoProbeResult = {
 const FFMPEG_BINARY_CANDIDATES = buildBinaryCandidates(process.env.FFMPEG_PATH, 'ffmpeg', typeof ffmpegPath === 'string' ? ffmpegPath : null)
 const FFPROBE_BINARY_CANDIDATES = buildBinaryCandidates(process.env.FFPROBE_PATH, 'ffprobe', typeof ffprobe.path === 'string' ? ffprobe.path : null)
 const MAX_VIDEO_DURATION_MS = 5 * 60 * 1000
+const MAX_PODCAST_DURATION_MS = 3 * 60 * 60 * 1000
+
+function readVideoAssetMetadata(metadata: Prisma.JsonValue | null) {
+  if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) {
+    return { videoKind: 'video' as const, sourceType: 'video' as const }
+  }
+  const record = metadata as Record<string, unknown>
+  return {
+    videoKind: record.videoKind === 'podcast' ? 'podcast' as const : 'video' as const,
+    sourceType: record.sourceType === 'audio' ? 'audio' as const : 'video' as const,
+  }
+}
 
 async function processVideoMediaAsset(
   asset: {
@@ -1332,6 +1347,9 @@ async function processVideoMediaAsset(
   originalBuffer: Buffer,
   job: Job<MediaJobPayload>,
 ) {
+  const mediaMetadata = readVideoAssetMetadata(asset.metadata)
+  const maxDurationMs = mediaMetadata.videoKind === 'podcast' ? MAX_PODCAST_DURATION_MS : MAX_VIDEO_DURATION_MS
+
   await prisma.mediaTranscodeJob.upsert({
     where: {
       assetId_kind: {
@@ -1372,7 +1390,7 @@ async function processVideoMediaAsset(
     if (!sourceMetadata.durationMs) {
       throw new Error('video_duration_missing')
     }
-    if (sourceMetadata.durationMs > MAX_VIDEO_DURATION_MS) {
+    if (sourceMetadata.durationMs > maxDurationMs) {
       throw new Error('video_too_long')
     }
 
@@ -1488,6 +1506,92 @@ async function processVideoMediaAsset(
           width: outputMetadata.width ?? sourceMetadata.width ?? null,
           height: outputMetadata.height ?? sourceMetadata.height ?? null,
         },
+      },
+    })
+  } finally {
+    await fs.rm(workingDir, { recursive: true, force: true }).catch(() => undefined)
+  }
+}
+
+async function processAudioMediaAsset(
+  asset: {
+    id: string
+    ownerId: string
+    category: MediaCategory
+    mime: string
+    metadata: Prisma.JsonValue | null
+  },
+  originalBuffer: Buffer,
+) {
+  if (!FFPROBE_BINARY_CANDIDATES.length) {
+    throw new Error('ffprobe_binary_missing')
+  }
+
+  const mediaMetadata = readVideoAssetMetadata(asset.metadata)
+  const maxDurationMs = mediaMetadata.videoKind === 'podcast' ? MAX_PODCAST_DURATION_MS : MAX_VIDEO_DURATION_MS
+  const extension =
+    asset.mime.toLowerCase() === 'audio/mp4' || asset.mime.toLowerCase() === 'audio/x-m4a'
+      ? 'm4a'
+      : asset.mime.toLowerCase() === 'audio/mpeg' || asset.mime.toLowerCase() === 'audio/mp3'
+        ? 'mp3'
+        : asset.mime.toLowerCase() === 'audio/aac'
+          ? 'aac'
+          : asset.mime.toLowerCase() === 'audio/wav'
+            ? 'wav'
+            : asset.mime.toLowerCase() === 'audio/ogg'
+              ? 'ogg'
+              : asset.mime.toLowerCase() === 'audio/webm'
+                ? 'webm'
+                : 'bin'
+  const workingDir = await fs.mkdtemp(join(tmpdir(), 'civil-audio-'))
+  const inputPath = join(workingDir, `input.${extension}`)
+
+  try {
+    await fs.writeFile(inputPath, originalBuffer)
+    const sourceMetadata = await probeVideoFile(inputPath)
+    if (!sourceMetadata.durationMs) {
+      throw new Error('audio_duration_missing')
+    }
+    if (sourceMetadata.durationMs > maxDurationMs) {
+      throw new Error('audio_too_long')
+    }
+
+    const audioKey = buildVariantKey(asset.category, asset.ownerId, asset.id, 'audio-original', extension)
+    await uploadVariant(audioKey, originalBuffer, asset.mime)
+
+    const variantEntries = {
+      'audio-original': {
+        key: audioKey,
+        url: buildPublicUrl(audioKey),
+        contentType: asset.mime,
+      },
+    }
+
+    const metadataBase =
+      asset.metadata && typeof asset.metadata === 'object' && !Array.isArray(asset.metadata)
+        ? ({ ...(asset.metadata as Record<string, unknown>) } as Record<string, unknown>)
+        : {}
+
+    metadataBase.video = {
+      durationMs: sourceMetadata.durationMs,
+      sourceWidth: null,
+      sourceHeight: null,
+      playbackVariant: 'audio-original',
+      thumbnailVariant: null,
+      profile: 'original-audio',
+    }
+
+    await prisma.mediaAsset.update({
+      where: { id: asset.id },
+      data: {
+        width: null,
+        height: null,
+        durationMs: sourceMetadata.durationMs,
+        variants: variantEntries,
+        metadata: metadataBase as Prisma.InputJsonValue,
+        status: 'ready',
+        readyAt: new Date(),
+        failureReason: null,
       },
     })
   } finally {

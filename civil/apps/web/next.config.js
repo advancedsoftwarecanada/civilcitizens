@@ -1,20 +1,48 @@
+function normalizeHost(value) {
+  const raw = (value || '').trim()
+  if (!raw) return null
+
+  try {
+    return new URL(raw.includes('://') ? raw : `https://${raw}`).hostname
+  } catch {
+    return null
+  }
+}
+
+function collectAllowedDevHosts() {
+  const configuredHosts = [
+    'dev.civilcitizens.ca',
+    'civilrides.ca',
+    'localhost',
+    '127.0.0.1',
+    process.env.CIVIL_PUBLIC_HOST,
+    process.env.NEXT_PUBLIC_BASE_URL,
+    ...(process.env.CIVIL_ALLOWED_DEV_ORIGINS || '').split(','),
+  ]
+
+  return [...new Set(configuredHosts.map(normalizeHost).filter(Boolean))]
+}
+
+const allowedDevHosts = collectAllowedDevHosts()
+const mediaRemotePatterns = allowedDevHosts
+  .filter((hostname) => hostname !== 'localhost' && hostname !== '127.0.0.1')
+  .map((hostname) => ({
+    protocol: 'https',
+    hostname,
+    pathname: '/media/**',
+  }))
+
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
   distDir: process.env.CIVIL_NEXT_DIST_DIR || '.next',
-  allowedDevOrigins: ['dev.civilcitizens.ca'],
+  allowedDevOrigins: allowedDevHosts,
   transpilePackages: ['@civil/ui', '@civil/shared'],
   eslint: {
     ignoreDuringBuilds: true,
   },
   images: {
-    remotePatterns: [
-      {
-        protocol: 'https',
-        hostname: 'dev.civilcitizens.ca',
-        pathname: '/media/**',
-      },
-    ],
+    remotePatterns: mediaRemotePatterns,
   },
   webpack: (config) => {
     config.resolve = config.resolve || {}

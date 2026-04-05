@@ -36,6 +36,8 @@ export type PostAudience = z.infer<typeof PostAudienceEnum>
 
 export const JurisdictionEnum = z.enum(['self', 'municipal', 'provincial', 'federal'])
 export type Jurisdiction = z.infer<typeof JurisdictionEnum>
+export const PostVideoKindEnum = z.enum(['video', 'podcast'])
+export type PostVideoKind = z.infer<typeof PostVideoKindEnum>
 
 const PollOptionLabelSchema = z
   .string()
@@ -78,6 +80,7 @@ export const CreatePostInput = z
     mediaUrl: z.string().url().optional(),
     images: z.array(z.string().url()).optional(),
     videoAssetId: z.string().uuid().or(z.string().cuid()).optional(),
+    videoKind: PostVideoKindEnum.optional(),
     hashtags: z.array(z.string().regex(/^#[A-Za-z0-9_-]{1,50}$/)).max(10).optional(),
     communityProvince: z.string().trim().min(2).max(32).optional(),
     communitySlug: z.string().trim().min(1).max(160).optional(),
@@ -116,6 +119,14 @@ export const CreatePostInput = z
         code: z.ZodIssueCode.custom,
         message: 'Posts can include either images or one video, not both',
         path: ['videoAssetId'],
+      })
+    }
+
+    if (data.videoKind && !data.videoAssetId) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: 'Video kind requires a video upload',
+        path: ['videoKind'],
       })
     }
 
@@ -745,6 +756,7 @@ export const RequestMediaUploadInput = z.object({
   mime: z.string().trim().min(3).max(120),
   byteSize: z.number().int().positive().max(500 * 1024 * 1024),
   filename: z.string().trim().max(180).optional(),
+  videoKind: PostVideoKindEnum.optional(),
 })
 export type RequestMediaUploadInput = z.infer<typeof RequestMediaUploadInput>
 
@@ -752,7 +764,7 @@ export const CompleteMediaUploadInput = z.object({
   assetId: MediaAssetIdSchema,
   width: z.number().int().positive().max(10000).optional(),
   height: z.number().int().positive().max(10000).optional(),
-  durationMs: z.number().int().positive().max(30 * 60 * 1000).optional(),
+  durationMs: z.number().int().positive().max(3 * 60 * 60 * 1000).optional(),
   checksum: z.string().trim().max(160).optional(),
 })
 export type CompleteMediaUploadInput = z.infer<typeof CompleteMediaUploadInput>

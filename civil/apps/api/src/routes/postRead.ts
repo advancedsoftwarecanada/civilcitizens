@@ -1,7 +1,7 @@
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
 import { prisma } from '@civil/db'
 import { ModerationStatus, Prisma, ReactionType as PrismaReactionType } from '@prisma/client'
-import { CursorQuery, JurisdictionEnum, PostSortEnum, findCommunity, normalizeProvinceCode } from '@civil/shared'
+import { CursorQuery, JurisdictionEnum, PostSortEnum, PostVideoKindEnum, findCommunity, normalizeProvinceCode } from '@civil/shared'
 import { z } from 'zod'
 
 type PostReadDeps = Record<string, any>
@@ -165,13 +165,18 @@ export function registerPostReadRoutes(app: FastifyInstance, deps: PostReadDeps)
         scope: z.enum(['all', 'friends', 'network', 'communities', 'organizations', 'causes']).optional(),
         province: z.string().optional(),
         community: z.string().optional(),
+        videoKind: PostVideoKindEnum.optional(),
       }).safeParse(req.query)
       if (!parse.success) return reply.code(400).send({ error: parse.error.flatten() })
 
-      const { cursor, limit, jurisdiction, sort, scope = 'all', province, community } = parse.data
+      const { cursor, limit, jurisdiction, sort, scope = 'all', province, community, videoKind } = parse.data
       const where: Prisma.PostWhereInput = {}
       if (jurisdiction) {
         where.jurisdiction = jurisdiction
+      }
+      if (videoKind) {
+        const existingAnd = Array.isArray(where.AND) ? where.AND : where.AND ? [where.AND] : []
+        where.AND = [...existingAnd, { video: { path: ['kind'], equals: videoKind } }]
       }
       if (province && community) {
         const normalizedProvince = normalizeProvinceCode(province)
