@@ -1,4 +1,4 @@
-export type SearchType = 'all' | 'people' | 'communities' | 'organizations' | 'events' | 'market' | 'posts'
+export type SearchType = 'all' | 'people' | 'communities' | 'organizations' | 'events' | 'market' | 'posts' | 'videos'
 
 export type HomeCommunitySummary = {
   provinceCode: string
@@ -98,6 +98,27 @@ export type PostSearchResult = {
   href: string
 }
 
+export type VideoSearchResult = {
+  id: string
+  title: string | null
+  excerpt: string | null
+  thumbnailUrl: string | null
+  durationMs: number | null
+  communityName: string | null
+  provinceName: string | null
+  author: {
+    handle: string
+    name: string | null
+    avatarUrl: string | null
+  }
+  organization: {
+    name: string
+    slug: string
+    logoUrl: string | null
+  } | null
+  href: string
+}
+
 export type SearchResponseMeta = {
   type?: SearchType
   peopleHasMore?: boolean
@@ -106,6 +127,7 @@ export type SearchResponseMeta = {
   eventsHasMore?: boolean
   marketHasMore?: boolean
   postsHasMore?: boolean
+  videosHasMore?: boolean
 }
 
 export type SearchResponse = {
@@ -115,5 +137,6 @@ export type SearchResponse = {
   events?: EventSearchResult[]
   market?: MarketSearchResult[]
   posts?: PostSearchResult[]
+  videos?: VideoSearchResult[]
   meta?: SearchResponseMeta
 }

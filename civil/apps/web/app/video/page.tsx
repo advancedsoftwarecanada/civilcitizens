@@ -1,11 +1,5 @@
-import ComingSoon from '../_components/ComingSoon'
+import ShortsPageClient from '../shorts/ShortsPageClient'
 
 export default function VideoPage() {
-  return (
-    <ComingSoon
-      activeNavKey="video"
-      title="Video is coming soon"
-      message="A Canadian-first video experience is on the way. Check back soon."
-    />
-  )
+  return <ShortsPageClient />
 }

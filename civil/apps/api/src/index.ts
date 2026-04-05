@@ -2357,6 +2357,7 @@ const {
   searchEventsForQuery,
   searchMarketListingsForQuery,
   searchOrganizationsForQuery,
+  searchVideosForQuery,
   searchUsersForQuery,
 } = createSearchHelpers({
   FAMILY_FEED_POST_TYPE,
@@ -5986,6 +5987,7 @@ registerNotificationsSearchRoutes(app, {
   searchEventsForQuery,
   searchMarketListingsForQuery,
   searchOrganizationsForQuery,
+  searchVideosForQuery,
   searchUsersForQuery,
   withSchemaGuard,
 })

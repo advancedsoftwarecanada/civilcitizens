@@ -95,6 +95,28 @@ type PostSearchResultPayload = {
   href: string
 }
 
+type VideoSearchResultPayload = {
+  id: string
+  title: string | null
+  excerpt: string | null
+  thumbnailUrl: string | null
+  durationMs: number | null
+  communityName: string | null
+  provinceName: string | null
+  author: {
+    handle: string
+    name: string | null
+    avatarUrl: string | null
+  }
+  organization: {
+    name: string
+    slug: string
+    logoUrl: string | null
+    isVerified: boolean
+  } | null
+  href: string
+}
+
 type CreateSearchHelpersDeps = {
   FAMILY_FEED_POST_TYPE: string
   buildCivilAiMarketQueryTokens: (query: string) => string[]
@@ -119,6 +141,54 @@ type CreateSearchHelpersDeps = {
 }
 
 export function createSearchHelpers(deps: CreateSearchHelpersDeps) {
+  function buildPostSearchPayload(post: any): { post: PostSearchResultPayload; video: VideoSearchResultPayload | null } | null {
+    const formatted = deps.formatPost(post)
+    const canonical = deps.getCanonicalPaths(post)
+    const href = canonical.community ?? canonical.user ?? canonical.legacy ?? null
+    if (!href) return null
+
+    const base = {
+      id: post.id,
+      title: formatted.title,
+      excerpt: deps.truncatePreviewText(deps.stripHtmlToPlainText(post.body ?? ''), 200) || null,
+      communityName: formatted.communityName,
+      provinceName: formatted.provinceName,
+      author: {
+        handle: formatted.author.handle,
+        name: formatted.author.name,
+        avatarUrl: formatted.author.avatarUrl,
+      },
+      organization: formatted.organization
+        ? {
+            name: formatted.organization.name,
+            slug: formatted.organization.slug,
+            logoUrl: formatted.organization.logoUrl,
+            isVerified: formatted.organization.isVerified,
+          }
+        : null,
+      href,
+    }
+
+    const videoThumbnailUrl = formatted.video?.thumbnailUrl ?? formatted.mediaUrl ?? formatted.images?.[0] ?? null
+    const postPayload = {
+      ...base,
+      imageUrl: formatted.images?.[0] ?? formatted.mediaUrl ?? formatted.organization?.coverUrl ?? formatted.organization?.logoUrl ?? null,
+    } satisfies PostSearchResultPayload
+
+    const hasVideo = Boolean(formatted.video?.playbackUrl || formatted.video?.assetId || videoThumbnailUrl)
+    const videoPayload = hasVideo
+      ? ({
+          ...base,
+          thumbnailUrl: videoThumbnailUrl,
+          durationMs: typeof formatted.video?.durationMs === 'number' && Number.isFinite(formatted.video.durationMs)
+            ? Math.max(0, Math.round(formatted.video.durationMs))
+            : null,
+        } satisfies VideoSearchResultPayload)
+      : null
+
+    return { post: postPayload, video: videoPayload }
+  }
+
   async function searchUsersForQuery({
     viewerId,
     query,
@@ -585,8 +655,6 @@ export function createSearchHelpers(deps: CreateSearchHelpersDeps) {
       where: {
         type: { not: deps.FAMILY_FEED_POST_TYPE as any },
         visibility: 'public',
-        provinceCode: { not: null },
-        communitySlug: { not: null },
         OR: [
           buildContains('title'),
           buildContains('body'),
@@ -612,32 +680,10 @@ export function createSearchHelpers(deps: CreateSearchHelpersDeps) {
 
     const ranked: Array<{ item: PostSearchResultPayload; score: number; createdAt: number }> = posts
       .map((post: any) => {
-        const formatted = deps.formatPost(post)
-        const href = deps.getCanonicalPaths(post).community
-        if (!href) return null
+        const payload = buildPostSearchPayload(post)
+        if (!payload) return null
         return {
-          item: {
-            id: post.id,
-            title: formatted.title,
-            excerpt: deps.truncatePreviewText(deps.stripHtmlToPlainText(post.body ?? ''), 200) || null,
-            imageUrl: formatted.images?.[0] ?? formatted.mediaUrl ?? formatted.organization?.coverUrl ?? formatted.organization?.logoUrl ?? null,
-            communityName: formatted.communityName,
-            provinceName: formatted.provinceName,
-            author: {
-              handle: formatted.author.handle,
-              name: formatted.author.name,
-              avatarUrl: formatted.author.avatarUrl,
-            },
-            organization: formatted.organization
-              ? {
-                  name: formatted.organization.name,
-                  slug: formatted.organization.slug,
-                  logoUrl: formatted.organization.logoUrl,
-                  isVerified: formatted.organization.isVerified,
-                }
-              : null,
-            href,
-          } satisfies PostSearchResultPayload,
+          item: payload.post,
           score: deps.scoreSearchTextMatch(
             deps.buildSearchableText(post.title, deps.stripHtmlToPlainText(post.body ?? ''), post.author.name, post.author.handle, post.business?.name),
             normalizedQuery,
@@ -656,12 +702,91 @@ export function createSearchHelpers(deps: CreateSearchHelpersDeps) {
     return ranked.slice(0, limit).map((entry: { item: PostSearchResultPayload; score: number; createdAt: number }) => entry.item)
   }
 
+  async function searchVideosForQuery(query: string, limit: number): Promise<VideoSearchResultPayload[]> {
+    const normalizedQuery = deps.normalizeSearchTerm(query)
+    if (!normalizedQuery) return []
+
+    const tokens = normalizedQuery.split(' ').filter(Boolean)
+    const insensitiveMode = Prisma.QueryMode.insensitive
+    const buildContains = (field: 'title' | 'body'): Prisma.PostWhereInput => {
+      if (!tokens.length) return { [field]: { contains: normalizedQuery, mode: insensitiveMode } }
+      return {
+        AND: tokens.map(
+          (token) =>
+            ({
+              [field]: { contains: token, mode: insensitiveMode },
+            }) as Prisma.PostWhereInput,
+        ),
+      }
+    }
+
+    const posts = await prisma.post.findMany({
+      where: {
+        type: { not: deps.FAMILY_FEED_POST_TYPE as any },
+        visibility: 'public',
+        AND: [
+          {
+            OR: [
+              { video: { not: Prisma.JsonNull } },
+              { video: { not: Prisma.DbNull } },
+              { video: { not: null } },
+            ],
+          },
+        ],
+        OR: [
+          buildContains('title'),
+          buildContains('body'),
+          {
+            author: {
+              OR: [
+                { name: { contains: normalizedQuery, mode: insensitiveMode } },
+                { handle: { contains: normalizedQuery.replace(/^@/, ''), mode: insensitiveMode } },
+              ],
+            },
+          },
+          {
+            business: {
+              name: { contains: normalizedQuery, mode: insensitiveMode },
+            },
+          },
+        ],
+      },
+      orderBy: [{ createdAt: 'desc' }],
+      take: Math.max(limit * 4, 24),
+      include: { author: true, business: true },
+    })
+
+    const ranked: Array<{ item: VideoSearchResultPayload; score: number; createdAt: number }> = posts
+      .map((post: any) => {
+        const payload = buildPostSearchPayload(post)
+        if (!payload?.video) return null
+        return {
+          item: payload.video,
+          score: deps.scoreSearchTextMatch(
+            deps.buildSearchableText(post.title, deps.stripHtmlToPlainText(post.body ?? ''), post.author.name, post.author.handle, post.business?.name),
+            normalizedQuery,
+          ),
+          createdAt: post.createdAt.getTime(),
+        }
+      })
+      .filter((entry: { item: VideoSearchResultPayload; score: number; createdAt: number } | null): entry is { item: VideoSearchResultPayload; score: number; createdAt: number } => Boolean(entry))
+
+    ranked.sort((a: { item: VideoSearchResultPayload; score: number; createdAt: number }, b: { item: VideoSearchResultPayload; score: number; createdAt: number }) => {
+      const scoreDelta = b.score - a.score
+      if (scoreDelta !== 0) return scoreDelta
+      return b.createdAt - a.createdAt
+    })
+
+    return ranked.slice(0, limit).map((entry: { item: VideoSearchResultPayload; score: number; createdAt: number }) => entry.item)
+  }
+
   return {
     searchCommunitiesForQuery,
     searchCommunityPostsForQuery,
     searchEventsForQuery,
     searchMarketListingsForQuery,
     searchOrganizationsForQuery,
+    searchVideosForQuery,
     searchUsersForQuery,
   }
 }

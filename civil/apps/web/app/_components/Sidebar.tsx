@@ -4,7 +4,7 @@ import Link from 'next/link'
 import { useMemo, type CSSProperties } from 'react'
 import clsx from 'clsx'
 import { usePathname } from 'next/navigation'
-import { FaBroadcastTower, FaCarSide, FaHouseUser, FaPlayCircle, FaPodcast, FaPrayingHands, FaUserTie, FaVideo, FaWallet } from 'react-icons/fa'
+import { FaBroadcastTower, FaCarSide, FaHouseUser, FaPlayCircle, FaPodcast, FaPrayingHands, FaUserTie, FaWallet } from 'react-icons/fa'
 import {
   HiOutlineChatBubbleOvalLeft,
   HiOutlineCurrencyDollar,
@@ -62,8 +62,7 @@ export const PRIMARY_NAV: SidebarNavItem[] = [
   { key: 'events', label: 'Events', href: '/events', icon: HiOutlineCalendarDays },
   { key: 'market', label: 'Market', href: '/market', icon: HiOutlineShoppingCart },
   { key: 'live', label: 'Live', href: '/live', icon: FaBroadcastTower },
-  { key: 'shorts', label: 'Shorts', href: '/shorts', icon: FaPlayCircle },
-  { key: 'video', label: 'Videos', href: '/video', icon: FaVideo },
+  { key: 'video', label: 'Video', href: '/video', icon: FaPlayCircle },
   { key: 'podcasts', label: 'Podcasts', href: '/podcasts', icon: FaPodcast },
   { key: 'work', label: 'Work', href: '/work', icon: HiOutlineCurrencyDollar },
   { key: 'drive', label: 'Drive', href: '/drive', icon: FaCarSide },

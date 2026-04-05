@@ -8,6 +8,7 @@ import {
   HiOutlineCheckBadge,
   HiOutlineDocumentText,
   HiOutlineMapPin,
+  HiOutlinePlayCircle,
   HiOutlineShoppingBag,
 } from 'react-icons/hi2'
 import {
@@ -18,6 +19,7 @@ import {
   type PostSearchResult,
   type SearchResponse,
   type UserSearchResult,
+  type VideoSearchResult,
 } from './searchTypes'
 import { buildApiUrl, parseApiResponse } from '../../_lib/api'
 import {
@@ -62,6 +64,7 @@ const ORGANIZATION_LIMIT = 2
 const EVENT_LIMIT = 2
 const MARKET_LIMIT = 2
 const POST_LIMIT = 2
+const VIDEO_LIMIT = 2
 const PLACE_FETCH_LIMIT = 8
 const MAP_RESULT_DISTANCE_LIMIT_KM = 500
 const PLACE_SEARCH_DEBOUNCE_MS = 300
@@ -74,7 +77,16 @@ const GENERAL_SEARCH_STEPS = [
   'Searching events',
   'Searching market',
   'Searching posts',
+  'Searching videos',
 ] as const
+
+function formatDurationLabel(durationMs: number | null | undefined) {
+  if (!durationMs || !Number.isFinite(durationMs) || durationMs <= 0) return null
+  const totalSeconds = Math.max(0, Math.floor(durationMs / 1000))
+  const minutes = Math.floor(totalSeconds / 60)
+  const seconds = totalSeconds % 60
+  return `${minutes}:${seconds.toString().padStart(2, '0')}`
+}
 
 type SearchResultsProps = {
   query: string
@@ -142,6 +154,7 @@ export function SearchResults({ query, open, onResultSelect, onLoadingStateChang
   const [eventResults, setEventResults] = useState<EventSearchResult[]>([])
   const [marketResults, setMarketResults] = useState<MarketSearchResult[]>([])
   const [postResults, setPostResults] = useState<PostSearchResult[]>([])
+  const [videoResults, setVideoResults] = useState<VideoSearchResult[]>([])
   const [savedAddresses, setSavedAddresses] = useState<SavedShippingAddress[]>([])
   const [savedAddressesLoaded, setSavedAddressesLoaded] = useState(false)
   const [placeResults, setPlaceResults] = useState<CivilPlaceSearchResults>({ places: [], addresses: [] })
@@ -316,6 +329,7 @@ export function SearchResults({ query, open, onResultSelect, onLoadingStateChang
       setEventResults([])
       setMarketResults([])
       setPostResults([])
+      setVideoResults([])
       setLoading(false)
       setError(null)
       if (abortRef.current) {
@@ -333,6 +347,7 @@ export function SearchResults({ query, open, onResultSelect, onLoadingStateChang
       setEventResults([])
       setMarketResults([])
       setPostResults([])
+      setVideoResults([])
       setLoading(false)
       setError(null)
       return
@@ -346,6 +361,7 @@ export function SearchResults({ query, open, onResultSelect, onLoadingStateChang
     setEventResults([])
     setMarketResults([])
     setPostResults([])
+    setVideoResults([])
 
     const controller = new AbortController()
     abortRef.current = controller
@@ -359,6 +375,7 @@ export function SearchResults({ query, open, onResultSelect, onLoadingStateChang
         params.set('eventLimit', String(EVENT_LIMIT))
         params.set('marketLimit', String(MARKET_LIMIT))
         params.set('postLimit', String(POST_LIMIT))
+        params.set('videoLimit', String(VIDEO_LIMIT))
 
         const response = await fetch(buildApiUrl(`/search?${params.toString()}`), {
           headers: { authorization: `Bearer ${token}` },
@@ -383,6 +400,7 @@ export function SearchResults({ query, open, onResultSelect, onLoadingStateChang
         setEventResults(Array.isArray(payload.events) ? payload.events : [])
         setMarketResults(Array.isArray(payload.market) ? payload.market : [])
         setPostResults(Array.isArray(payload.posts) ? payload.posts : [])
+        setVideoResults(Array.isArray(payload.videos) ? payload.videos : [])
       } catch (err) {
         if ((err as Error).name === 'AbortError') return
         setError('Unable to search right now. Please try again later.')
@@ -461,6 +479,7 @@ export function SearchResults({ query, open, onResultSelect, onLoadingStateChang
     eventResults.length > 0 ||
     marketResults.length > 0 ||
     postResults.length > 0 ||
+    videoResults.length > 0 ||
     visibleSavedAddressResults.length > 0 ||
     visiblePlaceResults.length > 0 ||
     visibleAddressResults.length > 0
@@ -474,6 +493,7 @@ export function SearchResults({ query, open, onResultSelect, onLoadingStateChang
       events: `/search?q=${encodeURIComponent(trimmedQuery)}&type=events`,
       market: `/search?q=${encodeURIComponent(trimmedQuery)}&type=market`,
       posts: `/search?q=${encodeURIComponent(trimmedQuery)}&type=posts`,
+      videos: `/search?q=${encodeURIComponent(trimmedQuery)}&type=videos`,
       addresses: `/addresses?q=${encodeURIComponent(trimmedQuery)}`,
     }),
     [trimmedQuery],
@@ -845,6 +865,41 @@ export function SearchResults({ query, open, onResultSelect, onLoadingStateChang
                     </Link>
                   </li>
                 ))}
+              </ul>
+            </CompactSection>
+          ) : null}
+
+          {videoResults.length > 0 ? (
+            <CompactSection title="Videos" href={sectionHref.videos} onResultSelect={onResultSelect}>
+              <ul className="divide-y divide-slate-100">
+                {videoResults.map((video) => {
+                  const displayName = formatUserDisplayName(video.author.name, video.author.handle) || video.author.handle
+                  const durationLabel = formatDurationLabel(video.durationMs)
+                  return (
+                    <li key={video.id}>
+                      <Link href={video.href} onClick={onResultSelect} className="flex items-center gap-3 rounded-2xl px-3 py-2.5 text-sm text-slate-600 transition hover:bg-slate-50">
+                        {video.thumbnailUrl ? (
+                          <div className="relative h-10 w-10 overflow-hidden rounded-xl bg-slate-100">
+                            <img src={video.thumbnailUrl} alt={video.title || 'Video'} className="h-full w-full object-cover" />
+                            <div className="absolute inset-0 bg-black/25" />
+                            <HiOutlinePlayCircle className="absolute inset-0 m-auto h-5 w-5 text-white" />
+                          </div>
+                        ) : (
+                          <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-slate-100 text-slate-500">
+                            <HiOutlinePlayCircle className="h-5 w-5" />
+                          </div>
+                        )}
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center gap-2 text-slate-900">
+                            <span className="truncate font-semibold">{video.title || video.excerpt || 'Video'}</span>
+                            {durationLabel ? <span className="shrink-0 text-[11px] font-semibold uppercase tracking-[0.16em] text-[var(--cc-primary)]">{durationLabel}</span> : null}
+                          </div>
+                          <p className="truncate text-xs text-slate-500">{displayName} • {video.organization?.name ?? video.communityName ?? 'Community'}</p>
+                        </div>
+                      </Link>
+                    </li>
+                  )
+                })}
               </ul>
             </CompactSection>
           ) : null}
