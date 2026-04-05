@@ -544,11 +544,47 @@ async function ensureThreadParticipant(args: { threadId: string; userId: string;
   })
 }
 
+async function archiveLiveSpaceIfUnhosted(args: {
+  access: UserLiveAccessContext
+  deps: Pick<UserLivesDeps, 'readMeetingRtcRoomState' | 'disconnectMeetingRtcPeer'>
+}) {
+  if (normalizeStatus(args.access.space.status) !== 'ACTIVE') {
+    return { archived: false, rtcState: null as Awaited<ReturnType<UserLivesDeps['readMeetingRtcRoomState']>> }
+  }
+
+  const rtcState = await args.deps.readMeetingRtcRoomState(args.access.space.id)
+  if (!rtcState) {
+    return { archived: false, rtcState: null }
+  }
+
+  if (rtcState.hostPresent) {
+    return { archived: false, rtcState }
+  }
+
+  const remainingManagerPeers = rtcState.peers.filter((peer) => peer.userId !== args.access.space.host_user_id && peer.role === 'manager')
+  if (remainingManagerPeers.length > 0) {
+    return { archived: false, rtcState }
+  }
+
+  await prisma.$executeRaw`
+    UPDATE user_live_space
+    SET status = ${'ARCHIVED'}, updated_at = ${new Date()}
+    WHERE id = ${args.access.space.id}
+      AND status = ${'ACTIVE'}
+  `
+
+  for (const peer of rtcState.peers) {
+    await args.deps.disconnectMeetingRtcPeer({ roomId: args.access.space.id, peerId: peer.peerId, reason: 'live_host_left' })
+  }
+
+  return { archived: true, rtcState }
+}
+
 async function buildLiveMeetingResponse(args: {
   access: UserLiveAccessContext
   includeWaitingParticipants?: boolean
   includeModeratorHandles?: boolean
-  deps: Pick<UserLivesDeps, 'normalizeMediaUrl' | 'readMeetingRtcRoomState'>
+  deps: Pick<UserLivesDeps, 'normalizeMediaUrl' | 'readMeetingRtcRoomState' | 'disconnectMeetingRtcPeer'>
 }) {
   const row = args.access.space
   const threadId = row.thread_id ?? null
@@ -595,7 +631,16 @@ async function buildLiveMeetingResponse(args: {
     isParticipant,
     admissionStatus,
   })
-  const rtcState = normalizeStatus(row.status) === 'ACTIVE' ? await args.deps.readMeetingRtcRoomState(row.id) : null
+  const unhostedResult = await archiveLiveSpaceIfUnhosted({ access: args.access, deps: args.deps })
+  const effectiveStatus = unhostedResult.archived ? 'ARCHIVED' : meeting.status
+  const rtcState = effectiveStatus === 'ACTIVE'
+    ? unhostedResult.rtcState ?? (await args.deps.readMeetingRtcRoomState(row.id))
+    : null
+  const effectiveParticipantCount = rtcState
+    ? Math.max(0, rtcState.peerCount)
+    : effectiveStatus === 'ACTIVE'
+      ? meeting.participantCount
+      : 0
 
   let waitingParticipants: UserLiveWaitingParticipant[] = []
   if (args.includeWaitingParticipants && args.access.canManageMeetings) {
@@ -697,6 +742,9 @@ async function buildLiveMeetingResponse(args: {
   return {
     meeting: {
       ...meeting,
+      status: effectiveStatus,
+      coverUrl: args.deps.normalizeMediaUrl(meeting.coverUrl),
+      participantCount: effectiveParticipantCount,
       rtc: rtcState
         ? {
             peerCount: rtcState.peerCount,
@@ -1124,7 +1172,10 @@ export function registerUserLivesRoutes(app: FastifyInstance, deps: UserLivesDep
       const access = await resolveSpaceAccessByHandle({ handleRaw: params.data.handle, spaceId: params.data.spaceId, viewerId })
       if (!access) return reply.code(404).send({ error: 'live_not_found' })
 
-      if (normalizeStatus(access.space.status) !== 'ACTIVE' && !access.canManageMeetings) {
+      const unhostedResult = await archiveLiveSpaceIfUnhosted({ access, deps })
+      const effectiveStatus = unhostedResult.archived ? 'ARCHIVED' : normalizeStatus(access.space.status)
+
+      if (effectiveStatus !== 'ACTIVE' && !access.canManageMeetings) {
         return reply.code(403).send({ error: 'live_not_published' })
       }
       if (normalizeVisibility(access.space.visibility) === 'PRIVATE' && !access.canManageMeetings) {
@@ -1150,7 +1201,11 @@ export function registerUserLivesRoutes(app: FastifyInstance, deps: UserLivesDep
       const access = await resolveSpaceAccessById(params.data.spaceId, viewerId)
       if (!access) return reply.code(404).send({ error: 'live_not_found' })
       const row = access.space
-      if (normalizeStatus(row.status) !== 'ACTIVE' && !access.canManageMeetings) {
+
+      const unhostedResult = await archiveLiveSpaceIfUnhosted({ access, deps })
+      const effectiveStatus = unhostedResult.archived ? 'ARCHIVED' : normalizeStatus(row.status)
+
+      if (effectiveStatus !== 'ACTIVE' && !access.canManageMeetings) {
         return reply.code(403).send({ error: 'live_not_published' })
       }
       if (normalizeVisibility(row.visibility) === 'PRIVATE' && !access.canManageMeetings) {
@@ -1568,7 +1623,6 @@ export function registerUserLivesRoutes(app: FastifyInstance, deps: UserLivesDep
 
       const access = await resolveSpaceAccessById(params.data.spaceId, viewerId)
       if (!access) return reply.code(404).send({ error: 'live_not_found' })
-      if (access.isOwner) return reply.code(400).send({ error: 'owner_must_end_live' })
 
       if (access.space.thread_id) {
         await prisma.messageParticipant.deleteMany({
@@ -1580,6 +1634,25 @@ export function registerUserLivesRoutes(app: FastifyInstance, deps: UserLivesDep
       for (const peer of state?.peers ?? []) {
         if (peer.userId === viewerId) {
           await deps.disconnectMeetingRtcPeer({ roomId: access.space.id, peerId: peer.peerId, reason: 'left_live' })
+        }
+      }
+
+      if (access.isOwner) {
+        const refreshedState = await deps.readMeetingRtcRoomState(access.space.id)
+        const remainingManagerPeers = refreshedState?.peers.filter((peer) => peer.userId !== access.space.host_user_id && peer.role === 'manager') ?? []
+
+        if (remainingManagerPeers.length === 0) {
+          await prisma.$executeRaw`
+            UPDATE user_live_space
+            SET status = ${'ARCHIVED'}, updated_at = ${new Date()}
+            WHERE id = ${access.space.id}
+          `
+
+          for (const peer of refreshedState?.peers ?? []) {
+            await deps.disconnectMeetingRtcPeer({ roomId: access.space.id, peerId: peer.peerId, reason: 'live_host_left' })
+          }
+
+          return reply.send({ ok: true, state: 'archived' })
         }
       }
 

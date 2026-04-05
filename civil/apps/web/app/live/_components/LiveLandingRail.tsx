@@ -98,13 +98,12 @@ export default function LiveLandingRail() {
   return (
     <div className="space-y-4">
       <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm">
-        <p className="text-xs font-semibold uppercase tracking-[0.24em] text-emerald-600">Live Actions</p>
         <div className="mt-4 flex flex-col gap-3">
           <button
             type="button"
             onClick={goInstantLive}
             disabled={creatingInstant || creatingSpace}
-            className="inline-flex items-center justify-center rounded-full bg-emerald-600 px-5 py-3 text-sm font-semibold text-white transition hover:bg-emerald-500 disabled:opacity-60"
+            className="inline-flex items-center justify-center rounded-full bg-[var(--cc-primary)] px-5 py-3 text-sm font-semibold text-white transition hover:bg-[var(--cc-primary-700)] disabled:opacity-60"
           >
             {creatingInstant ? 'Starting...' : 'Go Instant Live'}
           </button>

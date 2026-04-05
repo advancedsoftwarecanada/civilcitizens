@@ -433,7 +433,7 @@ export function registerTopicRoutes(app: FastifyInstance, deps: TopicRoutesDeps)
         },
       }
 
-      const [postsTotal, postsLast30Days, follow] = await Promise.all([
+      const [postsTotal, postsLast30Days, followingCount, follow] = await Promise.all([
         prisma.post.count({ where: baseWhere }),
         prisma.post.count({
           where: {
@@ -441,6 +441,11 @@ export function registerTopicRoutes(app: FastifyInstance, deps: TopicRoutesDeps)
             createdAt: {
               gte: last30Days,
             },
+          },
+        }),
+        prisma.topicFollow.count({
+          where: {
+            topicSlug,
           },
         }),
         userId
@@ -460,6 +465,7 @@ export function registerTopicRoutes(app: FastifyInstance, deps: TopicRoutesDeps)
         slug: topicSlug,
         href: `/t/${encodeURIComponent(topicSlug)}`,
         following: Boolean(follow),
+        followingCount,
         postsLast30Days,
         postsTotal,
       })

@@ -745,7 +745,7 @@ export default function UserLiveDraftEditorClient({ spaceId, onSaved }: { spaceI
                 onChange={(event) => setMeeting({ ...meeting, status: event.target.value as 'ACTIVE' | 'ARCHIVED' })}
                 className="w-full rounded-2xl border border-slate-300 px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-emerald-500"
               >
-                <option value="ARCHIVED">Draft</option>
+                <option value="ARCHIVED">Ended</option>
                 <option value="ACTIVE">Live</option>
               </select>
             </label>

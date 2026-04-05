@@ -21,7 +21,7 @@ export default function LinkedText({
   }
 
   const segments = extractLinkedTextSegments(value)
-  const resolvedLinkClassName = linkClassName || 'font-medium text-emerald-700 hover:text-emerald-800 hover:underline'
+  const resolvedLinkClassName = linkClassName || 'font-medium text-[var(--cc-primary)] hover:text-[var(--cc-primary)]/85 hover:underline'
 
   if (segments.some((segment) => segment.kind === 'hashtag')) {
     return <LinkedTextClient segments={segments} className={className} lineClampClassName={lineClampClassName} linkClassName={resolvedLinkClassName} />

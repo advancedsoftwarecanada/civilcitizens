@@ -514,7 +514,7 @@ export default function UserLiveRoomClient({ handle, spaceId }: { handle: string
       })
 
       const parsed = await parseApiResponse(res)
-      const json = parsed.json as { error?: unknown } | null
+      const json = parsed.json as { error?: unknown; state?: string } | null
       const text = parsed.text
       if (!res.ok) {
         pushToast(typeof json?.error === 'string' ? json.error : text || `Unable to ${action === 'end' ? 'end live' : 'leave room'}.`, 'error')
@@ -533,7 +533,7 @@ export default function UserLiveRoomClient({ handle, spaceId }: { handle: string
       if (action === 'leave') {
         setHasExitedRoom(true)
         setParticipants((current) => current.filter((participant) => participant.userId !== data?.viewer?.id))
-        pushToast('Exited live room.', 'success')
+        pushToast(json?.state === 'archived' ? 'Host left. The room is now closed.' : 'Exited live room.', 'success')
         return
       }
 
@@ -592,6 +592,9 @@ export default function UserLiveRoomClient({ handle, spaceId }: { handle: string
   const viewerCanManageRoom = Boolean(canManage)
   const viewerIsSpeaker = viewerSpeakerStatus === 'APPROVED'
   const viewerCanUseBottomBar = !hasExitedRoom && (isOwner || (viewerCanManageRoom && !isOwner) || viewerIsSpeaker)
+  const rightRailHeightClassName = viewerCanUseBottomBar
+    ? 'xl:h-[calc(100dvh-var(--cc-top-nav-offset)-8rem)]'
+    : 'xl:h-[calc(100dvh-var(--cc-top-nav-offset)-2rem)]'
 
   function renderRoleCard(args: {
     title: string
@@ -752,18 +755,18 @@ export default function UserLiveRoomClient({ handle, spaceId }: { handle: string
 
         <button
           type="button"
-          onClick={() => setConfirmModal(isOwner ? 'end' : 'leave')}
+          onClick={() => setConfirmModal('leave')}
           className="inline-flex items-center gap-2 rounded-xl border border-[var(--cc-primary)]/35 bg-[var(--cc-primary)]/8 px-4 py-2 text-sm font-semibold text-[var(--cc-primary)]"
         >
           <HiOutlineXMark className="h-5 w-5" />
-          {isOwner ? 'End Live' : 'Exit room'}
+          {isOwner ? (cohosts.length > 0 ? 'Leave room' : 'Leave and close room') : 'Exit room'}
         </button>
       </div>
     </footer>
   ) : null
 
   const chatRail = (
-    <section className="flex h-[min(100%,calc(100dvh-var(--cc-top-nav-offset)-3rem))] min-h-[34rem] flex-col rounded-[28px] border border-white/70 bg-white/90 p-3 shadow-[0_18px_45px_rgba(15,23,42,0.08)] backdrop-blur sm:p-4 xl:fixed xl:top-[calc(var(--cc-top-nav-offset)+1rem)] xl:right-8 xl:h-[calc(100dvh-var(--cc-top-nav-offset)-2rem)] xl:w-[320px] 2xl:right-[calc((100vw-96rem)/2)] 2xl:w-[360px]">
+    <section className={`flex h-[min(100%,calc(100dvh-var(--cc-top-nav-offset)-3rem))] min-h-[34rem] flex-col rounded-[28px] border border-white/70 bg-white/90 p-3 shadow-[0_18px_45px_rgba(15,23,42,0.08)] backdrop-blur sm:p-4 xl:fixed xl:top-[calc(var(--cc-top-nav-offset)+1rem)] xl:right-8 ${rightRailHeightClassName} xl:w-[320px] 2xl:right-[calc((100vw-96rem)/2)] 2xl:w-[360px]`}>
       <h2 className="mb-3 text-lg font-semibold text-slate-900">Chat</h2>
       <div ref={chatScrollerRef} onScroll={handleChatScroll} className="min-h-0 flex-1 space-y-2 overflow-y-auto rounded-2xl border border-slate-200 bg-slate-50/80 p-3">
         {!hasChat ? <p className="text-sm text-slate-500">Meeting chat unlocks after admission.</p> : null}
@@ -801,7 +804,7 @@ export default function UserLiveRoomClient({ handle, spaceId }: { handle: string
 
   if (status !== 'ready') {
     return (
-      <DashboardShell rightRail={chatRail} showMobileRightRail mainClassName="min-w-0" mainTopClassName="pt-4 md:pt-6" rightRailTopClassName="pt-4 md:pt-6" rightRailClassName="min-h-0 xl:h-[calc(100dvh-var(--cc-top-nav-offset)-2rem)]">
+      <DashboardShell rightRail={chatRail} showMobileRightRail mainClassName="min-w-0" mainTopClassName="pt-4 md:pt-6" rightRailTopClassName="pt-4 md:pt-6" rightRailClassName={`min-h-0 ${rightRailHeightClassName}`}>
         <p className="text-sm text-slate-500">Loading live room...</p>
       </DashboardShell>
     )
@@ -809,7 +812,7 @@ export default function UserLiveRoomClient({ handle, spaceId }: { handle: string
 
   if (!meeting) {
     return (
-      <DashboardShell rightRail={chatRail} showMobileRightRail mainClassName="min-w-0" mainTopClassName="pt-4 md:pt-6" rightRailTopClassName="pt-4 md:pt-6" rightRailClassName="min-h-0 xl:h-[calc(100dvh-var(--cc-top-nav-offset)-2rem)]">
+      <DashboardShell rightRail={chatRail} showMobileRightRail mainClassName="min-w-0" mainTopClassName="pt-4 md:pt-6" rightRailTopClassName="pt-4 md:pt-6" rightRailClassName={`min-h-0 ${rightRailHeightClassName}`}>
         <p className="text-sm text-slate-500">This live room could not be found.</p>
       </DashboardShell>
     )
@@ -817,7 +820,7 @@ export default function UserLiveRoomClient({ handle, spaceId }: { handle: string
 
   return (
     <>
-    <DashboardShell rightRail={chatRail} showMobileRightRail mainClassName={`min-w-0 space-y-6 ${viewerCanUseBottomBar ? 'pb-28' : ''}`} mainTopClassName="pt-4 md:pt-6" rightRailTopClassName="pt-4 md:pt-6" rightRailClassName="min-h-0 xl:h-[calc(100dvh-var(--cc-top-nav-offset)-2rem)]">
+    <DashboardShell rightRail={chatRail} showMobileRightRail mainClassName={`min-w-0 space-y-6 ${viewerCanUseBottomBar ? 'pb-28' : ''}`} mainTopClassName="pt-4 md:pt-6" rightRailTopClassName="pt-4 md:pt-6" rightRailClassName={`min-h-0 ${rightRailHeightClassName}`}>
       <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
         <div className="mb-5 overflow-hidden rounded-[28px] border border-slate-200 bg-slate-100">
           {meeting.coverUrl ? (
@@ -839,7 +842,7 @@ export default function UserLiveRoomClient({ handle, spaceId }: { handle: string
             />
           </div>
           <div className="flex flex-wrap gap-2 text-xs font-medium text-slate-500">
-            <span className={`rounded-full px-3 py-1 ${meeting.status === 'ACTIVE' ? 'bg-rose-100 text-rose-700' : 'bg-slate-100 text-slate-600'}`}>{meeting.status === 'ACTIVE' ? 'Live' : 'Draft'}</span>
+            <span className={`rounded-full px-3 py-1 ${meeting.status === 'ACTIVE' ? 'bg-rose-100 text-rose-700' : 'bg-slate-100 text-slate-600'}`}>{meeting.status === 'ACTIVE' ? 'Live' : 'Ended'}</span>
             <span className="rounded-full bg-slate-100 px-3 py-1">{meeting.visibility === 'PRIVATE' ? 'Private' : 'Public'}</span>
             <span className="rounded-full bg-slate-100 px-3 py-1">{meeting.participantCount ?? 0} participants</span>
           </div>
@@ -986,7 +989,11 @@ export default function UserLiveRoomClient({ handle, spaceId }: { handle: string
         <p className="text-sm text-slate-600">
           {confirmModal === 'end'
             ? 'This will archive the live space and disconnect everyone still connected.'
-            : 'You will leave the live room and stop your current camera, microphone, and speaker session.'}
+            : isOwner
+              ? cohosts.length > 0
+                ? 'You will leave the live room and stop your camera, microphone, and speaker session. Because a co-host is still in the room, the live space will remain open.'
+                : 'You will leave the live room and stop your camera, microphone, and speaker session. With no co-host remaining, the room will be closed.'
+              : 'You will leave the live room and stop your current camera, microphone, and speaker session.'}
         </p>
         <div className="flex justify-end gap-2">
           <button
@@ -1002,7 +1009,7 @@ export default function UserLiveRoomClient({ handle, spaceId }: { handle: string
             disabled={roomActionPending}
             className="rounded-xl bg-[var(--cc-primary)] px-4 py-2 text-sm font-semibold text-white disabled:opacity-60"
           >
-            {roomActionPending ? 'Working...' : confirmModal === 'end' ? 'End live' : 'Exit room'}
+            {roomActionPending ? 'Working...' : confirmModal === 'end' ? 'End live' : isOwner ? (cohosts.length > 0 ? 'Leave room' : 'Leave and close room') : 'Exit room'}
           </button>
         </div>
       </div>
