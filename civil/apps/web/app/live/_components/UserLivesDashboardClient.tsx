@@ -1,6 +1,5 @@
 'use client'
 
-import Link from 'next/link'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import LinkedText from '../../_components/LinkedText'
 import { buildApiUrl, parseApiResponse } from '../../_lib/api'
@@ -12,6 +11,9 @@ type LiveItem = {
   title?: string
   description?: string | null
   coverUrl?: string | null
+  schedule?: {
+    startsAt?: string | null
+  } | null
   visibility?: 'PUBLIC' | 'PRIVATE'
   status?: 'ACTIVE' | 'ARCHIVED'
   launchMode?: 'SPACE' | 'INSTANT'
@@ -31,9 +33,26 @@ type LivesResponse = {
   items?: LiveItem[]
 }
 
+function formatStartsInLabel(startsAt: string | null | undefined, nowMs: number) {
+  if (!startsAt) return null
+  const targetMs = Date.parse(startsAt)
+  if (!Number.isFinite(targetMs) || targetMs <= nowMs) return null
+
+  const diffMinutes = Math.max(1, Math.ceil((targetMs - nowMs) / 60000))
+  const days = Math.floor(diffMinutes / (60 * 24))
+  const hours = Math.floor((diffMinutes % (60 * 24)) / 60)
+  const minutes = diffMinutes % 60
+  const parts: string[] = []
+  if (days > 0) parts.push(`${days} day${days === 1 ? '' : 's'}`)
+  if (hours > 0) parts.push(`${hours} hour${hours === 1 ? '' : 's'}`)
+  if (minutes > 0 || parts.length === 0) parts.push(`${minutes} minute${minutes === 1 ? '' : 's'}`)
+  return `Starts in ${parts.join(', ')}`
+}
+
 export default function UserLivesDashboardClient() {
   const [status, setStatus] = useState<'idle' | 'loading' | 'ready'>('idle')
   const [data, setData] = useState<LivesResponse | null>(null)
+  const [nowMs, setNowMs] = useState(() => Date.now())
 
   const load = useCallback(async () => {
     setStatus('loading')
@@ -74,8 +93,12 @@ export default function UserLivesDashboardClient() {
     void load()
   }, [load])
 
+  useEffect(() => {
+    const intervalId = window.setInterval(() => setNowMs(Date.now()), 60000)
+    return () => window.clearInterval(intervalId)
+  }, [])
+
   const items = useMemo(() => (Array.isArray(data?.items) ? data.items.filter(Boolean) : []), [data?.items])
-  const viewerHandle = data?.viewer?.handle?.trim() || null
   const canManage = Boolean(data?.viewer?.canManageMeetings)
 
   if (status !== 'ready') {
@@ -107,7 +130,13 @@ export default function UserLivesDashboardClient() {
           </div>
         ) : null}
         {items.map((item) => {
-          const publicHref = viewerHandle ? `/u/${encodeURIComponent(viewerHandle)}/live/${encodeURIComponent(item.id)}` : null
+          const startsInLabel = formatStartsInLabel(item.schedule?.startsAt, nowMs)
+          const stateLabel = item.status === 'ACTIVE' ? 'Live' : startsInLabel ? 'Scheduled' : 'Ended'
+          const stateClassName = item.status === 'ACTIVE'
+            ? 'bg-emerald-100 text-emerald-700'
+            : startsInLabel
+              ? 'bg-[var(--cc-primary)]/10 text-[var(--cc-primary)]'
+              : 'bg-slate-100 text-slate-600'
           return (
             <article key={item.id} className="overflow-hidden rounded-3xl border border-slate-200 bg-white shadow-sm">
               <div className="border-b border-slate-200 bg-slate-100">
@@ -128,32 +157,17 @@ export default function UserLivesDashboardClient() {
                     <span>{item.visibility === 'PRIVATE' ? 'Private' : 'Public'}</span>
                   </div>
                   <h2 className="mt-2 text-xl font-semibold text-slate-900">{item.title?.trim() || 'Untitled live space'}</h2>
+                  {startsInLabel ? <p className="mt-3 text-sm font-semibold text-[var(--cc-primary)]">{startsInLabel}</p> : null}
                   <LinkedText text={item.description} emptyFallback="No description yet." className="mt-3 text-sm text-slate-600" />
                 </div>
-                <span className={`rounded-full px-3 py-1 text-xs font-semibold ${item.status === 'ACTIVE' ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-600'}`}>
-                  {item.status === 'ACTIVE' ? 'Live' : 'Ended'}
+                <span className={`rounded-full px-3 py-1 text-xs font-semibold ${stateClassName}`}>
+                  {stateLabel}
                 </span>
               </div>
               <div className="mt-4 flex flex-wrap gap-2 text-xs font-medium text-slate-500">
                 <span className="rounded-full bg-slate-100 px-3 py-1">{item.participantCount ?? 0} participants</span>
                 {item.requiresManualAdmit ? <span className="rounded-full bg-amber-100 px-3 py-1 text-amber-700">Manual admit</span> : null}
                 {item.requiresPassword ? <span className="rounded-full bg-amber-100 px-3 py-1 text-amber-700">Password</span> : null}
-              </div>
-              <div className="mt-5 flex flex-wrap gap-3">
-                <Link
-                  href={`/live/manage/${encodeURIComponent(item.id)}`}
-                  className="inline-flex items-center justify-center rounded-full border border-slate-300 px-4 py-2 text-sm font-semibold text-slate-700 transition hover:border-slate-400 hover:text-slate-900"
-                >
-                  Manage
-                </Link>
-                {publicHref ? (
-                  <Link
-                    href={publicHref}
-                    className="inline-flex items-center justify-center rounded-full bg-slate-900 px-4 py-2 text-sm font-semibold text-white transition hover:bg-slate-700"
-                  >
-                    {item.status === 'ACTIVE' ? 'Open Room' : 'View Room'}
-                  </Link>
-                ) : null}
               </div>
               </div>
             </article>

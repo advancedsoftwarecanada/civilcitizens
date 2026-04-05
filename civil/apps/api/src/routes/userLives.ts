@@ -36,6 +36,7 @@ type UserLiveSpaceRow = {
   title: string
   description: string | null
   cover_url: string | null
+  schedule_starts_at: Date | null
   visibility: string
   status: string
   launch_mode: string
@@ -113,6 +114,7 @@ const LiveCreateBody = z
     title: z.string().trim().min(1).max(180),
     description: z.string().trim().max(1000).optional().nullable(),
     coverUrl: z.string().trim().min(1).max(2000).optional().nullable(),
+    startsAt: z.string().trim().min(1).max(64).optional().nullable(),
     visibility: z.enum(['PUBLIC', 'PRIVATE']).default('PUBLIC'),
     requiresPassword: z.boolean().default(false),
     password: z.string().trim().min(1).max(128).optional().nullable(),
@@ -133,6 +135,7 @@ const LiveUpdateBody = z
     title: z.string().trim().min(1).max(180).optional(),
     description: z.string().trim().max(1000).optional().nullable(),
     coverUrl: z.string().trim().min(1).max(2000).optional().nullable(),
+    startsAt: z.string().trim().min(1).max(64).optional().nullable(),
     visibility: z.enum(['PUBLIC', 'PRIVATE']).optional(),
     requiresPassword: z.boolean().optional(),
     password: z.string().trim().min(1).max(128).optional().nullable(),
@@ -206,6 +209,16 @@ function normalizeMaxParticipants(value: number | null | undefined): number | nu
   return Math.max(1, Math.min(100, Math.trunc(value)))
 }
 
+function normalizeScheduleStartsAt(value: string | Date | null | undefined): Date | null {
+  if (value instanceof Date) {
+    return Number.isFinite(value.getTime()) ? value : null
+  }
+  const source = typeof value === 'string' ? value.trim() : ''
+  if (!source) return null
+  const parsed = new Date(source)
+  return Number.isFinite(parsed.getTime()) ? parsed : null
+}
+
 function toDisplayTitleCase(value: string): string {
   const source = value.trim()
   if (!source) return ''
@@ -227,10 +240,15 @@ function mapSpaceRowForViewer(args: {
 }) {
   const status = normalizeStatus(args.row.status)
   const visibility = normalizeVisibility(args.row.visibility)
+  const scheduleStartsAt = normalizeScheduleStartsAt(args.row.schedule_starts_at)
+  const isScheduledFuture = Boolean(scheduleStartsAt && scheduleStartsAt.getTime() > Date.now())
 
   let canJoinNow = true
   let blockedReason: string | null = null
-  if (status !== 'ACTIVE' && !args.canManageMeetings) {
+  if (isScheduledFuture && !args.canManageMeetings) {
+    canJoinNow = false
+    blockedReason = 'live_not_started'
+  } else if (status !== 'ACTIVE' && !args.canManageMeetings) {
     canJoinNow = false
     blockedReason = 'live_not_published'
   } else if (visibility === 'PRIVATE' && !args.canManageMeetings && !args.isParticipant && args.admissionStatus !== 'ADMITTED') {
@@ -267,7 +285,7 @@ function mapSpaceRowForViewer(args: {
     canJoinNow,
     blockedReason,
     schedule: {
-      startsAt: null,
+      startsAt: scheduleStartsAt?.toISOString() ?? null,
       endsAt: null,
     },
     threadId: exposeThreadId ? args.row.thread_id ?? null : null,
@@ -275,7 +293,7 @@ function mapSpaceRowForViewer(args: {
   }
 }
 
-async function ensureUserLiveTables() {
+export async function ensureUserLiveTables() {
   if (userLiveTablesReady) return userLiveTablesReady
 
   userLiveTablesReady = (async () => {
@@ -288,6 +306,7 @@ async function ensureUserLiveTables() {
           title TEXT NOT NULL,
           description TEXT,
           cover_url TEXT,
+          schedule_starts_at TIMESTAMPTZ,
           visibility TEXT NOT NULL DEFAULT 'PUBLIC',
           status TEXT NOT NULL DEFAULT 'ARCHIVED',
           launch_mode TEXT NOT NULL DEFAULT 'SPACE',
@@ -309,6 +328,11 @@ async function ensureUserLiveTables() {
       await prisma.$executeRawUnsafe(`
         ALTER TABLE user_live_space
         ADD COLUMN IF NOT EXISTS cover_url TEXT;
+      `)
+
+      await prisma.$executeRawUnsafe(`
+        ALTER TABLE user_live_space
+        ADD COLUMN IF NOT EXISTS schedule_starts_at TIMESTAMPTZ;
       `)
 
       await prisma.$executeRawUnsafe(`
@@ -424,6 +448,7 @@ async function resolveSpaceAccessById(spaceId: string, viewerId: string | null):
       space.title,
       space.description,
       space.cover_url,
+      space.schedule_starts_at,
       space.visibility,
       space.status,
       space.launch_mode,
@@ -795,6 +820,7 @@ export function registerUserLivesRoutes(app: FastifyInstance, deps: UserLivesDep
           title,
           description,
           cover_url,
+          schedule_starts_at,
           visibility,
           status,
           launch_mode,
@@ -808,7 +834,12 @@ export function registerUserLivesRoutes(app: FastifyInstance, deps: UserLivesDep
         FROM user_live_space
         WHERE host_user_id = ${viewerId}
         ORDER BY
-          CASE WHEN status = 'ACTIVE' THEN 0 ELSE 1 END,
+          CASE
+            WHEN status = 'ACTIVE' THEN 0
+            WHEN schedule_starts_at IS NOT NULL AND schedule_starts_at >= NOW() THEN 1
+            ELSE 2
+          END,
+          schedule_starts_at ASC NULLS LAST,
           updated_at DESC
         LIMIT 200
       `)) as UserLiveSpaceRow[]
@@ -867,6 +898,7 @@ export function registerUserLivesRoutes(app: FastifyInstance, deps: UserLivesDep
           title,
           description,
           cover_url,
+          schedule_starts_at,
           visibility,
           status,
           launch_mode,
@@ -883,6 +915,7 @@ export function registerUserLivesRoutes(app: FastifyInstance, deps: UserLivesDep
           ${viewerId},
           ${viewerId},
           ${title},
+          ${null},
           ${null},
           ${null},
           ${'PUBLIC'},
@@ -927,6 +960,7 @@ export function registerUserLivesRoutes(app: FastifyInstance, deps: UserLivesDep
       const title = deps.sanitizePlainText(body.data.title).trim() || 'Untitled live space'
       const description = body.data.description ? deps.sanitizePlainText(body.data.description).trim() || null : null
       const coverUrl = body.data.coverUrl ? deps.normalizeMediaUrl(body.data.coverUrl) ?? body.data.coverUrl.trim() : null
+      const startsAt = normalizeScheduleStartsAt(body.data.startsAt)
       const requiresPassword = body.data.requiresPassword
       const passwordHash = requiresPassword && body.data.password ? hashMeetingPassword(body.data.password.trim()) : null
       const threadId = await ensureUserLiveThread({
@@ -945,6 +979,7 @@ export function registerUserLivesRoutes(app: FastifyInstance, deps: UserLivesDep
           title,
           description,
           cover_url,
+          schedule_starts_at,
           visibility,
           status,
           launch_mode,
@@ -963,6 +998,7 @@ export function registerUserLivesRoutes(app: FastifyInstance, deps: UserLivesDep
           ${title},
           ${description},
           ${coverUrl},
+          ${startsAt},
           ${body.data.visibility},
           ${body.data.status},
           ${body.data.launchMode},
@@ -1034,6 +1070,9 @@ export function registerUserLivesRoutes(app: FastifyInstance, deps: UserLivesDep
         : body.data.coverUrl
           ? deps.normalizeMediaUrl(body.data.coverUrl) ?? body.data.coverUrl.trim()
           : null
+      const nextStartsAt = body.data.startsAt === undefined
+        ? access.space.schedule_starts_at
+        : normalizeScheduleStartsAt(body.data.startsAt)
       const nextVisibility = body.data.visibility === undefined ? normalizeVisibility(access.space.visibility) : body.data.visibility
       const nextStatus = body.data.status === undefined ? normalizeStatus(access.space.status) : body.data.status
       const nextRequiresPassword = body.data.requiresPassword === undefined ? Boolean(access.space.requires_password) : body.data.requiresPassword
@@ -1055,6 +1094,7 @@ export function registerUserLivesRoutes(app: FastifyInstance, deps: UserLivesDep
           title = ${nextTitle},
           description = ${nextDescription},
           cover_url = ${nextCoverUrl},
+          schedule_starts_at = ${nextStartsAt},
           visibility = ${nextVisibility},
           status = ${nextStatus},
           requires_password = ${nextRequiresPassword},
@@ -1120,6 +1160,7 @@ export function registerUserLivesRoutes(app: FastifyInstance, deps: UserLivesDep
           title,
           description,
           cover_url,
+          schedule_starts_at,
           visibility,
           status,
           launch_mode,
@@ -1134,7 +1175,12 @@ export function registerUserLivesRoutes(app: FastifyInstance, deps: UserLivesDep
         WHERE host_user_id = ${host.id}
           ${includeArchived ? Prisma.empty : Prisma.sql`AND status = 'ACTIVE' AND visibility = 'PUBLIC'`}
         ORDER BY
-          CASE WHEN status = 'ACTIVE' THEN 0 ELSE 1 END,
+          CASE
+            WHEN status = 'ACTIVE' THEN 0
+            WHEN schedule_starts_at IS NOT NULL AND schedule_starts_at >= NOW() THEN 1
+            ELSE 2
+          END,
+          schedule_starts_at ASC NULLS LAST,
           updated_at DESC
         LIMIT 200
       `)) as UserLiveSpaceRow[]
@@ -1174,8 +1220,10 @@ export function registerUserLivesRoutes(app: FastifyInstance, deps: UserLivesDep
 
       const unhostedResult = await archiveLiveSpaceIfUnhosted({ access, deps })
       const effectiveStatus = unhostedResult.archived ? 'ARCHIVED' : normalizeStatus(access.space.status)
+      const scheduleStartsAt = normalizeScheduleStartsAt(access.space.schedule_starts_at)
+      const isScheduledFuture = Boolean(scheduleStartsAt && scheduleStartsAt.getTime() > Date.now())
 
-      if (effectiveStatus !== 'ACTIVE' && !access.canManageMeetings) {
+      if (effectiveStatus !== 'ACTIVE' && !access.canManageMeetings && !isScheduledFuture) {
         return reply.code(403).send({ error: 'live_not_published' })
       }
       if (normalizeVisibility(access.space.visibility) === 'PRIVATE' && !access.canManageMeetings) {

@@ -16,6 +16,7 @@ type LiveMeeting = {
   title: string
   description: string | null
   coverUrl: string | null
+  startsAt: string | null
   visibility: 'PUBLIC' | 'PRIVATE'
   status: 'ACTIVE' | 'ARCHIVED'
   requiresPassword: boolean
@@ -53,6 +54,7 @@ const DEFAULT_CREATE_BODY = {
   title: 'Untitled live space',
   description: null,
   coverUrl: null,
+  startsAt: null,
   visibility: 'PUBLIC',
   requiresPassword: false,
   password: null,
@@ -103,6 +105,43 @@ function pickVariantUrl(variants?: Record<string, { url?: string | null } | null
   }
   const fallback = Object.values(variants).find((variant) => variant?.url)
   return fallback?.url ?? null
+}
+
+function pad2(value: number) {
+  return String(value).padStart(2, '0')
+}
+
+function formatDateInputValue(isoString: string | null | undefined) {
+  if (!isoString) return ''
+  const value = new Date(isoString)
+  if (!Number.isFinite(value.getTime())) return ''
+  return `${value.getFullYear()}-${pad2(value.getMonth() + 1)}-${pad2(value.getDate())}`
+}
+
+function formatTimeInputValue(isoString: string | null | undefined) {
+  if (!isoString) return ''
+  const value = new Date(isoString)
+  if (!Number.isFinite(value.getTime())) return ''
+  return `${pad2(value.getHours())}:${pad2(value.getMinutes())}`
+}
+
+function combineScheduleDateTime(dateValue: string, timeValue: string) {
+  const trimmedDate = dateValue.trim()
+  if (!trimmedDate) return null
+  const trimmedTime = timeValue.trim() || '00:00'
+  const combined = new Date(`${trimmedDate}T${trimmedTime}`)
+  return Number.isFinite(combined.getTime()) ? combined.toISOString() : null
+}
+
+function hydrateMeeting(raw: any): LiveMeeting {
+  return {
+    ...raw,
+    startsAt: typeof raw?.startsAt === 'string'
+      ? raw.startsAt
+      : typeof raw?.schedule?.startsAt === 'string'
+        ? raw.schedule.startsAt
+        : null,
+  }
 }
 
 async function waitForAssetReady(token: string, assetId: string) {
@@ -216,7 +255,7 @@ export default function UserLiveDraftEditorClient({ spaceId, onSaved }: { spaceI
         setStatus('error')
         return
       }
-      setMeeting(json.meeting)
+      setMeeting(hydrateMeeting(json.meeting))
       setPublicHref(typeof json.host?.href === 'string' ? json.host.href : null)
       setPassword('')
       setCoverUploadStatus('idle')
@@ -261,6 +300,7 @@ export default function UserLiveDraftEditorClient({ spaceId, onSaved }: { spaceI
           title: nextMeeting.title,
           description: nextMeeting.description,
           coverUrl: nextMeeting.coverUrl,
+          startsAt: nextMeeting.startsAt,
           visibility: nextMeeting.visibility,
           status: nextMeeting.status,
           requiresPassword: nextMeeting.requiresPassword,
@@ -284,11 +324,11 @@ export default function UserLiveDraftEditorClient({ spaceId, onSaved }: { spaceI
         return false
       }
 
-      setMeeting(json.meeting)
+      setMeeting(hydrateMeeting(json.meeting))
       setPublicHref(typeof json.host?.href === 'string' ? json.host.href : publicHref)
       setPassword('')
       setStatus('ready')
-      onSaved?.(json.meeting)
+      onSaved?.(hydrateMeeting(json.meeting))
       if (options?.successMessage) {
         pushToast(options.successMessage, 'success')
       }
@@ -582,6 +622,8 @@ export default function UserLiveDraftEditorClient({ spaceId, onSaved }: { spaceI
   const isBusy = status === 'creating' || status === 'loading' || status === 'saving'
   const maxParticipantsValue = useMemo(() => Math.max(1, Math.min(100, Number(meeting?.maxParticipants ?? 100) || 100)), [meeting?.maxParticipants])
   const coverImageUrl = coverDraft.previewUrl || meeting?.coverUrl || null
+  const scheduleDateValue = formatDateInputValue(meeting?.startsAt)
+  const scheduleTimeValue = formatTimeInputValue(meeting?.startsAt)
 
   if (status === 'idle' || status === 'creating' || status === 'loading') {
     return <p className="text-sm text-slate-500">Loading live space...</p>
@@ -725,6 +767,51 @@ export default function UserLiveDraftEditorClient({ spaceId, onSaved }: { spaceI
             />
             <p className="text-right text-xs text-slate-500">{(meeting.description ?? '').length}/1000</p>
           </label>
+
+          <div className="space-y-2 rounded-3xl border border-slate-200 bg-slate-50/80 p-4">
+            <div>
+              <p className="text-sm font-semibold text-slate-800">Schedule start</p>
+              <p className="text-xs text-slate-500">Pick when this live space should appear as upcoming. Leave it blank to keep it unscheduled.</p>
+            </div>
+            <div className="grid gap-4 sm:grid-cols-2">
+              <label className="block space-y-2">
+                <span className="text-sm font-semibold text-slate-700">Date</span>
+                <input
+                  type="date"
+                  value={scheduleDateValue}
+                  onChange={(event) => setMeeting({
+                    ...meeting,
+                    startsAt: combineScheduleDateTime(event.target.value, scheduleTimeValue),
+                  })}
+                  className="w-full rounded-2xl border border-slate-300 px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-emerald-500"
+                />
+              </label>
+              <label className="block space-y-2">
+                <span className="text-sm font-semibold text-slate-700">Time</span>
+                <input
+                  type="time"
+                  value={scheduleTimeValue}
+                  onChange={(event) => setMeeting({
+                    ...meeting,
+                    startsAt: combineScheduleDateTime(scheduleDateValue, event.target.value),
+                  })}
+                  className="w-full rounded-2xl border border-slate-300 px-4 py-3 text-sm text-slate-900 outline-none transition focus:border-emerald-500"
+                />
+              </label>
+            </div>
+            {meeting.startsAt ? (
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <p className="text-xs text-slate-500">Scheduled for {new Date(meeting.startsAt).toLocaleString()}</p>
+                <button
+                  type="button"
+                  onClick={() => setMeeting({ ...meeting, startsAt: null })}
+                  className="text-xs font-semibold text-[var(--cc-primary)] transition hover:text-[var(--cc-primary-700)]"
+                >
+                  Clear schedule
+                </button>
+              </div>
+            ) : null}
+          </div>
 
           <div className="grid gap-4 sm:grid-cols-2">
             <label className="block space-y-2">

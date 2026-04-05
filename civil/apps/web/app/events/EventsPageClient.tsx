@@ -10,6 +10,7 @@ import { buildApiUrl } from '../_lib/api'
 import { DEFAULT_EVENT_CATEGORY, EVENT_CATEGORIES, type EventCategory } from '../com/_lib/eventCategories'
 
 type EventFeedItem = {
+  kind?: 'ORGANIZATION_EVENT' | 'LIVE_SPACE'
   id: string
   title: string
   description: string | null
@@ -27,6 +28,7 @@ type EventFeedItem = {
   status: 'DRAFT' | 'PUBLISHED'
   createdAt: string
   updatedAt: string
+  detailHref?: string | null
   organization: {
     id: string
     name: string
@@ -129,6 +131,7 @@ function getEventOrganizationHref(event: EventFeedItem): string | null {
 }
 
 function getEventDetailHref(event: EventFeedItem): string {
+  if (event.detailHref) return event.detailHref
   if (event.organization.provinceCode && event.organization.communitySlug && event.organization.slug) {
     return `/com/${encodeURIComponent(event.organization.provinceCode.toLowerCase())}/${encodeURIComponent(event.organization.communitySlug)}/orgs/${encodeURIComponent(event.organization.slug)}/events/${encodeURIComponent(event.id)}`
   }
@@ -435,6 +438,9 @@ export default function EventsPageClient() {
                         <Link href={detailHref} className="block" onClick={(clickEvent) => clickEvent.stopPropagation()}>
                           <div className="relative h-36 w-full overflow-hidden rounded-xl bg-slate-100 sm:h-32">
                             {event.primaryPhotoUrl ? <img src={event.primaryPhotoUrl} alt={event.title} className="h-full w-full object-cover" /> : null}
+                            {event.kind === 'LIVE_SPACE' ? (
+                              <span className="absolute left-2 top-2 rounded-full bg-[var(--cc-primary)]/90 px-2 py-1 text-xs font-semibold text-white">Scheduled Live</span>
+                            ) : null}
                             {isEnded ? (
                               <span className="absolute left-2 top-2 rounded-full bg-slate-700/90 px-2 py-1 text-xs font-semibold text-white">Sales Ended</span>
                             ) : null}
