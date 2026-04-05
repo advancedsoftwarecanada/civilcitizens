@@ -53,6 +53,9 @@ export type ApiPost = {
     assetId: string
     playbackUrl?: string | null
     thumbnailUrl?: string | null
+    kind?: 'video' | 'podcast'
+    sourceType?: 'video' | 'audio'
+    mime?: string | null
     durationMs?: number | null
     width?: number | null
     height?: number | null
@@ -209,6 +212,7 @@ type PostComposerProps = {
   defaultAudience?: 'friends' | 'family' | 'network' | 'community' | 'business'
   allowFamilyAudience?: boolean
   hideAudience?: boolean
+  videoKind?: 'video' | 'podcast'
 }
 
 const MAX_POST_LENGTH = 5000
@@ -220,10 +224,13 @@ const MAX_POLL_OPTIONS = 10
 const PHOTO_MAX_BYTES = 25 * 1024 * 1024
 const VIDEO_MAX_BYTES = 500 * 1024 * 1024
 const VIDEO_MAX_DURATION_MS = 5 * 60 * 1000
+const PODCAST_MAX_DURATION_MS = 3 * 60 * 60 * 1000
 const ACCEPTED_IMAGE_TYPES = 'image/jpeg,image/png,image/webp,image/avif,image/heic,image/heif'
 const ACCEPTED_IMAGE_TYPE_LIST = ACCEPTED_IMAGE_TYPES.split(',')
 const ACCEPTED_VIDEO_TYPES = 'video/mp4,video/quicktime,video/webm,video/x-m4v'
 const ACCEPTED_VIDEO_TYPE_LIST = ACCEPTED_VIDEO_TYPES.split(',')
+const ACCEPTED_AUDIO_TYPES = 'audio/mpeg,audio/mp3,audio/mp4,audio/x-m4a,audio/aac,audio/wav,audio/webm,audio/ogg'
+const ACCEPTED_AUDIO_TYPE_LIST = ACCEPTED_AUDIO_TYPES.split(',')
 
 const FRIENDS_VALUE = 'friends'
 const FAMILY_VALUE = 'family'
@@ -321,12 +328,13 @@ function resolveComposerPostType(defaultPostType: PostType, allowedPostTypes: Po
   return allowedPostTypes.includes(normalizedDefault) ? normalizedDefault : allowedPostTypes[0] ?? 'post'
 }
 
-function getVideoProgressDisplay(video: Pick<VideoItem, 'status' | 'progressPercent' | 'progressLabel'>) {
+function getVideoProgressDisplay(video: Pick<VideoItem, 'status' | 'progressPercent' | 'progressLabel' | 'sourceType'>) {
   if (typeof video.progressPercent === 'number' && video.progressLabel) {
     return `${video.progressPercent}% ${video.progressLabel}`
   }
-  if (video.status === 'uploading') return 'Uploading Video'
-  if (video.status === 'processing') return 'Processing Video'
+  const mediaLabel = video.sourceType === 'audio' ? 'Audio' : 'Video'
+  if (video.status === 'uploading') return `Uploading ${mediaLabel}`
+  if (video.status === 'processing') return `Processing ${mediaLabel}`
   if (video.status === 'ready') return 'Ready'
   if (video.status === 'error') return 'Failed'
   return ''
@@ -410,6 +418,9 @@ type VideoItem = {
   assetId?: string | null
   playbackUrl?: string | null
   thumbnailUrl?: string | null
+  kind?: 'video' | 'podcast'
+  sourceType?: 'video' | 'audio'
+  mime?: string | null
   durationMs?: number | null
   width?: number | null
   height?: number | null
@@ -497,9 +508,12 @@ const TEXTAREA_MIRROR_STYLE_PROPS = [
   'tab-size',
 ] as const
 
-const pickVideoVariantUrl = (variants?: Record<string, { url?: string | null } | null>) => {
+const pickMediaVariantUrl = (
+  variants: Record<string, { url?: string | null } | null> | undefined,
+  sourceType: 'video' | 'audio',
+) => {
   if (!variants) return null
-  return variants['video-720p']?.url ?? null
+  return sourceType === 'audio' ? variants['audio-original']?.url ?? null : variants['video-720p']?.url ?? null
 }
 
 const pickVideoThumbnailUrl = (variants?: Record<string, { url?: string | null } | null>) => {
@@ -507,10 +521,31 @@ const pickVideoThumbnailUrl = (variants?: Record<string, { url?: string | null }
   return variants['video-thumb']?.url ?? null
 }
 
-const readVideoMetadata = async (file: File): Promise<{ width: number; height: number; durationMs: number } | null> => {
+const readMediaMetadata = async (file: File): Promise<{ width: number; height: number; durationMs: number; sourceType: 'video' | 'audio' } | null> => {
   try {
     const objectUrl = URL.createObjectURL(file)
     return await new Promise((resolve) => {
+      if (file.type.startsWith('audio/')) {
+        const audio = document.createElement('audio')
+        audio.preload = 'metadata'
+        audio.onloadedmetadata = () => {
+          const durationSeconds = Number.isFinite(audio.duration) ? audio.duration : 0
+          resolve({
+            width: 0,
+            height: 0,
+            durationMs: Math.round(durationSeconds * 1000),
+            sourceType: 'audio',
+          })
+          URL.revokeObjectURL(objectUrl)
+        }
+        audio.onerror = () => {
+          resolve(null)
+          URL.revokeObjectURL(objectUrl)
+        }
+        audio.src = objectUrl
+        return
+      }
+
       const video = document.createElement('video')
       video.preload = 'metadata'
       video.onloadedmetadata = () => {
@@ -519,6 +554,7 @@ const readVideoMetadata = async (file: File): Promise<{ width: number; height: n
           width: video.videoWidth || 0,
           height: video.videoHeight || 0,
           durationMs: Math.round(durationSeconds * 1000),
+          sourceType: 'video',
         })
         URL.revokeObjectURL(objectUrl)
       }
@@ -648,6 +684,7 @@ export default function PostComposer({
   defaultAudience = 'friends',
   allowFamilyAudience = false,
   hideAudience = false,
+  videoKind = 'video',
 }: PostComposerProps) {
   const containerRef = useRef<HTMLDivElement | null>(null)
   const composerChoices = useMemo(() => {
@@ -680,6 +717,8 @@ export default function PostComposer({
   const [pollQuestionScrollTop, setPollQuestionScrollTop] = useState(0)
   const [visibility, setVisibility] = useState<PostVisibility>('public')
   const [showBusinessAuthor, setShowBusinessAuthor] = useState(false)
+  const isPodcastComposer = videoKind === 'podcast'
+  const acceptedMediaTypes = isPodcastComposer ? `${ACCEPTED_VIDEO_TYPES},${ACCEPTED_AUDIO_TYPES}` : `${ACCEPTED_IMAGE_TYPES},${ACCEPTED_VIDEO_TYPES}`
   const normalizedCommunityOptions = useMemo(() => {
     return communityOptions.map((option) => ({
       ...option,
@@ -1171,13 +1210,14 @@ export default function PostComposer({
   }, [])
 
   const startVideoUpload = useCallback(async (nextVideo: VideoItem, file: File) => {
-    setVideo({ ...nextVideo, status: 'uploading', progressPercent: 1, progressLabel: 'Uploading Video', error: null })
+    const uploadLabel = nextVideo.sourceType === 'audio' ? 'Uploading Audio' : 'Uploading Video'
+    setVideo({ ...nextVideo, status: 'uploading', progressPercent: 1, progressLabel: uploadLabel, error: null })
     const token = typeof window !== 'undefined' ? localStorage.getItem('token') : null
     if (!token) {
       redirectToAuthModal('login')
       setVideo((current) =>
         current && current.id === nextVideo.id
-          ? { ...current, status: 'error', progressPercent: null, progressLabel: 'Failed', error: 'Sign in to upload a video.' }
+          ? { ...current, status: 'error', progressPercent: null, progressLabel: 'Failed', error: 'Sign in to upload media.' }
           : current,
       )
       return
@@ -1192,6 +1232,7 @@ export default function PostComposer({
         },
         body: JSON.stringify({
           category: 'post_video',
+          videoKind,
           mime: file.type || 'application/octet-stream',
           byteSize: file.size,
           filename: file.name,
@@ -1216,7 +1257,7 @@ export default function PostComposer({
         return await uploadFileWithProgress(upload.url, upload.method || 'PUT', upload.headers, file, (percent) => {
           setVideo((current) =>
             current && current.id === nextVideo.id
-              ? { ...current, status: 'uploading', progressPercent: percent, progressLabel: 'Uploading Video' }
+              ? { ...current, status: 'uploading', progressPercent: percent, progressLabel: uploadLabel }
               : current,
           )
         })
@@ -1236,7 +1277,7 @@ export default function PostComposer({
           (percent) => {
             setVideo((current) =>
               current && current.id === nextVideo.id
-                ? { ...current, status: 'uploading', progressPercent: percent, progressLabel: 'Uploading Video' }
+                ? { ...current, status: 'uploading', progressPercent: percent, progressLabel: uploadLabel }
                 : current,
             )
           },
@@ -1306,16 +1347,16 @@ export default function PostComposer({
                     assetId,
                     status: 'processing',
                     progressPercent: computeVideoProcessingPercent(attempt, 60, asset?.transcodeJob?.status),
-                    progressLabel: asset?.transcodeJob?.status === 'QUEUED' ? 'Queued for Processing' : 'Processing Video',
+                    progressLabel: asset?.transcodeJob?.status === 'QUEUED' ? 'Queued for Processing' : nextVideo.sourceType === 'audio' ? 'Processing Audio' : 'Processing Video',
                   }
                 : current,
             )
           }
 
           if (asset?.status === 'ready') {
-            const playbackUrl = pickVideoVariantUrl(asset.variants)
-            const thumbnailUrl = pickVideoThumbnailUrl(asset.variants)
-            if (!playbackUrl || !thumbnailUrl) {
+            const playbackUrl = pickMediaVariantUrl(asset.variants, nextVideo.sourceType ?? 'video')
+            const thumbnailUrl = nextVideo.sourceType === 'audio' ? null : pickVideoThumbnailUrl(asset.variants)
+            if (!playbackUrl || (nextVideo.sourceType !== 'audio' && !thumbnailUrl)) {
               throw new Error('variant_missing')
             }
             setVideo((current) =>
@@ -1325,6 +1366,9 @@ export default function PostComposer({
                     assetId,
                     playbackUrl,
                     thumbnailUrl,
+                    kind: nextVideo.kind,
+                    sourceType: nextVideo.sourceType,
+                    mime: nextVideo.mime,
                     durationMs: asset.durationMs ?? current.durationMs,
                     width: asset.width ?? current.width,
                     height: asset.height ?? current.height,
@@ -1355,7 +1399,7 @@ export default function PostComposer({
           : current,
       )
     }
-  }, [])
+  }, [videoKind])
 
   const canSubmit = useMemo(() => {
     if (postType === 'poll') {
@@ -1469,6 +1513,7 @@ export default function PostComposer({
       }
       if (readyVideo?.assetId) {
         payload.videoAssetId = readyVideo.assetId
+        payload.videoKind = videoKind
       }
 
       const targetCommunity = activeCommunity
@@ -1531,7 +1576,7 @@ export default function PostComposer({
     } finally {
       setSubmitting(false)
     }
-  }, [activeBusinessTarget, activeCommunity, articleBody, articleTitle, audienceSelection, canSubmit, causeGoalAmountCents, communityTarget, draft, normalizedPollOptions, onPostCreated, pollResultsVisibility, postType, readyPhotoUrls, readyVideo, resetComposer, showBusinessAuthor, submitting, visibility])
+  }, [activeBusinessTarget, activeCommunity, articleBody, articleTitle, audienceSelection, canSubmit, causeGoalAmountCents, communityTarget, draft, normalizedPollOptions, onPostCreated, pollResultsVisibility, postType, readyPhotoUrls, readyVideo, resetComposer, showBusinessAuthor, submitting, videoKind, visibility])
 
   const composerAuthorName = useMemo(() => {
     if (!me) return 'You'
@@ -1556,9 +1601,9 @@ export default function PostComposer({
         const file = files[i]
         if (!file) continue
 
-        if (ACCEPTED_VIDEO_TYPE_LIST.includes(file.type)) {
+        if (ACCEPTED_VIDEO_TYPE_LIST.includes(file.type) || (isPodcastComposer && ACCEPTED_AUDIO_TYPE_LIST.includes(file.type))) {
           if (postType !== 'post') {
-            pushToast(`Skipped ${file.name}: Videos can only be attached to regular posts right now.`, 'error')
+            pushToast(`Skipped ${file.name}: Media uploads can only be attached to regular posts right now.`, 'error')
             continue
           }
           if (video || newVideo || photos.length > 0 || newPhotos.length > 0) {
@@ -1569,13 +1614,14 @@ export default function PostComposer({
             pushToast(`Skipped ${file.name}: File too large (max 500MB).`, 'error')
             continue
           }
-          const metadata = await readVideoMetadata(file)
+          const metadata = await readMediaMetadata(file)
           if (!metadata || metadata.durationMs <= 0) {
-            pushToast(`Skipped ${file.name}: Could not read video.`, 'error')
+            pushToast(`Skipped ${file.name}: Could not read media.`, 'error')
             continue
           }
-          if (metadata.durationMs > VIDEO_MAX_DURATION_MS) {
-            pushToast(`Skipped ${file.name}: Videos must be 5 minutes or less.`, 'error')
+          const maxDurationMs = isPodcastComposer ? PODCAST_MAX_DURATION_MS : VIDEO_MAX_DURATION_MS
+          if (metadata.durationMs > maxDurationMs) {
+            pushToast(`Skipped ${file.name}: ${isPodcastComposer ? 'Podcasts' : 'Videos'} must be ${isPodcastComposer ? '3 hours' : '5 minutes'} or less.`, 'error')
             continue
           }
 
@@ -1583,6 +1629,9 @@ export default function PostComposer({
             id: Math.random().toString(36).slice(2),
             file,
             previewUrl: URL.createObjectURL(file),
+            kind: videoKind,
+            sourceType: metadata.sourceType,
+            mime: file.type || null,
             durationMs: metadata.durationMs,
             width: metadata.width,
             height: metadata.height,
@@ -1590,6 +1639,11 @@ export default function PostComposer({
                     progressPercent: null,
                     progressLabel: null,
           }
+          continue
+        }
+
+        if (isPodcastComposer && ACCEPTED_IMAGE_TYPE_LIST.includes(file.type)) {
+          pushToast(`Skipped ${file.name}: Podcasts only support audio or video uploads.`, 'error')
           continue
         }
 
@@ -1651,7 +1705,7 @@ export default function PostComposer({
         setVideo(newVideo)
       }
     },
-    [photos.length, postType, video],
+    [isPodcastComposer, photos.length, postType, video, videoKind],
   )
 
   useEffect(() => {
@@ -2305,16 +2359,31 @@ export default function PostComposer({
 
         {video ? (
           <div className="relative overflow-hidden rounded-xl border border-slate-200 bg-slate-50">
-            <div className="aspect-video bg-slate-950">
-              <video
-                src={video.playbackUrl ?? video.previewUrl}
-                poster={video.thumbnailUrl ?? undefined}
-                className="h-full w-full"
-                controls={video.status === 'ready'}
-                muted
-                playsInline
-              />
-            </div>
+            {video.sourceType === 'audio' ? (
+              <div className="flex min-h-[12rem] flex-col justify-center gap-4 bg-[linear-gradient(135deg,#0f172a_0%,#1e293b_45%,#334155_100%)] px-5 py-6 text-white">
+                <div>
+                  <p className="text-xs font-semibold uppercase tracking-[0.24em] text-white/55">Podcast Episode</p>
+                  <p className="mt-2 text-lg font-semibold">{video.file?.name ?? 'Audio upload'}</p>
+                </div>
+                <audio
+                  src={video.playbackUrl ?? video.previewUrl}
+                  className="w-full"
+                  controls={video.status === 'ready'}
+                  preload="metadata"
+                />
+              </div>
+            ) : (
+              <div className="aspect-video bg-slate-950">
+                <video
+                  src={video.playbackUrl ?? video.previewUrl}
+                  poster={video.thumbnailUrl ?? undefined}
+                  className="h-full w-full"
+                  controls={video.status === 'ready'}
+                  muted
+                  playsInline
+                />
+              </div>
+            )}
             {(video.status === 'uploading' || video.status === 'processing') && (
               <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-black/50 px-4 text-center text-white">
                 <div className="text-sm font-semibold">{getVideoProgressDisplay(video)}</div>
@@ -2398,7 +2467,7 @@ export default function PostComposer({
         <input
           ref={fileInputRef}
           type="file"
-          accept={`${ACCEPTED_IMAGE_TYPES},${ACCEPTED_VIDEO_TYPES}`}
+          accept={acceptedMediaTypes}
           className="hidden"
           multiple
           onChange={handleMediaFile}

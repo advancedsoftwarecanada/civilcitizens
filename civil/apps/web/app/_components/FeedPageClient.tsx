@@ -41,6 +41,8 @@ export type FeedPageClientProps = {
   showFeedSummary?: boolean
   showSupplementalFeedItems?: boolean
   hideComposerLauncher?: boolean
+  videoKindFilter?: 'video' | 'podcast'
+  composerVideoKind?: 'video' | 'podcast'
 }
 
 type CommunityFollowRow = {
@@ -333,6 +335,8 @@ export default function FeedPageClient(props: FeedPageClientProps) {
     showFeedSummary = true,
     showSupplementalFeedItems = true,
     hideComposerLauncher = false,
+    videoKindFilter,
+    composerVideoKind = 'video',
   } = props
   const router = useRouter()
   const cachedMe = useViewerStore((s) => s.me)
@@ -382,9 +386,10 @@ export default function FeedPageClient(props: FeedPageClientProps) {
     params.set('sort', sortMode)
     if (province) params.set('province', province)
     if (community) params.set('community', community)
+    if (videoKindFilter) params.set('videoKind', videoKindFilter)
     const qs = params.toString()
     return qs ? `?${qs}` : ''
-  }, [community, province, scope, sortMode])
+  }, [community, province, scope, sortMode, videoKindFilter])
 
   useEffect(() => {
     setSortMode(defaultSort)
@@ -1111,6 +1116,9 @@ export default function FeedPageClient(props: FeedPageClientProps) {
     [me?.coverUrl, scope, selectedOrganization?.coverUrl],
   )
   const composerModalTitle = useMemo(() => {
+    if (composerVideoKind === 'podcast') {
+      return 'Publish a podcast episode to your network'
+    }
     switch (scope) {
       case 'friends':
         return 'Share personal updates with friends and family'
@@ -1127,7 +1135,7 @@ export default function FeedPageClient(props: FeedPageClientProps) {
       default:
         return 'Share something new'
     }
-  }, [scope, selectedOrganization?.name])
+  }, [composerVideoKind, scope, selectedOrganization?.name])
 
   const openComposer = (type: PostType = 'post') => {
     const token = typeof window !== 'undefined' ? localStorage.getItem('token') : null
@@ -1151,11 +1159,18 @@ export default function FeedPageClient(props: FeedPageClientProps) {
   const emptyLabel = emptyState ?? "No updates yet. Once the community starts posting, you'll see them here."
   const composerDefaultAudience: 'friends' | 'network' | 'community' =
     scope === 'communities' || scope === 'causes' ? 'community' : scope === 'network' ? 'network' : 'friends'
-  const composerAllowedPostTypes = scope === 'causes' ? (['cause'] satisfies PostType[]) : undefined
+  const composerAllowedPostTypes =
+    composerVideoKind === 'podcast'
+      ? (['post'] satisfies PostType[])
+      : scope === 'causes'
+        ? (['cause'] satisfies PostType[])
+        : undefined
 
   const resolvedRightRail = rightRail ?? <RightRail />
   const composerActions: Array<{ type: PostType; label: string; icon: string }> =
-    scope === 'causes'
+    composerVideoKind === 'podcast'
+      ? [{ type: 'post', label: 'Podcast', icon: '🎙️' }]
+      : scope === 'causes'
       ? [{ type: 'cause', label: 'Start a Cause', icon: '🙏' }]
       : [
           { type: 'post', label: 'Post', icon: '📝' },
@@ -1437,6 +1452,7 @@ export default function FeedPageClient(props: FeedPageClientProps) {
                 communityOptions={communityOptions}
                 businessTarget={{ businessId: selectedOrganization.id, businessName: selectedOrganization.name }}
                 hideAudience
+                videoKind={composerVideoKind}
               />
             ) : (
               <p className="text-sm text-slate-600">Select an organization to start writing.</p>
@@ -1456,6 +1472,7 @@ export default function FeedPageClient(props: FeedPageClientProps) {
             communityOptions={communityOptions}
             defaultAudience={composerDefaultAudience}
             hideAudience={scope === 'friends' || scope === 'network'}
+            videoKind={composerVideoKind}
             organizationOptions={
               scope === 'all'
                 ? postableOrganizations.map((org) => ({ id: org.id, name: org.name }))

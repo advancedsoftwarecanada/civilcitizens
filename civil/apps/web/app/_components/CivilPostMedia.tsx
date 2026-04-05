@@ -12,6 +12,9 @@ type CivilPostMediaProps = {
     assetId: string
     playbackUrl?: string | null
     thumbnailUrl?: string | null
+    kind?: 'video' | 'podcast'
+    sourceType?: 'video' | 'audio'
+    mime?: string | null
     durationMs?: number | null
     width?: number | null
     height?: number | null
@@ -30,6 +33,31 @@ export default function CivilPostMedia({ images, mediaUrl, video, postUrl }: Civ
       .filter((value): value is string => Boolean(value))
   }, [images, mediaUrl])
   const [activeImageIndex, setActiveImageIndex] = useState<number | null>(null)
+
+  if (playbackUrl && video?.sourceType === 'audio') {
+    return (
+      <div
+        className="overflow-hidden rounded-2xl border border-slate-200 bg-[linear-gradient(135deg,#0f172a_0%,#1e293b_45%,#334155_100%)] p-5 text-white"
+        data-prevent-card-nav="true"
+        onClickCapture={(event) => event.stopPropagation()}
+        onPointerDownCapture={(event) => event.stopPropagation()}
+      >
+        <div className="mb-4 flex items-start justify-between gap-4">
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-[0.24em] text-white/55">
+              {video.kind === 'podcast' ? 'Podcast Episode' : 'Audio Post'}
+            </p>
+            <p className="mt-2 text-sm text-white/70">
+              {video.durationMs ? `${Math.max(1, Math.round(video.durationMs / 60000))} min` : 'Audio'}
+            </p>
+          </div>
+        </div>
+        <audio className="w-full" controls preload="metadata">
+          <source src={playbackUrl} type={video.mime ?? 'audio/mpeg'} />
+        </audio>
+      </div>
+    )
+  }
 
   if (playbackUrl) {
     return (

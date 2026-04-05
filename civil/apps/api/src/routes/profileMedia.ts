@@ -22,6 +22,9 @@ type ProfileMediaDeps = Record<string, any>
 
 let mediaTranscodeTablesReady: Promise<void> | null = null
 
+const PODCAST_MAX_DURATION_MS = 3 * 60 * 60 * 1000
+const STANDARD_VIDEO_MAX_DURATION_MS = 5 * 60 * 1000
+
 function ensureMediaTranscodeTables(): Promise<void> {
   if (mediaTranscodeTablesReady) return mediaTranscodeTablesReady
 
@@ -646,7 +649,7 @@ export function registerProfileMediaRoutes(app: FastifyInstance, deps: ProfileMe
       const parse = RequestMediaUploadInput.safeParse(req.body)
       if (!parse.success) return reply.code(400).send({ error: parse.error.flatten() })
 
-      const { category, mime, byteSize, filename } = parse.data
+      const { category, mime, byteSize, filename, videoKind } = parse.data
       const mediaCategory = category as MediaCategory
       const limit = deps.MEDIA_CATEGORY_LIMITS[mediaCategory]
       if (byteSize > limit) return reply.code(400).send({ error: 'file_too_large', maxBytes: limit })
@@ -657,6 +660,8 @@ export function registerProfileMediaRoutes(app: FastifyInstance, deps: ProfileMe
       const originalKey = deps.buildOriginalObjectKey(mediaCategory, ownerUserId, assetId, extension)
       const metadata = {
         ...(filename ? { filename } : {}),
+        ...(mediaCategory === 'post_video' ? { videoKind: videoKind === 'podcast' ? 'podcast' : 'video' } : {}),
+        ...(mediaCategory === 'post_video' ? { sourceType: mime.toLowerCase().startsWith('audio/') ? 'audio' : 'video' } : {}),
         ...(authContext.actor === 'family_member' ? { familyMemberId: authContext.member.id } : {}),
       }
 
@@ -719,6 +724,16 @@ export function registerProfileMediaRoutes(app: FastifyInstance, deps: ProfileMe
         return reply.code(403).send({ error: 'asset_not_owned_by_family_member' })
       }
 
+      const assetMetadata =
+        asset.metadata && typeof asset.metadata === 'object' && !Array.isArray(asset.metadata)
+          ? (asset.metadata as Record<string, unknown>)
+          : {}
+      const isAudioAsset = typeof asset.mime === 'string' && asset.mime.toLowerCase().startsWith('audio/')
+      const maxDurationMs = assetMetadata.videoKind === 'podcast' ? PODCAST_MAX_DURATION_MS : STANDARD_VIDEO_MAX_DURATION_MS
+      if (durationMs && durationMs > maxDurationMs) {
+        return reply.code(400).send({ error: 'media_too_long', maxDurationMs })
+      }
+
       if (asset.status === 'ready') return reply.send({ ok: true, assetId })
 
       const updatedAsset = await prisma.mediaAsset.update({
@@ -741,7 +756,7 @@ export function registerProfileMediaRoutes(app: FastifyInstance, deps: ProfileMe
         }
       }
 
-      if (updatedAsset.assetType === 'video') {
+      if (updatedAsset.assetType === 'video' && !isAudioAsset) {
         await ensureMediaTranscodeTables()
 
         await prisma.mediaTranscodeJob.upsert({
@@ -757,7 +772,7 @@ export function registerProfileMediaRoutes(app: FastifyInstance, deps: ProfileMe
             status: 'QUEUED',
             queuedAt: new Date(),
             payload: {
-              maxDurationMs: 5 * 60 * 1000,
+              maxDurationMs,
               targetHeight: 720,
               targetWidth: 1280,
             },
@@ -770,7 +785,7 @@ export function registerProfileMediaRoutes(app: FastifyInstance, deps: ProfileMe
             lastError: null,
             result: Prisma.DbNull,
             payload: {
-              maxDurationMs: 5 * 60 * 1000,
+              maxDurationMs,
               targetHeight: 720,
               targetWidth: 1280,
             },
