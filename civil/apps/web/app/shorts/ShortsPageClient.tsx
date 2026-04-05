@@ -70,6 +70,38 @@ export default function ShortsPageClient() {
   const followedTopicSlugSet = useMemo(() => new Set(followedTopics.map((topic) => topic.slug)), [followedTopics])
   const activePost = useMemo(() => posts.find((post) => post.id === activePostId) ?? null, [activePostId, posts])
 
+  const scrollToPostIndex = useCallback((index: number, behavior: ScrollBehavior = 'smooth') => {
+    const container = scrollContainerRef.current
+    if (!container) return
+
+    const sections = Array.from(container.querySelectorAll<HTMLElement>('[data-shorts-post-id]'))
+    const target = sections[index]
+    if (!target) return
+
+    if (posts[index]?.id) {
+      setActivePostId(posts[index]!.id)
+    }
+    container.scrollTo({ top: target.offsetTop, behavior })
+  }, [posts])
+
+  const navigateToAdjacentPost = useCallback((direction: 'prev' | 'next') => {
+    if (wheelLockRef.current) return
+
+    const currentIndex = Math.max(0, posts.findIndex((post) => post.id === activePostId))
+    const nextIndex = direction === 'next'
+      ? Math.min(posts.length - 1, currentIndex + 1)
+      : Math.max(0, currentIndex - 1)
+
+    if (nextIndex === currentIndex) return
+
+    wheelLockRef.current = true
+    setActivePostId(posts[nextIndex]?.id ?? null)
+    scrollToPostIndex(nextIndex)
+    window.setTimeout(() => {
+      wheelLockRef.current = false
+    }, 420)
+  }, [activePostId, posts, scrollToPostIndex])
+
   const mergeUpdatedPost = useCallback((updatedPost: ApiPost) => {
     setPosts((current) =>
       current.map((post) => {
@@ -480,16 +512,6 @@ export default function ShortsPageClient() {
       return nearestIndex
     }
 
-    const scrollToIndex = (index: number, behavior: ScrollBehavior = 'smooth') => {
-      const sections = getSections()
-      const target = sections[index]
-      if (!target) return
-      if (posts[index]?.id) {
-        setActivePostId(posts[index]!.id)
-      }
-      container.scrollTo({ top: target.offsetTop, behavior })
-    }
-
     const snapToNearestSection = () => {
       if (isDesktopViewport() || snapLockRef.current) return
 
@@ -523,38 +545,21 @@ export default function ShortsPageClient() {
       }, 110)
     }
 
-    const navigate = (direction: 'prev' | 'next') => {
-      if (wheelLockRef.current) return
-      const currentIndex = Math.max(0, posts.findIndex((post) => post.id === activePostId))
-      const nextIndex = direction === 'next'
-        ? Math.min(posts.length - 1, currentIndex + 1)
-        : Math.max(0, currentIndex - 1)
-
-      if (nextIndex === currentIndex) return
-
-      wheelLockRef.current = true
-      setActivePostId(posts[nextIndex]?.id ?? null)
-      scrollToIndex(nextIndex)
-      window.setTimeout(() => {
-        wheelLockRef.current = false
-      }, 420)
-    }
-
     const handleWheel = (event: WheelEvent) => {
       if (Math.abs(event.deltaY) < 16) return
       event.preventDefault()
-      navigate(event.deltaY > 0 ? 'next' : 'prev')
+      navigateToAdjacentPost(event.deltaY > 0 ? 'next' : 'prev')
     }
 
     const handleKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'ArrowDown' || event.key === 'PageDown') {
         event.preventDefault()
-        navigate('next')
+        navigateToAdjacentPost('next')
         return
       }
       if (event.key === 'ArrowUp' || event.key === 'PageUp') {
         event.preventDefault()
-        navigate('prev')
+        navigateToAdjacentPost('prev')
       }
     }
 
@@ -592,7 +597,7 @@ export default function ShortsPageClient() {
               window.clearTimeout(scrollSettleTimeoutRef.current)
               scrollSettleTimeoutRef.current = null
             }
-            scrollToIndex(nextIndex, 'auto')
+            scrollToPostIndex(nextIndex, 'auto')
             return
           }
         }
@@ -620,7 +625,12 @@ export default function ShortsPageClient() {
       container.removeEventListener('touchend', handleTouchEnd)
       window.removeEventListener('keydown', handleKeyDown)
     }
-  }, [activePostId, posts])
+  }, [activePostId, navigateToAdjacentPost, posts, scrollToPostIndex])
+
+  const handlePostEnded = useCallback((postId: string) => {
+    if (postId !== activePostId) return
+    navigateToAdjacentPost('next')
+  }, [activePostId, navigateToAdjacentPost])
 
   return (
     <DashboardShell
@@ -683,6 +693,7 @@ export default function ShortsPageClient() {
                     onVisible={setActivePostId}
                     onReact={handleReact}
                     onOpenComments={handleOpenComments}
+                    onEnded={handlePostEnded}
                     commentsDrawerOpen={commentsDrawerOpen && activePostId === post.id}
                   />
                 ))}

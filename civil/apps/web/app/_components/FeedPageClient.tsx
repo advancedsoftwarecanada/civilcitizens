@@ -43,6 +43,7 @@ export type FeedPageClientProps = {
   hideComposerLauncher?: boolean
   videoKindFilter?: 'video' | 'podcast'
   composerVideoKind?: 'video' | 'podcast'
+  composerPostPlaceholder?: string
 }
 
 type CommunityFollowRow = {
@@ -337,6 +338,7 @@ export default function FeedPageClient(props: FeedPageClientProps) {
     hideComposerLauncher = false,
     videoKindFilter,
     composerVideoKind = 'video',
+    composerPostPlaceholder,
   } = props
   const router = useRouter()
   const cachedMe = useViewerStore((s) => s.me)
@@ -1454,6 +1456,7 @@ export default function FeedPageClient(props: FeedPageClientProps) {
                 businessTarget={{ businessId: selectedOrganization.id, businessName: selectedOrganization.name }}
                 hideAudience
                 videoKind={composerVideoKind}
+                postPlaceholder={composerPostPlaceholder}
               />
             ) : (
               <p className="text-sm text-slate-600">Select an organization to start writing.</p>
@@ -1474,6 +1477,7 @@ export default function FeedPageClient(props: FeedPageClientProps) {
             defaultAudience={composerDefaultAudience}
             hideAudience={scope === 'friends' || scope === 'network'}
             videoKind={composerVideoKind}
+            postPlaceholder={composerPostPlaceholder}
             organizationOptions={
               scope === 'all'
                 ? postableOrganizations.map((org) => ({ id: org.id, name: org.name }))

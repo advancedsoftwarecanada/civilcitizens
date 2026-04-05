@@ -186,12 +186,8 @@ export default function ShortsUploadRailCard({ onPostCreated }: ShortsUploadRail
           </div>
           <div className="min-w-0 flex-1">
             <h2 className="text-sm font-semibold uppercase tracking-[0.18em] text-slate-500">Upload a Short</h2>
-            <p className="mt-2 text-sm leading-6 text-slate-700">Drop a vertical video into the topic feed. Keep it fast, visual, and easy to watch.</p>
+            <p className="mt-2 text-sm leading-6 text-slate-700">Upload a short video for your network feed.</p>
           </div>
-        </div>
-        <div className="mt-4 grid gap-2 rounded-[1.5rem] bg-slate-950 px-4 py-4 text-sm text-white shadow-[inset_0_1px_0_rgba(255,255,255,0.08)]">
-          <span>Video-first post</span>
-          <span className="text-white/70">Up to 5 minutes, rendered for in-feed playback.</span>
         </div>
         <button
           type="button"
@@ -222,6 +218,8 @@ export default function ShortsUploadRailCard({ onPostCreated }: ShortsUploadRail
           variant="plain"
           communityOptions={communityOptions}
           defaultAudience="network"
+          hideAudience
+          postPlaceholder="Add a description"
           organizationOptions={postableOrganizations.map((org) => ({ id: org.id, name: org.name }))}
         />
       </Modal>
