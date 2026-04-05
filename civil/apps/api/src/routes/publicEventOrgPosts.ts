@@ -3,6 +3,8 @@ import { prisma } from '@civil/db'
 import { Prisma } from '@prisma/client'
 import { z } from 'zod'
 
+import { ensureUserLiveTables } from './userLives'
+
 type PublicEventOrgPostDeps = Record<string, any>
 
 function resolveOrganizationCommunitySlug(deps: PublicEventOrgPostDeps, province: string, municipalityRaw: string) {
@@ -57,13 +59,15 @@ export function registerPublicEventOrgPostRoutes(app: FastifyInstance, deps: Pub
         })
       }
 
-      if (viewerId && whereOr.length === 0) return reply.send({ items: [] })
+      await ensureUserLiveTables()
 
-      const organizations = await prisma.business.findMany({
-        where: { status: deps.BusinessStatus.ACTIVE, ...(whereOr.length ? { OR: whereOr } : {}) },
-        select: { id: true, name: true, slug: true, provinceCode: true, communitySlug: true, logoUrl: true, isVerified: true, metadata: true },
-        take: 1000,
-      })
+      const organizations = viewerId && whereOr.length === 0
+        ? []
+        : await prisma.business.findMany({
+            where: { status: deps.BusinessStatus.ACTIVE, ...(whereOr.length ? { OR: whereOr } : {}) },
+            select: { id: true, name: true, slug: true, provinceCode: true, communitySlug: true, logoUrl: true, isVerified: true, metadata: true },
+            take: 1000,
+          })
 
       const items = organizations.flatMap((org: any) => {
         const system = deps.readOrganizationSystemState(org.metadata)
@@ -82,6 +86,7 @@ export function registerPublicEventOrgPostRoutes(app: FastifyInstance, deps: Pub
             return Number.isFinite(startsAtMs) ? startsAtMs >= now : true
           })
           .map((event: any) => ({
+            kind: 'ORGANIZATION_EVENT',
             id: event.id,
             title: event.title,
             description: event.description,
@@ -109,8 +114,82 @@ export function registerPublicEventOrgPostRoutes(app: FastifyInstance, deps: Pub
               isVerified: org.isVerified,
             },
             matchedBy: { organization: matchedByOrganization, community: matchedByCommunity },
+            detailHref: null,
           }))
       })
+
+      type ScheduledLiveRow = {
+        id: string
+        title: string
+        description: string | null
+        cover_url: string | null
+        schedule_starts_at: Date
+        created_at: Date
+        updated_at: Date
+        max_participants: number | null
+        host_id: string
+        host_handle: string
+        host_name: string | null
+        host_avatar_url: string | null
+      }
+
+      const scheduledLiveRows = (await prisma.$queryRaw(Prisma.sql`
+        SELECT
+          space.id,
+          space.title,
+          space.description,
+          space.cover_url,
+          space.schedule_starts_at,
+          space.created_at,
+          space.updated_at,
+          space.max_participants,
+          host.id as host_id,
+          host.handle as host_handle,
+          host.name as host_name,
+          host."avatarUrl" as host_avatar_url
+        FROM user_live_space space
+        INNER JOIN "User" host ON host.id = space.host_user_id
+        WHERE space.visibility = 'PUBLIC'
+          AND space.launch_mode = 'SPACE'
+          AND space.schedule_starts_at IS NOT NULL
+          ${query.data.includePast ? Prisma.empty : Prisma.sql`AND space.schedule_starts_at >= NOW()`}
+        ORDER BY space.schedule_starts_at ASC
+        LIMIT ${query.data.limit}
+      `)) as ScheduledLiveRow[]
+
+      const scheduledLiveItems = scheduledLiveRows.map((row) => ({
+        kind: 'LIVE_SPACE',
+        id: row.id,
+        title: row.title,
+        description: row.description,
+        category: 'Other',
+        access: 'PUBLIC',
+        startsAt: row.schedule_starts_at.toISOString(),
+        endsAt: null,
+        capacity: row.max_participants,
+        paid: false,
+        priceCents: null,
+        currency: 'CAD',
+        guestSpeakers: [],
+        primaryPhotoUrl: deps.normalizeMediaUrl(row.cover_url ?? null),
+        galleryPhotoUrls: [],
+        status: 'PUBLISHED',
+        createdAt: row.created_at.toISOString(),
+        updatedAt: row.updated_at.toISOString(),
+        organization: {
+          id: `live-host:${row.host_id}`,
+          name: row.host_name?.trim() || row.host_handle,
+          slug: row.host_handle,
+          provinceCode: null,
+          communitySlug: null,
+          logoUrl: deps.normalizeMediaUrl(row.host_avatar_url ?? null),
+          isVerified: false,
+        },
+        matchedBy: { organization: false, community: false },
+        detailHref: `/u/${encodeURIComponent(row.host_handle)}/live/${encodeURIComponent(row.id)}`,
+      }))
+
+      items.push(...scheduledLiveItems)
 
       items.sort((a: any, b: any) => {
         const aTime = Date.parse(a.startsAt)
