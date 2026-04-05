@@ -1,5 +1,5 @@
-import ShortsPageClient from './ShortsPageClient'
+import { redirect } from 'next/navigation'
 
 export default function ShortsPage() {
-  return <ShortsPageClient />
+  redirect('/video')
 }

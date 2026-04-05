@@ -26,7 +26,7 @@ const UserSearchQuery = z.object({
   limit: z.coerce.number().int().min(1).max(50).default(30),
 })
 
-const SearchTypeEnum = z.enum(['all', 'people', 'communities', 'organizations', 'events', 'market', 'posts'])
+const SearchTypeEnum = z.enum(['all', 'people', 'communities', 'organizations', 'events', 'market', 'posts', 'videos'])
 
 const CombinedSearchQuery = z.object({
   q: z.string().trim().min(1).max(120),
@@ -38,6 +38,7 @@ const CombinedSearchQuery = z.object({
   eventLimit: z.coerce.number().int().min(1).max(10).default(3),
   marketLimit: z.coerce.number().int().min(1).max(10).default(3),
   postLimit: z.coerce.number().int().min(1).max(10).default(3),
+  videoLimit: z.coerce.number().int().min(1).max(10).default(3),
 })
 
 const PlaceSearchQuery = z.object({
@@ -375,6 +376,7 @@ type NotificationsSearchDeps = {
   searchEventsForQuery: (input: { viewerId: string; query: string; limit: number }) => Promise<any[]>
   searchMarketListingsForQuery: (query: string, limit: number) => Promise<any[]>
   searchOrganizationsForQuery: (query: string, limit: number) => Promise<any[]>
+  searchVideosForQuery: (query: string, limit: number) => Promise<any[]>
   searchUsersForQuery: (input: { viewerId: string; query: string; limit: number }) => Promise<any[]>
   withSchemaGuard: (req: FastifyRequest, reply: FastifyReply, handler: () => Promise<any>) => Promise<any>
 }
@@ -694,10 +696,10 @@ export function registerNotificationsSearchRoutes(app: FastifyInstance, deps: No
       const parse = CombinedSearchQuery.safeParse(req.query)
       if (!parse.success) return reply.code(400).send({ error: parse.error.flatten() })
 
-      const { q, type, limit, peopleLimit, communityLimit, organizationLimit, eventLimit, marketLimit, postLimit } = parse.data
+      const { q, type, limit, peopleLimit, communityLimit, organizationLimit, eventLimit, marketLimit, postLimit, videoLimit } = parse.data
       const normalizedQuery = deps.normalizeSearchTerm(q)
       if (!normalizedQuery) {
-        return reply.send({ people: [], communities: [], organizations: [], events: [], market: [], posts: [], meta: { type } })
+        return reply.send({ people: [], communities: [], organizations: [], events: [], market: [], posts: [], videos: [], meta: { type } })
       }
 
       if (type === 'people') {
@@ -742,13 +744,21 @@ export function registerNotificationsSearchRoutes(app: FastifyInstance, deps: No
         return reply.send({ posts: postsHasMore ? postResults.slice(0, limit) : postResults, meta: { type, postsHasMore } })
       }
 
-      const [peopleResults, communityResults, organizationResults, eventResults, marketResults, postResults] = await Promise.all([
+      if (type === 'videos') {
+        const take = limit + 1
+        const videoResults = await deps.searchVideosForQuery(normalizedQuery, take)
+        const videosHasMore = videoResults.length > limit
+        return reply.send({ videos: videosHasMore ? videoResults.slice(0, limit) : videoResults, meta: { type, videosHasMore } })
+      }
+
+      const [peopleResults, communityResults, organizationResults, eventResults, marketResults, postResults, videoResults] = await Promise.all([
         deps.searchUsersForQuery({ viewerId: userId, query: normalizedQuery, limit: peopleLimit + 1 }),
         deps.searchCommunitiesForQuery(normalizedQuery, communityLimit + 1),
         deps.searchOrganizationsForQuery(normalizedQuery, organizationLimit + 1),
         deps.searchEventsForQuery({ viewerId: userId, query: normalizedQuery, limit: eventLimit + 1 }),
         deps.searchMarketListingsForQuery(normalizedQuery, marketLimit + 1),
         deps.searchCommunityPostsForQuery(normalizedQuery, postLimit + 1),
+        deps.searchVideosForQuery(normalizedQuery, videoLimit + 1),
       ])
 
       const peopleHasMore = peopleResults.length > peopleLimit
@@ -757,6 +767,7 @@ export function registerNotificationsSearchRoutes(app: FastifyInstance, deps: No
       const eventsHasMore = eventResults.length > eventLimit
       const marketHasMore = marketResults.length > marketLimit
       const postsHasMore = postResults.length > postLimit
+      const videosHasMore = videoResults.length > videoLimit
 
       return reply.send({
         people: peopleHasMore ? peopleResults.slice(0, peopleLimit) : peopleResults,
@@ -765,7 +776,8 @@ export function registerNotificationsSearchRoutes(app: FastifyInstance, deps: No
         events: eventsHasMore ? eventResults.slice(0, eventLimit) : eventResults,
         market: marketHasMore ? marketResults.slice(0, marketLimit) : marketResults,
         posts: postsHasMore ? postResults.slice(0, postLimit) : postResults,
-        meta: { type, peopleHasMore, communitiesHasMore, organizationsHasMore, eventsHasMore, marketHasMore, postsHasMore },
+        videos: videosHasMore ? videoResults.slice(0, videoLimit) : videoResults,
+        meta: { type, peopleHasMore, communitiesHasMore, organizationsHasMore, eventsHasMore, marketHasMore, postsHasMore, videosHasMore },
       })
     }),
   )

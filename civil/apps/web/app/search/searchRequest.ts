@@ -14,6 +14,7 @@ export function buildSearchRequestParams(query: string, searchType: SearchType) 
     params.set('eventLimit', String(ALL_SECTION_LIMIT))
     params.set('marketLimit', String(ALL_SECTION_LIMIT))
     params.set('postLimit', String(ALL_SECTION_LIMIT))
+    params.set('videoLimit', String(ALL_SECTION_LIMIT))
     return params
   }
 

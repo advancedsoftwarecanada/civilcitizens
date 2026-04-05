@@ -9,6 +9,7 @@ import {
   HiOutlineDocumentText,
   HiOutlineMagnifyingGlass,
   HiOutlineMapPin,
+  HiOutlinePlayCircle,
   HiOutlineShoppingBag,
   HiOutlineXMark,
 } from 'react-icons/hi2'
@@ -25,6 +26,7 @@ import {
   type SearchResponse,
   type SearchType,
   type UserSearchResult,
+  type VideoSearchResult,
 } from '../_components/search/searchTypes'
 import { buildApiUrl } from '../_lib/api'
 import { redirectToAuthModal } from '../_lib/authModal'
@@ -41,8 +43,17 @@ const SEARCH_TABS: Array<{ value: SearchType; label: string }> = [
   { value: 'organizations', label: 'Organizations' },
   { value: 'events', label: 'Events' },
   { value: 'market', label: 'Market' },
+  { value: 'videos', label: 'Videos' },
   { value: 'posts', label: 'Posts' },
 ]
+
+function formatDurationLabel(durationMs: number | null | undefined) {
+  if (!durationMs || !Number.isFinite(durationMs) || durationMs <= 0) return null
+  const totalSeconds = Math.max(0, Math.floor(durationMs / 1000))
+  const minutes = Math.floor(totalSeconds / 60)
+  const seconds = totalSeconds % 60
+  return `${minutes}:${seconds.toString().padStart(2, '0')}`
+}
 
 type SearchPageClientProps = {
   initialQuery?: string
@@ -86,6 +97,7 @@ export default function SearchPageClient({ initialQuery = '', initialType = 'all
   const [eventResults, setEventResults] = useState<EventSearchResult[]>([])
   const [marketResults, setMarketResults] = useState<MarketSearchResult[]>([])
   const [postResults, setPostResults] = useState<PostSearchResult[]>([])
+  const [videoResults, setVideoResults] = useState<VideoSearchResult[]>([])
   const [fetchStatus, setFetchStatus] = useState<FetchStatus>('idle')
   const [error, setError] = useState<string | null>(null)
   const abortRef = useRef<AbortController | null>(null)
@@ -135,6 +147,7 @@ export default function SearchPageClient({ initialQuery = '', initialType = 'all
         setEventResults([])
         setMarketResults([])
         setPostResults([])
+        setVideoResults([])
         setFetchStatus('idle')
         setError(null)
         if (abortRef.current) {
@@ -150,6 +163,7 @@ export default function SearchPageClient({ initialQuery = '', initialType = 'all
         setEventResults([])
         setMarketResults([])
         setPostResults([])
+        setVideoResults([])
         setFetchStatus('idle')
         setError(null)
         return
@@ -193,6 +207,7 @@ export default function SearchPageClient({ initialQuery = '', initialType = 'all
         setEventResults(Array.isArray(payload.events) ? payload.events : [])
         setMarketResults(Array.isArray(payload.market) ? payload.market : [])
         setPostResults(Array.isArray(payload.posts) ? payload.posts : [])
+        setVideoResults(Array.isArray(payload.videos) ? payload.videos : [])
         setFetchStatus('idle')
       } catch (err) {
         if ((err as Error).name === 'AbortError') return
@@ -242,6 +257,7 @@ export default function SearchPageClient({ initialQuery = '', initialType = 'all
     organizationResults.length +
     eventResults.length +
     marketResults.length +
+    videoResults.length +
     postResults.length
 
   const searchTypeLabel = useMemo(() => {
@@ -256,6 +272,8 @@ export default function SearchPageClient({ initialQuery = '', initialType = 'all
         return 'Events'
       case 'market':
         return 'Market'
+      case 'videos':
+        return 'Videos'
       case 'posts':
         return 'Community Posts'
       default:
@@ -264,7 +282,7 @@ export default function SearchPageClient({ initialQuery = '', initialType = 'all
   }, [searchType])
 
   const headerSubtitle = useMemo(() => {
-    if (!trimmedActiveQuery) return 'Search Civil across people, communities, organizations, events, marketplace, and community posts.'
+    if (!trimmedActiveQuery) return 'Search Civil across people, communities, organizations, events, marketplace, videos, and community posts.'
     if (tooShort) return 'Enter at least two characters to search.'
     if (isLoading) return 'Searching Civil...'
     if (fetchStatus === 'error') return 'Unable to load results.'
@@ -282,6 +300,8 @@ export default function SearchPageClient({ initialQuery = '', initialType = 'all
               ? eventResults.length
               : searchType === 'market'
                 ? marketResults.length
+                : searchType === 'videos'
+                  ? videoResults.length
                 : postResults.length
     return resultCount > 0 ? `Showing ${resultCount} results.` : `No ${searchTypeLabel.toLowerCase()} found for “${trimmedActiveQuery}”.`
   }, [
@@ -297,6 +317,7 @@ export default function SearchPageClient({ initialQuery = '', initialType = 'all
     organizationResults.length,
     eventResults.length,
     marketResults.length,
+    videoResults.length,
     postResults.length,
   ])
 
@@ -486,6 +507,45 @@ export default function SearchPageClient({ initialQuery = '', initialType = 'all
     </ul>
   )
 
+  const renderVideoList = (items: VideoSearchResult[]) => (
+    <ul className="space-y-3">
+      {items.map((video) => {
+        const displayName = formatUserDisplayName(video.author.name, video.author.handle) || video.author.handle
+        const durationLabel = formatDurationLabel(video.durationMs)
+        return (
+          <li key={video.id}>
+            <Link
+              href={video.href}
+              className="flex gap-4 rounded-[28px] border border-white/60 bg-white/90 px-4 py-3 shadow-[0_20px_60px_rgba(15,23,42,0.08)] transition hover:border-[var(--cc-primary)]/50"
+            >
+              {video.thumbnailUrl ? (
+                <div className="relative h-20 w-20 flex-none overflow-hidden rounded-2xl bg-slate-100">
+                  <img src={video.thumbnailUrl} alt={video.title || 'Video preview'} className="h-full w-full object-cover" />
+                  <div className="absolute inset-0 bg-black/25" />
+                  <HiOutlinePlayCircle className="absolute inset-0 m-auto h-8 w-8 text-white" />
+                </div>
+              ) : (
+                <div className="flex h-20 w-20 flex-none items-center justify-center rounded-2xl bg-slate-100 text-slate-500">
+                  <HiOutlinePlayCircle className="h-8 w-8" />
+                </div>
+              )}
+              <div className="min-w-0 flex-1">
+                <div className="flex flex-wrap items-center gap-2">
+                  <p className="truncate text-lg font-semibold text-slate-900">{video.title || video.excerpt || 'Video'}</p>
+                  {durationLabel ? <span className="text-xs font-semibold uppercase tracking-[0.18em] text-[var(--cc-primary)]">{durationLabel}</span> : null}
+                </div>
+                <p className="truncate text-sm text-slate-500">
+                  {displayName} • {video.organization?.name ?? `${video.communityName ?? 'Community'}${video.provinceName ? ` • ${video.provinceName}` : ''}`}
+                </p>
+                {video.excerpt ? <p className="mt-1 line-clamp-3 text-sm text-slate-600">{video.excerpt}</p> : null}
+              </div>
+            </Link>
+          </li>
+        )
+      })}
+    </ul>
+  )
+
   const renderEmptyState = (message: ReactNode) => (
     <div className="rounded-2xl border border-slate-100 bg-slate-50 px-4 py-6 text-sm text-slate-500">{message}</div>
   )
@@ -525,6 +585,13 @@ export default function SearchPageClient({ initialQuery = '', initialType = 'all
       count: eventResults.length,
       emptyMessage: <>No events found for <span className="font-semibold">{trimmedActiveQuery}</span>.</>,
       content: eventResults.length > 0 ? renderEventList(eventResults) : renderEmptyState(<>No events found for <span className="font-semibold">{trimmedActiveQuery}</span>.</>),
+    },
+    {
+      key: 'videos',
+      title: 'Videos',
+      count: videoResults.length,
+      emptyMessage: <>No videos found for <span className="font-semibold">{trimmedActiveQuery}</span>.</>,
+      content: videoResults.length > 0 ? renderVideoList(videoResults) : renderEmptyState(<>No videos found for <span className="font-semibold">{trimmedActiveQuery}</span>.</>),
     },
     {
       key: 'posts',
@@ -579,6 +646,8 @@ export default function SearchPageClient({ initialQuery = '', initialType = 'all
             ? 'Search events'
             : searchType === 'market'
               ? 'Search marketplace'
+              : searchType === 'videos'
+                ? 'Search videos'
               : searchType === 'posts'
                 ? 'Search community posts'
                 : 'Search Civil'
