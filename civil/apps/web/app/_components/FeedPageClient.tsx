@@ -33,7 +33,7 @@ export type FeedPageClientProps = {
   headerContent?: ReactNode
   emptyState?: string
   emptyStateCta?: { label: string; href: string }
-  rightRail?: ReactNode
+  rightRail?: ReactNode | ((controls: { openComposer: (type?: PostType) => void }) => ReactNode)
   province?: string
   community?: string
   defaultSort?: FeedSortMode
@@ -1166,7 +1166,6 @@ export default function FeedPageClient(props: FeedPageClientProps) {
         ? (['cause'] satisfies PostType[])
         : undefined
 
-  const resolvedRightRail = rightRail ?? <RightRail />
   const composerActions: Array<{ type: PostType; label: string; icon: string }> =
     composerVideoKind === 'podcast'
       ? [{ type: 'post', label: 'Podcast', icon: '🎙️' }]
@@ -1177,6 +1176,8 @@ export default function FeedPageClient(props: FeedPageClientProps) {
           { type: 'article', label: 'Article', icon: '📄' },
           { type: 'poll', label: 'Poll', icon: '📊' },
         ]
+
+  const resolvedRightRail = typeof rightRail === 'function' ? rightRail({ openComposer }) : rightRail ?? <RightRail />
 
   const renderSupplementalActivityCard = (item: SupplementalActivityItem) => {
     if (item.kind === 'event') {
