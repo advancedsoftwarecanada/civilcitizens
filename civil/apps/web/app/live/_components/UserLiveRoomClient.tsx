@@ -1,7 +1,7 @@
 'use client'
 
 import Link from 'next/link'
-import { useCallback, useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react'
+import { useCallback, useEffect, useRef, useState, type ComponentProps, type FormEvent, type ReactNode } from 'react'
 import {
   HiOutlineCheck,
   HiOutlineCog6Tooth,
@@ -19,6 +19,8 @@ import { redirectToAuthModal } from '../../_lib/authModal'
 import { getStoredToken } from '../../_lib/tokenStorage'
 import { pushToast } from '../../_components/useToasts'
 import UserLiveDraftEditorClient from './UserLiveDraftEditorClient'
+
+type SavedLiveMeeting = Parameters<NonNullable<ComponentProps<typeof UserLiveDraftEditorClient>['onSaved']>>[0]
 
 type LiveMeeting = {
   id: string
@@ -547,9 +549,9 @@ export default function UserLiveRoomClient({ handle, spaceId }: { handle: string
     }
   }
 
-  const handleMeetingSaved = useCallback((nextMeeting: LiveMeeting) => {
+  const handleMeetingSaved = useCallback((nextMeeting: SavedLiveMeeting) => {
     setData((current) => {
-      if (!current) return { meeting: nextMeeting }
+      if (!current?.meeting) return current
       return {
         ...current,
         meeting: {
@@ -747,8 +749,11 @@ export default function UserLiveRoomClient({ handle, spaceId }: { handle: string
           </button>
         </div>
 
-        <button type="button" className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700">
+        <button
+          type="button"
           onClick={() => pushToast('Screen sharing is not wired for live spaces yet.', 'info')}
+          className="inline-flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700"
+        >
           <HiOutlineVideoCamera className="h-5 w-5" />
           Share screen
         </button>

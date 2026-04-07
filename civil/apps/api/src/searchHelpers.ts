@@ -140,7 +140,11 @@ type CreateSearchHelpersDeps = {
   formatEventPreviewDate: (value: string | null | undefined) => string | null
   formatMarketplacePrice: (cents: number, currency: string) => string
   formatPost: (post: any, options?: any) => any
-  getCanonicalPaths: (post: any) => { community?: string | null }
+  getCanonicalPaths: (post: any) => {
+    community?: string | null
+    user?: string | null
+    legacy?: string | null
+  }
   isPremium: (status: PremiumStatus | null | undefined) => boolean
   isSelfVerifiedCanadianCitizen: (meta: any) => boolean
   normalizeMediaUrl: (url?: string | null) => string | null

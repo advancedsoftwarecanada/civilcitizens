@@ -3,7 +3,7 @@ import { prisma } from '@civil/db'
 import { Prisma } from '@prisma/client'
 import { z } from 'zod'
 
-import { ensureUserLiveTables } from './userLives'
+import { ensureUserLiveTables } from './userLives.js'
 
 type PublicEventOrgPostDeps = Record<string, any>
 
