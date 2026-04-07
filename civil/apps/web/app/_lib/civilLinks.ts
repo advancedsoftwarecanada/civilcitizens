@@ -191,6 +191,7 @@ export function extractLinkedTextSegments(text: string, options: LinkifyTextOpti
     text: string
     href: string
     external: false
+    slug?: string
     start: number
     end: number
   }> = []

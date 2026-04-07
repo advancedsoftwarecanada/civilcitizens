@@ -152,12 +152,13 @@ async function waitForAssetReady(token: string, assetId: string) {
     })
     if (res.ok) {
       const payload = (await res.json().catch(() => null)) as MediaAssetStatusResponse | null
-      const status = payload?.asset?.status
+      const asset = payload?.asset
+      const status = asset?.status
       if (status === 'ready') {
-        return pickVariantUrl(payload.asset?.variants)
+        return pickVariantUrl(asset?.variants)
       }
       if (status === 'failed') {
-        const reason = payload?.asset?.failureReason ? ` (${payload.asset.failureReason})` : ''
+        const reason = asset?.failureReason ? ` (${asset.failureReason})` : ''
         throw new Error(`Your cover photo could not be processed${reason}.`)
       }
     }
