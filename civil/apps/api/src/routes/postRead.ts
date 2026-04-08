@@ -589,6 +589,11 @@ export function registerPostReadRoutes(app: FastifyInstance, deps: PostReadDeps)
       if (!parsed.success) return reply.code(400).send({ error: parsed.error.flatten() })
 
       const tracked = await deps.recordUserPostImpressions(viewerId, parsed.data.postIds)
+      if (typeof deps.recordPodcastImpressionAggregates === 'function') {
+        void deps.recordPodcastImpressionAggregates(parsed.data.postIds).catch((error: unknown) => {
+          req.log?.warn?.({ err: error }, 'podcast_impression_aggregate_failed')
+        })
+      }
       return reply.send({ ok: true, tracked })
     }),
   )

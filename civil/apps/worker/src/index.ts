@@ -24,6 +24,8 @@ const MEDIA_BUCKET_PUBLIC = process.env.MEDIA_BUCKET_PUBLIC || 'civil-media'
 const MEDIA_BUCKET_ORIGINAL = process.env.MEDIA_BUCKET_ORIGINAL || 'civil-media-raw'
 const CIVIL_PUBLIC_HOST = process.env.CIVIL_PUBLIC_HOST || 'dev.civilcitizens.ca'
 const MEDIA_PUBLIC_BASE_URL = (process.env.MEDIA_PUBLIC_BASE_URL || `https://${CIVIL_PUBLIC_HOST}/media`).replace(/\/$/, '')
+const INTERNAL_API_BASE_URL = (process.env.INTERNAL_API_BASE_URL || 'http://api:3000').replace(/\/$/, '')
+const WORKER_INTERNAL_SECRET = process.env.WORKER_INTERNAL_SECRET || 'dev_internal_worker_secret'
 const CIVIL_AI_VISION_MODEL = (process.env.CIVIL_AI_VISION_MODEL || '').trim()
 const CIVIL_AI_API_KEY = (process.env.CIVIL_AI_API_KEY || '').trim()
 const CIVIL_AI_MODEL = (process.env.CIVIL_AI_MODEL || '').trim()
@@ -1242,6 +1244,20 @@ async function processMediaJob(job: Job<MediaJobPayload>) {
     }
 
     logger.info({ assetId: asset.id }, 'media asset processed')
+    if (asset.category === 'post_video') {
+      try {
+        await fetch(`${INTERNAL_API_BASE_URL}/internal/podcast-drafts/media-ready`, {
+          method: 'POST',
+          headers: {
+            'content-type': 'application/json',
+            'x-worker-secret': WORKER_INTERNAL_SECRET,
+          },
+          body: JSON.stringify({ assetId: asset.id }),
+        })
+      } catch (error) {
+        logger.warn({ assetId: asset.id, err: error }, 'podcast_draft_ready_callback_failed')
+      }
+    }
   } catch (error) {
     const message = error instanceof Error ? error.message : 'unknown_error'
     await prisma.mediaAsset.update({
@@ -1324,6 +1340,8 @@ const FFMPEG_BINARY_CANDIDATES = buildBinaryCandidates(process.env.FFMPEG_PATH, 
 const FFPROBE_BINARY_CANDIDATES = buildBinaryCandidates(process.env.FFPROBE_PATH, 'ffprobe', typeof ffprobe.path === 'string' ? ffprobe.path : null)
 const MAX_VIDEO_DURATION_MS = 5 * 60 * 1000
 const MAX_PODCAST_DURATION_MS = 3 * 60 * 60 * 1000
+const MAX_PODCAST_VIDEO_WIDTH = 1280
+const MAX_PODCAST_VIDEO_HEIGHT = 720
 
 function readVideoAssetMetadata(metadata: Prisma.JsonValue | null) {
   if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) {
@@ -1392,6 +1410,13 @@ async function processVideoMediaAsset(
     }
     if (sourceMetadata.durationMs > maxDurationMs) {
       throw new Error('video_too_long')
+    }
+    if (
+      mediaMetadata.videoKind === 'podcast' &&
+      ((typeof sourceMetadata.width === 'number' && sourceMetadata.width > MAX_PODCAST_VIDEO_WIDTH) ||
+        (typeof sourceMetadata.height === 'number' && sourceMetadata.height > MAX_PODCAST_VIDEO_HEIGHT))
+    ) {
+      throw new Error('podcast_video_resolution_too_large')
     }
 
     await runBinary(FFMPEG_BINARY_CANDIDATES, [

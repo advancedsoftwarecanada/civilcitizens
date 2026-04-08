@@ -20,6 +20,7 @@ import { formatDisplayName } from '../_lib/text'
 import CivilComposerShell from './CivilComposerShell'
 import LinkPreviewCard, { type LinkPreviewRecord } from './LinkPreviewCard'
 import VerifiedAvatar from './VerifiedAvatar'
+import Modal from './Modal'
 
 export type PostType = 'post' | 'article' | 'photo' | 'poll' | 'cause'
 export type PostVisibility = 'public' | 'members'
@@ -224,8 +225,15 @@ const MIN_POLL_OPTIONS = 2
 const MAX_POLL_OPTIONS = 10
 const PHOTO_MAX_BYTES = 25 * 1024 * 1024
 const VIDEO_MAX_BYTES = 500 * 1024 * 1024
+const PODCAST_MAX_BYTES = 2 * 1024 * 1024 * 1024
 const VIDEO_MAX_DURATION_MS = 5 * 60 * 1000
 const PODCAST_MAX_DURATION_MS = 3 * 60 * 60 * 1000
+const PODCAST_MAX_WIDTH = 1280
+const PODCAST_MAX_HEIGHT = 720
+const PODCAST_RESOLUTION_LIMIT_MESSAGE = "We don't have the capacity for greater than 1280x720 at the moment, please upload a smaller resolution / file size."
+const VIDEO_PROCESSING_POLL_INTERVAL_MS = 2000
+const VIDEO_PROCESSING_MAX_ATTEMPTS = 300
+const PODCAST_PROCESSING_MAX_ATTEMPTS = 900
 const ACCEPTED_IMAGE_TYPES = 'image/jpeg,image/png,image/webp,image/avif,image/heic,image/heif'
 const ACCEPTED_IMAGE_TYPE_LIST = ACCEPTED_IMAGE_TYPES.split(',')
 const ACCEPTED_VIDEO_TYPES = 'video/mp4,video/quicktime,video/webm,video/x-m4v'
@@ -345,10 +353,10 @@ function uploadFileWithProgress(
   url: string,
   method: string,
   headers: Record<string, string> | undefined,
-  file: File,
+  file: Blob,
   onProgress: (percent: number) => void,
 ) {
-  return new Promise<boolean>((resolve, reject) => {
+  return new Promise<{ responseText: string; etag: string | null }>((resolve, reject) => {
     const xhr = new XMLHttpRequest()
     xhr.open(method, url, true)
     for (const [key, value] of Object.entries(headers ?? {})) {
@@ -361,9 +369,81 @@ function uploadFileWithProgress(
     }
     xhr.onerror = () => reject(new Error('upload_network_error'))
     xhr.onabort = () => reject(new Error('upload_aborted'))
-    xhr.onload = () => resolve(xhr.status >= 200 && xhr.status < 300)
+    xhr.onload = () => {
+      if (xhr.status >= 200 && xhr.status < 300) {
+        resolve({
+          responseText: xhr.responseText || '',
+          etag: xhr.getResponseHeader('etag'),
+        })
+        return
+      }
+      reject(new Error(`upload_http_${xhr.status}`))
+    }
     xhr.send(file)
   })
+}
+
+async function uploadMultipartProxyFile(options: {
+  assetId: string
+  proxyPath: string
+  token: string
+  file: File
+  uploadId: string
+  partSizeBytes: number
+  onProgress: (percent: number) => void
+}) {
+  const parts: Array<{ partNumber: number; eTag: string }> = []
+  let uploadedBytes = 0
+  const totalParts = Math.max(1, Math.ceil(options.file.size / options.partSizeBytes))
+
+  for (let index = 0; index < totalParts; index += 1) {
+    const start = index * options.partSizeBytes
+    const end = Math.min(options.file.size, start + options.partSizeBytes)
+    const chunk = options.file.slice(start, end)
+    const response = await uploadFileWithProgress(
+      buildApiUrl(`${options.proxyPath}/parts/${index + 1}`),
+      'PUT',
+      {
+        authorization: `Bearer ${options.token}`,
+        'content-type': options.file.type || 'application/octet-stream',
+        'x-upload-byte-size': String(chunk.size),
+      },
+      chunk,
+      (percent) => {
+        const chunkLoadedBytes = Math.round((percent / 100) * chunk.size)
+        const overallPercent = Math.max(1, Math.min(99, Math.round(((uploadedBytes + chunkLoadedBytes) / options.file.size) * 100)))
+        options.onProgress(overallPercent)
+      },
+    )
+
+    const payload = response.responseText ? JSON.parse(response.responseText) as { eTag?: string | null } : {}
+    const eTag = typeof payload?.eTag === 'string' && payload.eTag.trim().length > 0
+      ? payload.eTag.trim()
+      : typeof response.etag === 'string' && response.etag.trim().length > 0
+        ? response.etag.trim()
+        : null
+    if (!eTag) {
+      throw new Error('multipart_upload_missing_etag')
+    }
+    parts.push({ partNumber: index + 1, eTag })
+    uploadedBytes += chunk.size
+    options.onProgress(Math.max(1, Math.min(99, Math.round((uploadedBytes / options.file.size) * 100))))
+  }
+
+  const finalizeRes = await fetch(buildApiUrl(`${options.proxyPath}/complete`), {
+    method: 'POST',
+    headers: {
+      'content-type': 'application/json',
+      authorization: `Bearer ${options.token}`,
+    },
+    body: JSON.stringify({ uploadId: options.uploadId, parts }),
+  })
+
+  if (!finalizeRes.ok) {
+    const payload = await finalizeRes.json().catch(() => ({}))
+    const reason = typeof payload?.error === 'string' ? payload.error : 'multipart_upload_finalize_failed'
+    throw new Error(reason)
+  }
 }
 
 function computeVideoProcessingPercent(attempt: number, maxAttempts: number, jobStatus?: string | null) {
@@ -374,6 +454,56 @@ function computeVideoProcessingPercent(attempt: number, maxAttempts: number, job
     return Math.min(24, 5 + Math.round((bounded / Math.max(1, maxAttempts)) * 15))
   }
   return Math.min(94, 25 + Math.round((bounded / Math.max(1, maxAttempts)) * 69))
+}
+
+function formatBytesLabel(bytes: number) {
+  const gb = 1024 * 1024 * 1024
+  const mb = 1024 * 1024
+  if (bytes >= gb) {
+    const value = bytes / gb
+    return `${Number.isInteger(value) ? value.toFixed(0) : value.toFixed(1)}GB`
+  }
+  return `${Math.round(bytes / mb)}MB`
+}
+
+function formatVideoUploadErrorMessage(
+  reason: string,
+  options: { isPodcastComposer: boolean; maxBytes?: number | null },
+) {
+  if (reason === 'file_too_large') {
+    const limit = typeof options.maxBytes === 'number' && Number.isFinite(options.maxBytes)
+      ? options.maxBytes
+      : options.isPodcastComposer
+        ? PODCAST_MAX_BYTES
+        : VIDEO_MAX_BYTES
+    return `File too large (max ${formatBytesLabel(limit)}).`
+  }
+  if (reason === 'media_too_long') {
+    return `${options.isPodcastComposer ? 'Podcasts' : 'Videos'} must be ${options.isPodcastComposer ? '3 hours' : '5 minutes'} or less.`
+  }
+  if (reason === 'podcast_video_resolution_too_large') {
+    return PODCAST_RESOLUTION_LIMIT_MESSAGE
+  }
+  if (reason === 'processing_timeout') {
+    return options.isPodcastComposer
+      ? 'This podcast is still processing. Large uploads can take a while. Keep this tab open and try again in a few minutes if it does not finish.'
+      : 'This video is still processing. Keep this tab open and try again in a few minutes if it does not finish.'
+  }
+  if (reason === 'unsupported_mime') return 'This file type is not supported.'
+  if (reason === 'upload_failed') return 'The file upload failed.'
+  if (reason === 'upload_network_error') return 'The upload failed because the network connection was interrupted.'
+  if (reason === 'upload_aborted') return 'The upload was canceled before it finished.'
+  if (reason === 'upload_http_413') return `The upload was rejected because it exceeds a proxy or gateway file-size limit.`
+  if (/^upload_http_\d+$/.test(reason)) return `The upload failed with server response ${reason.replace('upload_http_', '')}.`
+  if (reason === 'multipart_upload_missing_etag') return 'A chunk upload completed without an integrity tag.'
+  if (reason === 'multipart_upload_finalize_failed') return 'The upload finished sending but could not be finalized.'
+  if (reason === 'multipart_part_too_large') return 'One upload chunk exceeded the gateway size limit.'
+  if (reason === 'upload_init_failed') return 'Could not start the upload.'
+  if (reason === 'processing_not_scheduled') return 'Could not start processing the upload.'
+  if (reason === 'processing_timeout') return 'Processing is taking longer than expected. Please check back in a moment.'
+  if (reason === 'variant_missing') return 'Processed media is missing playback files.'
+  if (reason === 'processing_failed') return 'Media processing failed.'
+  return 'Upload failed.'
 }
 
 function readCauseGoalAmountCents(value: string) {
@@ -723,6 +853,7 @@ export default function PostComposer({
   const [pollQuestionScrollTop, setPollQuestionScrollTop] = useState(0)
   const [visibility, setVisibility] = useState<PostVisibility>('public')
   const [showBusinessAuthor, setShowBusinessAuthor] = useState(false)
+  const [podcastResolutionModalOpen, setPodcastResolutionModalOpen] = useState(false)
   const isPodcastComposer = videoKind === 'podcast'
   const acceptedMediaTypes = isPodcastComposer ? `${ACCEPTED_VIDEO_TYPES},${ACCEPTED_AUDIO_TYPES}` : `${ACCEPTED_IMAGE_TYPES},${ACCEPTED_VIDEO_TYPES}`
   const normalizedCommunityOptions = useMemo(() => {
@@ -1272,31 +1403,66 @@ export default function PostComposer({
 
       if (!initRes.ok) {
         const payload = await initRes.json().catch(() => ({}))
-        throw new Error(typeof payload?.error === 'string' ? payload.error : 'upload_init_failed')
+        const reason = typeof payload?.error === 'string' ? payload.error : 'upload_init_failed'
+        throw new Error(
+          formatVideoUploadErrorMessage(reason, {
+            isPodcastComposer,
+            maxBytes: typeof payload?.maxBytes === 'number' ? payload.maxBytes : null,
+          }),
+        )
       }
 
       const initPayload = await initRes.json()
       const assetId: string = initPayload.assetId
       const upload: { url?: string; method?: string; headers?: Record<string, string> } = initPayload.upload || {}
       const proxyPath: string | null = typeof initPayload?.proxyPath === 'string' ? initPayload.proxyPath : null
+      const multipartProxy =
+        initPayload?.multipartProxy && typeof initPayload.multipartProxy === 'object'
+          ? {
+              uploadId: typeof initPayload.multipartProxy.uploadId === 'string' ? initPayload.multipartProxy.uploadId : null,
+              partSizeBytes:
+                typeof initPayload.multipartProxy.partSizeBytes === 'number' && Number.isFinite(initPayload.multipartProxy.partSizeBytes)
+                  ? initPayload.multipartProxy.partSizeBytes
+                  : null,
+            }
+          : null
 
       const tryDirect = async () => {
         if (!upload.url) return false
         if (typeof window !== 'undefined' && window.location.protocol === 'https:' && upload.url.startsWith('http:')) {
           return false
         }
-        return await uploadFileWithProgress(upload.url, upload.method || 'PUT', upload.headers, file, (percent) => {
+        await uploadFileWithProgress(upload.url, upload.method || 'PUT', upload.headers, file, (percent) => {
           setVideo((current) =>
             current && current.id === nextVideo.id
               ? { ...current, status: 'uploading', progressPercent: percent, progressLabel: uploadLabel }
               : current,
           )
         })
+        return true
       }
 
       const tryProxy = async () => {
         if (!proxyPath) return false
-        return await uploadFileWithProgress(
+        if (multipartProxy?.uploadId && multipartProxy.partSizeBytes) {
+          await uploadMultipartProxyFile({
+            assetId,
+            proxyPath,
+            token,
+            file,
+            uploadId: multipartProxy.uploadId,
+            partSizeBytes: multipartProxy.partSizeBytes,
+            onProgress: (percent) => {
+              setVideo((current) =>
+                current && current.id === nextVideo.id
+                  ? { ...current, status: 'uploading', progressPercent: percent, progressLabel: uploadLabel }
+                  : current,
+              )
+            },
+          })
+          return true
+        }
+        await uploadFileWithProgress(
           buildApiUrl(proxyPath),
           'PUT',
           {
@@ -1313,12 +1479,26 @@ export default function PostComposer({
             )
           },
         )
+        return true
       }
 
-      const directOk = upload.url ? await tryDirect().catch(() => false) : false
-      const proxyOk = directOk ? true : await tryProxy().catch(() => false)
+      let uploadError: unknown = null
+      const directOk = upload.url
+        ? await tryDirect().catch((err) => {
+            uploadError = err
+            return false
+          })
+        : false
+      const proxyOk = directOk
+        ? true
+        : await tryProxy().catch((err) => {
+            uploadError = err
+            return false
+          })
       if (!directOk && !proxyOk) {
-        throw new Error('upload_failed')
+        throw uploadError instanceof Error
+          ? new Error(formatVideoUploadErrorMessage(uploadError.message, { isPodcastComposer, maxBytes: null }))
+          : new Error('upload_failed')
       }
 
       const completeRes = await fetch(buildApiUrl('/media/uploads/complete'), {
@@ -1336,7 +1516,17 @@ export default function PostComposer({
       })
 
       if (!completeRes.ok) {
-        throw new Error('processing_not_scheduled')
+        const payload = await completeRes.json().catch(() => ({}))
+        const reason = typeof payload?.error === 'string' ? payload.error : 'processing_not_scheduled'
+        if (reason === 'podcast_video_resolution_too_large') {
+          setPodcastResolutionModalOpen(true)
+        }
+        throw new Error(
+          formatVideoUploadErrorMessage(reason, {
+            isPodcastComposer,
+            maxBytes: typeof payload?.maxBytes === 'number' ? payload.maxBytes : null,
+          }),
+        )
       }
 
       setVideo((current) =>
@@ -1345,8 +1535,9 @@ export default function PostComposer({
           : current,
       )
 
+      const processingMaxAttempts = isPodcastComposer ? PODCAST_PROCESSING_MAX_ATTEMPTS : VIDEO_PROCESSING_MAX_ATTEMPTS
       let lastError: unknown = null
-      for (let attempt = 0; attempt < 60; attempt += 1) {
+      for (let attempt = 0; attempt < processingMaxAttempts; attempt += 1) {
         const res = await fetch(buildApiUrl(`/media/assets/${assetId}`), {
           headers: {
             authorization: `Bearer ${token}`,
@@ -1377,7 +1568,7 @@ export default function PostComposer({
                     ...current,
                     assetId,
                     status: 'processing',
-                    progressPercent: computeVideoProcessingPercent(attempt, 60, asset?.transcodeJob?.status),
+                    progressPercent: computeVideoProcessingPercent(attempt, processingMaxAttempts, asset?.transcodeJob?.status),
                     progressLabel: asset?.transcodeJob?.status === 'QUEUED' ? 'Queued for Processing' : nextVideo.sourceType === 'audio' ? 'Processing Audio' : 'Processing Video',
                   }
                 : current,
@@ -1418,7 +1609,7 @@ export default function PostComposer({
           }
         }
 
-        await wait(2000)
+        await wait(VIDEO_PROCESSING_POLL_INTERVAL_MS)
       }
 
       throw lastError ?? new Error('processing_timeout')
@@ -1699,8 +1890,9 @@ export default function PostComposer({
             pushToast(`Skipped ${file.name}: Choose either photos or one video.`, 'error')
             continue
           }
-          if (file.size > VIDEO_MAX_BYTES) {
-            pushToast(`Skipped ${file.name}: File too large (max 500MB).`, 'error')
+          const maxVideoBytes = isPodcastComposer ? PODCAST_MAX_BYTES : VIDEO_MAX_BYTES
+          if (file.size > maxVideoBytes) {
+            pushToast(`Skipped ${file.name}: File too large (max ${formatBytesLabel(maxVideoBytes)}).`, 'error')
             continue
           }
           const metadata = await readMediaMetadata(file)
@@ -1711,6 +1903,14 @@ export default function PostComposer({
           const maxDurationMs = isPodcastComposer ? PODCAST_MAX_DURATION_MS : VIDEO_MAX_DURATION_MS
           if (metadata.durationMs > maxDurationMs) {
             pushToast(`Skipped ${file.name}: ${isPodcastComposer ? 'Podcasts' : 'Videos'} must be ${isPodcastComposer ? '3 hours' : '5 minutes'} or less.`, 'error')
+            continue
+          }
+          if (
+            isPodcastComposer &&
+            metadata.sourceType === 'video' &&
+            (metadata.width > PODCAST_MAX_WIDTH || metadata.height > PODCAST_MAX_HEIGHT)
+          ) {
+            setPodcastResolutionModalOpen(true)
             continue
           }
 
@@ -2676,6 +2876,26 @@ export default function PostComposer({
             {submitting ? 'Publishing…' : postType === 'article' ? 'Publish article' : postType === 'cause' ? 'Start cause' : 'Post'}
           </button>
         </div>
+
+        <Modal
+          open={podcastResolutionModalOpen}
+          onClose={() => setPodcastResolutionModalOpen(false)}
+          title="Podcast upload limit"
+          maxWidthClassName="max-w-lg"
+        >
+          <div className="space-y-4">
+            <p className="text-sm leading-6 text-slate-700">{PODCAST_RESOLUTION_LIMIT_MESSAGE}</p>
+            <div className="flex justify-end">
+              <button
+                type="button"
+                className="rounded-full bg-[var(--cc-primary)] px-4 py-2 text-sm font-semibold text-white transition hover:bg-[var(--cc-primary-700)]"
+                onClick={() => setPodcastResolutionModalOpen(false)}
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </Modal>
       </div>
     </>
   )

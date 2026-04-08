@@ -21,17 +21,31 @@ type PageProps = {
 }
 
 async function loadPostPaths(id: string) {
-  const res = await fetch(`${API_BASE}/posts/${encodeURIComponent(id)}`, {
+  const headers = {
+    accept: 'application/json',
+  }
+
+  const slugRes = await fetch(`${API_BASE}/posts/slug/${encodeURIComponent(id)}`, {
     cache: 'no-store',
-    headers: {
-      accept: 'application/json',
-    },
+    headers,
+  })
+  if (slugRes.ok) {
+    const payload = (await slugRes.json().catch(() => null)) as { paths?: { community?: string | null; user?: string | null } } | null
+    return payload?.paths ?? null
+  }
+  if (slugRes.status !== 404) {
+    throw new Error(`Failed to load post slug ${id}: ${slugRes.status}`)
+  }
+
+  const idRes = await fetch(`${API_BASE}/posts/${encodeURIComponent(id)}`, {
+    cache: 'no-store',
+    headers,
   })
 
-  if (res.status === 404) return null
-  if (!res.ok) throw new Error(`Failed to load post ${id}: ${res.status}`)
+  if (idRes.status === 404) return null
+  if (!idRes.ok) throw new Error(`Failed to load post ${id}: ${idRes.status}`)
 
-  const payload = (await res.json().catch(() => null)) as { paths?: { community?: string | null; user?: string | null } } | null
+  const payload = (await idRes.json().catch(() => null)) as { paths?: { community?: string | null; user?: string | null } } | null
   return payload?.paths ?? null
 }
 

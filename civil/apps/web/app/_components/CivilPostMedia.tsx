@@ -1,13 +1,16 @@
 'use client'
 
 import Link from 'next/link'
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
+import { buildApiUrl } from '../_lib/api'
 import { resolvePublicAssetUrl } from '../_lib/publicAssetUrl'
+import { getStoredToken } from '../_lib/tokenStorage'
 
 type CivilPostMediaProps = {
   images?: string[] | null
   mediaUrl?: string | null
+  postId?: string | null
   video?: {
     assetId: string
     playbackUrl?: string | null
@@ -23,9 +26,18 @@ type CivilPostMediaProps = {
   postUrl?: string | null
 }
 
-export default function CivilPostMedia({ images, mediaUrl, video, postUrl }: CivilPostMediaProps) {
+function buildPlaybackSessionId() {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID()
+  }
+  return `podcast-session-${Date.now()}-${Math.random().toString(36).slice(2)}`
+}
+
+export default function CivilPostMedia({ images, mediaUrl, postId, video, postUrl }: CivilPostMediaProps) {
   const playbackUrl = resolvePublicAssetUrl(video?.playbackUrl ?? null, typeof window !== 'undefined' ? window.location.origin : null)
   const thumbnailUrl = resolvePublicAssetUrl(video?.thumbnailUrl ?? null, typeof window !== 'undefined' ? window.location.origin : null)
+  const mediaElementRef = useRef<HTMLAudioElement | HTMLVideoElement | null>(null)
+  const playbackSessionRef = useRef<{ sessionId: string; maxPositionSeconds: number; sent: boolean } | null>(null)
   const allImages = useMemo(() => {
     const rawImages = images && images.length > 0 ? images : mediaUrl ? [mediaUrl] : []
     return rawImages
@@ -33,14 +45,101 @@ export default function CivilPostMedia({ images, mediaUrl, video, postUrl }: Civ
       .filter((value): value is string => Boolean(value))
   }, [images, mediaUrl])
   const [activeImageIndex, setActiveImageIndex] = useState<number | null>(null)
+  const shouldTrackPodcastPlayback = Boolean(postId && playbackUrl && video?.kind === 'podcast')
+
+  const flushPlaybackAnalytics = useCallback(
+    async (completedOverride?: boolean) => {
+      if (!shouldTrackPodcastPlayback || !postId) return
+      const session = playbackSessionRef.current
+      const mediaElement = mediaElementRef.current
+      if (!session || session.sent || !mediaElement) return
+
+      const duration = Number.isFinite(mediaElement.duration) ? mediaElement.duration : null
+      const currentPositionSeconds = Number.isFinite(mediaElement.currentTime) ? mediaElement.currentTime : 0
+      const maxPositionSeconds = Math.max(session.maxPositionSeconds, currentPositionSeconds)
+      const completed = Boolean(completedOverride) || (duration !== null && duration > 0 ? maxPositionSeconds / duration >= 0.95 : false)
+      const watchSeconds = duration !== null ? Math.min(duration, maxPositionSeconds) : maxPositionSeconds
+      if (!completed && watchSeconds < 3) {
+        playbackSessionRef.current = null
+        return
+      }
+
+      session.sent = true
+      const token = getStoredToken()
+      if (!token) {
+        playbackSessionRef.current = null
+        return
+      }
+
+      try {
+        await fetch(buildApiUrl('/podcasts/analytics/playback'), {
+          method: 'POST',
+          headers: {
+            'content-type': 'application/json',
+            authorization: `Bearer ${token}`,
+          },
+          keepalive: true,
+          body: JSON.stringify({
+            postId,
+            sessionId: session.sessionId,
+            watchSeconds: Number(watchSeconds.toFixed(2)),
+            maxPositionSeconds: Number(maxPositionSeconds.toFixed(2)),
+            completed,
+          }),
+        })
+      } catch {
+        session.sent = false
+      }
+    },
+    [postId, shouldTrackPodcastPlayback],
+  )
+
+  const startPlaybackSession = useCallback(() => {
+    if (!shouldTrackPodcastPlayback) return
+    if (!playbackSessionRef.current || playbackSessionRef.current.sent) {
+      playbackSessionRef.current = {
+        sessionId: buildPlaybackSessionId(),
+        maxPositionSeconds: 0,
+        sent: false,
+      }
+    }
+  }, [shouldTrackPodcastPlayback])
+
+  const updatePlaybackPosition = useCallback(() => {
+    if (!shouldTrackPodcastPlayback || !mediaElementRef.current) return
+    startPlaybackSession()
+    const currentPositionSeconds = Number.isFinite(mediaElementRef.current.currentTime) ? mediaElementRef.current.currentTime : 0
+    if (playbackSessionRef.current) {
+      playbackSessionRef.current.maxPositionSeconds = Math.max(playbackSessionRef.current.maxPositionSeconds, currentPositionSeconds)
+    }
+  }, [shouldTrackPodcastPlayback, startPlaybackSession])
+
+  useEffect(() => {
+    if (!shouldTrackPodcastPlayback) return undefined
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'hidden') {
+        void flushPlaybackAnalytics()
+      }
+    }
+    const handlePageHide = () => {
+      void flushPlaybackAnalytics()
+    }
+
+    document.addEventListener('visibilitychange', handleVisibilityChange)
+    window.addEventListener('pagehide', handlePageHide)
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange)
+      window.removeEventListener('pagehide', handlePageHide)
+      void flushPlaybackAnalytics()
+    }
+  }, [flushPlaybackAnalytics, shouldTrackPodcastPlayback])
 
   if (playbackUrl && video?.sourceType === 'audio') {
     return (
       <div
         className="overflow-hidden rounded-2xl border border-slate-200 bg-[linear-gradient(135deg,#0f172a_0%,#1e293b_45%,#334155_100%)] p-5 text-white"
         data-prevent-card-nav="true"
-        onClickCapture={(event) => event.stopPropagation()}
-        onPointerDownCapture={(event) => event.stopPropagation()}
       >
         <div className="mb-4 flex items-start justify-between gap-4">
           <div>
@@ -52,7 +151,21 @@ export default function CivilPostMedia({ images, mediaUrl, video, postUrl }: Civ
             </p>
           </div>
         </div>
-        <audio className="w-full" controls preload="metadata">
+        <audio
+          ref={(element) => {
+            mediaElementRef.current = element
+          }}
+          className="w-full"
+          controls
+          preload="metadata"
+          onPlay={startPlaybackSession}
+          onTimeUpdate={updatePlaybackPosition}
+          onEnded={() => {
+            updatePlaybackPosition()
+            void flushPlaybackAnalytics(true)
+            playbackSessionRef.current = null
+          }}
+        >
           <source src={playbackUrl} type={video.mime ?? 'audio/mpeg'} />
         </audio>
       </div>
@@ -64,15 +177,23 @@ export default function CivilPostMedia({ images, mediaUrl, video, postUrl }: Civ
       <div
         className="overflow-hidden rounded-2xl border border-slate-200 bg-slate-950"
         data-prevent-card-nav="true"
-        onClickCapture={(event) => event.stopPropagation()}
-        onPointerDownCapture={(event) => event.stopPropagation()}
       >
         <video
+          ref={(element) => {
+            mediaElementRef.current = element
+          }}
           className="h-auto w-full max-h-[75vh] bg-black"
           controls
           playsInline
           preload="metadata"
           poster={thumbnailUrl ?? undefined}
+          onPlay={startPlaybackSession}
+          onTimeUpdate={updatePlaybackPosition}
+          onEnded={() => {
+            updatePlaybackPosition()
+            void flushPlaybackAnalytics(true)
+            playbackSessionRef.current = null
+          }}
         >
           <source src={playbackUrl} type="video/mp4" />
         </video>

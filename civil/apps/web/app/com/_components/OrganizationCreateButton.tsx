@@ -2,7 +2,7 @@
 
 import { useCallback, useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { buildApiUrl } from '../../_lib/api'
+import { buildApiUrl, parseApiResponse } from '../../_lib/api'
 import { pushToast } from '../../_components/useToasts'
 
 type Props = {
@@ -17,6 +17,25 @@ type CreateOrgResponse = {
     communitySlug?: string | null
   }
   error?: unknown
+}
+
+function buildCreateOrganizationErrorMessage(payload: CreateOrgResponse | null, text: string | null) {
+  if (typeof payload?.error === 'string') {
+    switch (payload.error) {
+      case 'business_limit_reached':
+        return 'You have reached the organization limit for this account.'
+      case 'province_not_found':
+      case 'community_not_found':
+        return 'That chamber of citizens could not be found. Refresh and try again.'
+      case 'user_not_found':
+        return 'Your account could not be loaded. Please sign in again.'
+      case 'unauthorized':
+        return 'Please sign in again.'
+      default:
+        return payload.error
+    }
+  }
+  return text || 'Unable to create organization. Please try again.'
 }
 
 export default function OrganizationCreateButton({ province, municipality }: Props) {
@@ -49,20 +68,21 @@ export default function OrganizationCreateButton({ province, municipality }: Pro
         body: JSON.stringify({}),
       })
 
-      if (res.status === 401 || res.status === 403) {
+      const { json, text } = await parseApiResponse<CreateOrgResponse>(res)
+
+      if (res.status === 401) {
         pushToast('Please sign in again.', 'error')
         return
       }
 
-      const payload = (await res.json().catch(() => null)) as CreateOrgResponse | null
-      if (!res.ok || !payload?.org?.slug) {
-        pushToast('Unable to create organization. Please try again.', 'error')
+      if (!res.ok || !json?.org?.slug) {
+        pushToast(buildCreateOrganizationErrorMessage(json, text), 'error')
         return
       }
 
-      const orgSlug = payload.org.slug
-      const provinceCode = payload.org.provinceCode ?? province
-      const communitySlug = payload.org.communitySlug ?? municipality
+      const orgSlug = json.org.slug
+      const provinceCode = json.org.provinceCode ?? province
+      const communitySlug = json.org.communitySlug ?? municipality
       pushToast('Organization draft created.', 'success')
       router.push(`/com/${encodeURIComponent(provinceCode)}/${encodeURIComponent(communitySlug)}/orgs/${encodeURIComponent(orgSlug)}/settings/details`)
     } catch (err) {

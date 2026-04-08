@@ -6,6 +6,7 @@ import CivilPostMedia from './CivilPostMedia'
 import LinkifiedText from './LinkifiedText'
 
 type CivilPostSharedReferenceProps = {
+  postId?: string | null
   href: string
   name: string
   subtitle?: string
@@ -34,6 +35,7 @@ type CivilPostSharedReferenceProps = {
 }
 
 export default function CivilPostSharedReference({
+  postId,
   href,
   name,
   subtitle,
@@ -69,7 +71,7 @@ export default function CivilPostSharedReference({
         {body ? <LinkifiedText text={body} className="whitespace-pre-wrap" mentions={mentions} /> : null}
         {video || (images && images.length > 0) ? (
           <Link href={href} className="mt-2 block">
-            <CivilPostMedia images={images} mediaUrl={mediaUrl} video={video} postUrl={href} />
+            <CivilPostMedia images={images} mediaUrl={mediaUrl} postId={postId} video={video} postUrl={href} />
           </Link>
         ) : null}
       </div>

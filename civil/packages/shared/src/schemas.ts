@@ -763,9 +763,10 @@ export type MediaCategory = z.infer<typeof MediaCategoryEnum>
 export const RequestMediaUploadInput = z.object({
   category: MediaCategoryEnum,
   mime: z.string().trim().min(3).max(120),
-  byteSize: z.number().int().positive().max(500 * 1024 * 1024),
+  byteSize: z.number().int().positive().max(2 * 1024 * 1024 * 1024),
   filename: z.string().trim().max(180).optional(),
   videoKind: PostVideoKindEnum.optional(),
+  podcastDraftId: z.string().uuid().optional(),
 })
 export type RequestMediaUploadInput = z.infer<typeof RequestMediaUploadInput>
 

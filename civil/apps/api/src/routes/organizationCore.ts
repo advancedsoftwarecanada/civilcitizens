@@ -297,17 +297,13 @@ export function registerOrganizationCoreRoutes(app: FastifyInstance, deps: Organ
           select: { id: true },
         })
 
-        await tx.businessFollow.upsert({
-          where: { businessId_userId: { businessId: created.id, userId } },
-          create: { businessId: created.id, userId },
-          update: {},
+        await tx.businessFollow.create({
+          data: { businessId: created.id, userId },
           select: { id: true },
         })
 
-        await tx.businessMembership.upsert({
-          where: { businessId_userId: { businessId: created.id, userId } },
-          create: { businessId: created.id, userId, role: 'OWNER' },
-          update: { role: 'OWNER' },
+        await tx.businessMembership.create({
+          data: { businessId: created.id, userId, role: 'OWNER' },
           select: { id: true },
         })
 
@@ -424,17 +420,13 @@ export function registerOrganizationCoreRoutes(app: FastifyInstance, deps: Organ
           select: { id: true },
         })
 
-        await tx.businessFollow.upsert({
-          where: { businessId_userId: { businessId: created.id, userId } },
-          create: { businessId: created.id, userId },
-          update: {},
+        await tx.businessFollow.create({
+          data: { businessId: created.id, userId },
           select: { id: true },
         })
 
-        await tx.businessMembership.upsert({
-          where: { businessId_userId: { businessId: created.id, userId } },
-          create: { businessId: created.id, userId, role: 'OWNER' },
-          update: { role: 'OWNER' },
+        await tx.businessMembership.create({
+          data: { businessId: created.id, userId, role: 'OWNER' },
           select: { id: true },
         })
 

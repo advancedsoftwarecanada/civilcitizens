@@ -531,13 +531,17 @@ import { registerUserLivesRoutes } from './routes/userLives.js'
 import { registerAiRoutes } from './routes/ai.js'
 import { registerAiTaskRoutes } from './routes/aiTasks.js'
 import { registerPushRoutes } from './routes/push.js'
+import { registerPodcastDraftRoutes } from './routes/podcastDrafts.js'
+import { recordPodcastImpressionAggregates } from './podcastAnalytics.js'
 import { registerSocialGraphRoutes } from './routes/socialGraph.js'
 import { registerUserConnectionsRoutes } from './routes/userConnections.js'
 
 const PORT = Number(process.env.PORT || 3000)
 const JWT_SECRET = process.env.JWT_SECRET || 'dev_secret'
+const WORKER_INTERNAL_SECRET = process.env.WORKER_INTERNAL_SECRET || 'dev_internal_worker_secret'
 const REDIS_URL = process.env.REDIS_URL || 'redis://localhost:6379'
 const MEDIA_S3_ENDPOINT = process.env.MEDIA_S3_ENDPOINT || 'http://127.0.0.1:9000'
+const MEDIA_S3_BROWSER_ENDPOINT = (process.env.MEDIA_S3_BROWSER_ENDPOINT || '').trim()
 const MEDIA_S3_REGION = process.env.MEDIA_S3_REGION || 'us-east-1'
 const MEDIA_S3_ACCESS_KEY = process.env.MEDIA_S3_ACCESS_KEY || 'minioadmin'
 const MEDIA_S3_SECRET_KEY = process.env.MEDIA_S3_SECRET_KEY || 'minioadmin'
@@ -1255,7 +1259,7 @@ const MEDIA_CATEGORY_LIMITS: Record<MediaCategory, number> = {
   post_video: 500 * MB,
   attachment: 200 * MB,
 }
-const MEDIA_PROXY_UPLOAD_LIMIT = 500 * MB
+const MEDIA_PROXY_UPLOAD_LIMIT = 2 * 1024 * 1024 * 1024
 
 const IMAGE_MIME_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp', 'image/avif', 'image/heic', 'image/heif'])
 const VIDEO_MIME_TYPES = new Set(['video/mp4', 'video/quicktime', 'video/webm', 'video/x-m4v'])
@@ -1292,6 +1296,18 @@ const s3Client = new S3Client({
   },
 })
 
+const browserUploadS3Client = MEDIA_S3_BROWSER_ENDPOINT
+  ? new S3Client({
+      region: MEDIA_S3_REGION,
+      endpoint: MEDIA_S3_BROWSER_ENDPOINT,
+      forcePathStyle: true,
+      credentials: {
+        accessKeyId: MEDIA_S3_ACCESS_KEY,
+        secretAccessKey: MEDIA_S3_SECRET_KEY,
+      },
+    })
+  : null
+
 export const app = Fastify({
   logger: true,
   trustProxy: true, // behind Nginx/Cloudflare
@@ -1313,7 +1329,7 @@ function registerCommunityRoute(method: CommunityRouteMethod, path: string, hand
 }
 
 for (const mime of BINARY_UPLOAD_MIME_TYPES) {
-  app.addContentTypeParser(mime, { parseAs: 'buffer' }, (request, payload, done) => {
+  app.addContentTypeParser(mime, (request, payload, done) => {
     done(null, payload)
   })
 }
@@ -5574,6 +5590,7 @@ registerProfileMediaRoutes(app, {
   MEDIA_CATEGORY_LIMITS,
   MEDIA_PROXY_UPLOAD_LIMIT,
   MEDIA_SIGNED_URL_TTL,
+  browserUploadS3Client,
   buildFamilyFeedPostTitle,
   buildFamilyMemberAuthMeResponse,
   buildHomeCommunitySummaryForUserId,
@@ -5604,6 +5621,16 @@ registerProfileMediaRoutes(app, {
   s3Client,
   withSchemaGuard,
   writeLegacyFamilyMemberProfileMedia,
+})
+
+registerPodcastDraftRoutes(app, {
+  buildPostSlugBase,
+  createNotificationRecord,
+  generateUniquePostSlug,
+  loadViewerAuthContext,
+  sanitizePlainText,
+  withSchemaGuard,
+  workerInternalSecret: WORKER_INTERNAL_SECRET,
 })
 
 registerPostInteractionRoutes(app, {
@@ -5662,6 +5689,7 @@ registerPostReadRoutes(app, {
   loadViewerPostFormattingContext,
   parseFeedRankCursor,
   rankFeedPosts,
+  recordPodcastImpressionAggregates,
   recordUserPostImpressions,
   resolveLinkPreview,
   stripHtmlToPlainText,

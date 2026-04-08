@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
-import { PutObjectCommand } from '@aws-sdk/client-s3'
+import { AbortMultipartUploadCommand, CompleteMultipartUploadCommand, CreateMultipartUploadCommand, PutObjectCommand, UploadPartCommand } from '@aws-sdk/client-s3'
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner'
 import { prisma } from '@civil/db'
 import { MediaCategory, MediaTranscodeJobKind, ModerationStatus, Prisma } from '@prisma/client'
@@ -15,8 +15,22 @@ import {
   getProvinceDisplayName,
 } from '@civil/shared'
 import { z } from 'zod'
+import { attachMediaAssetToPodcastDraft } from '../podcastDraftsCore.js'
 
 const MediaAssetParam = z.object({ id: MediaAssetIdSchema })
+const MediaUploadPartParam = z.object({
+  id: MediaAssetIdSchema,
+  partNumber: z.coerce.number().int().min(1).max(10_000),
+})
+const ProxyMultipartCompleteBody = z.object({
+  uploadId: z.string().trim().min(1).max(512),
+  parts: z.array(
+    z.object({
+      partNumber: z.number().int().min(1).max(10_000),
+      eTag: z.string().trim().min(1).max(512),
+    }),
+  ).min(1).max(10_000),
+})
 
 type ProfileMediaDeps = Record<string, any>
 
@@ -24,6 +38,16 @@ let mediaTranscodeTablesReady: Promise<void> | null = null
 
 const PODCAST_MAX_DURATION_MS = 3 * 60 * 60 * 1000
 const STANDARD_VIDEO_MAX_DURATION_MS = 5 * 60 * 1000
+const PODCAST_MAX_BYTES = 2 * 1024 * 1024 * 1024
+const PODCAST_MAX_WIDTH = 1280
+const PODCAST_MAX_HEIGHT = 720
+const PROXY_MULTIPART_CHUNK_BYTES = 64 * 1024 * 1024
+
+function readMediaAssetMetadata(metadata: Prisma.JsonValue | null | undefined): Record<string, unknown> {
+  return metadata && typeof metadata === 'object' && !Array.isArray(metadata)
+    ? { ...(metadata as Record<string, unknown>) }
+    : {}
+}
 
 function ensureMediaTranscodeTables(): Promise<void> {
   if (mediaTranscodeTablesReady) return mediaTranscodeTablesReady
@@ -651,18 +675,38 @@ export function registerProfileMediaRoutes(app: FastifyInstance, deps: ProfileMe
 
       const { category, mime, byteSize, filename, videoKind } = parse.data
       const mediaCategory = category as MediaCategory
-      const limit = deps.MEDIA_CATEGORY_LIMITS[mediaCategory]
+      const limit = mediaCategory === 'post_video' && videoKind === 'podcast' ? PODCAST_MAX_BYTES : deps.MEDIA_CATEGORY_LIMITS[mediaCategory]
       if (byteSize > limit) return reply.code(400).send({ error: 'file_too_large', maxBytes: limit })
       if (!deps.ensureMimeSupported(mediaCategory, mime)) return reply.code(400).send({ error: 'unsupported_mime' })
 
       const assetId = randomUUID()
       const extension = deps.extensionForMime(mime)
       const originalKey = deps.buildOriginalObjectKey(mediaCategory, ownerUserId, assetId, extension)
-      const metadata = {
+      const metadata: Record<string, unknown> = {
         ...(filename ? { filename } : {}),
         ...(mediaCategory === 'post_video' ? { videoKind: videoKind === 'podcast' ? 'podcast' : 'video' } : {}),
         ...(mediaCategory === 'post_video' ? { sourceType: mime.toLowerCase().startsWith('audio/') ? 'audio' : 'video' } : {}),
         ...(authContext.actor === 'family_member' ? { familyMemberId: authContext.member.id } : {}),
+      }
+
+      const shouldUseMultipartProxy = mediaCategory === 'post_video' && byteSize > PROXY_MULTIPART_CHUNK_BYTES
+      if (shouldUseMultipartProxy) {
+        const multipartUpload = await deps.s3Client.send(
+          new CreateMultipartUploadCommand({
+            Bucket: deps.MEDIA_BUCKET_ORIGINAL,
+            Key: originalKey,
+            ContentType: mime,
+          }),
+        )
+        if (!multipartUpload.UploadId) {
+          return reply.code(500).send({ error: 'multipart_upload_init_failed' })
+        }
+        Object.assign(metadata, {
+          proxyMultipart: {
+            uploadId: multipartUpload.UploadId,
+            partSizeBytes: PROXY_MULTIPART_CHUNK_BYTES,
+          },
+        })
       }
 
       const asset = await prisma.mediaAsset.create({
@@ -680,12 +724,21 @@ export function registerProfileMediaRoutes(app: FastifyInstance, deps: ProfileMe
         },
       })
 
+      const podcastDraft =
+        mediaCategory === 'post_video' && videoKind === 'podcast'
+          ? await attachMediaAssetToPodcastDraft({
+              creatorUserId: ownerUserId,
+              mediaAssetId: asset.id,
+              draftId: parse.data.podcastDraftId ?? null,
+            })
+          : null
+
       const command = new PutObjectCommand({
         Bucket: deps.MEDIA_BUCKET_ORIGINAL,
         Key: originalKey,
         ContentType: mime,
       })
-      const uploadUrl = await getSignedUrl(deps.s3Client, command, { expiresIn: deps.MEDIA_SIGNED_URL_TTL })
+      const uploadUrl = await getSignedUrl(deps.browserUploadS3Client ?? deps.s3Client, command, { expiresIn: deps.MEDIA_SIGNED_URL_TTL })
       const allowDirectUploadUrl = !deps.isPrivateOrLocalNetworkUrl(uploadUrl)
 
       return reply.send({
@@ -700,6 +753,15 @@ export function registerProfileMediaRoutes(app: FastifyInstance, deps: ProfileMe
             }
           : undefined,
         proxyPath: `/media/uploads/${asset.id}/proxy`,
+        multipartProxy:
+          shouldUseMultipartProxy && metadata.proxyMultipart && typeof metadata.proxyMultipart === 'object'
+            ? {
+                uploadId: (metadata.proxyMultipart as Record<string, unknown>).uploadId,
+                partSizeBytes: (metadata.proxyMultipart as Record<string, unknown>).partSizeBytes,
+                partCount: Math.ceil(byteSize / PROXY_MULTIPART_CHUNK_BYTES),
+              }
+            : undefined,
+        podcastDraftId: podcastDraft?.id ?? undefined,
         expiresInSeconds: deps.MEDIA_SIGNED_URL_TTL,
         bucket: deps.MEDIA_BUCKET_ORIGINAL,
         key: originalKey,
@@ -724,14 +786,26 @@ export function registerProfileMediaRoutes(app: FastifyInstance, deps: ProfileMe
         return reply.code(403).send({ error: 'asset_not_owned_by_family_member' })
       }
 
-      const assetMetadata =
-        asset.metadata && typeof asset.metadata === 'object' && !Array.isArray(asset.metadata)
-          ? (asset.metadata as Record<string, unknown>)
-          : {}
+      const assetMetadata = readMediaAssetMetadata(asset.metadata)
       const isAudioAsset = typeof asset.mime === 'string' && asset.mime.toLowerCase().startsWith('audio/')
       const maxDurationMs = assetMetadata.videoKind === 'podcast' ? PODCAST_MAX_DURATION_MS : STANDARD_VIDEO_MAX_DURATION_MS
       if (durationMs && durationMs > maxDurationMs) {
         return reply.code(400).send({ error: 'media_too_long', maxDurationMs })
+      }
+
+      const nextWidth = width ?? asset.width
+      const nextHeight = height ?? asset.height
+      if (
+        assetMetadata.videoKind === 'podcast' &&
+        !isAudioAsset &&
+        ((typeof nextWidth === 'number' && nextWidth > PODCAST_MAX_WIDTH) ||
+          (typeof nextHeight === 'number' && nextHeight > PODCAST_MAX_HEIGHT))
+      ) {
+        return reply.code(400).send({
+          error: 'podcast_video_resolution_too_large',
+          maxWidth: PODCAST_MAX_WIDTH,
+          maxHeight: PODCAST_MAX_HEIGHT,
+        })
       }
 
       if (asset.status === 'ready') return reply.send({ ok: true, assetId })
@@ -826,12 +900,19 @@ export function registerProfileMediaRoutes(app: FastifyInstance, deps: ProfileMe
         }
         if (asset.status !== 'pending') return reply.code(409).send({ error: 'asset_not_pending' })
 
-        const bodyBuffer = Buffer.isBuffer((req as any).body) ? ((req as any).body as Buffer) : await deps.readRequestBuffer(req)
-        if (!bodyBuffer || bodyBuffer.length === 0) return reply.code(400).send({ error: 'empty_upload' })
-
         const assetCategory = asset.category as MediaCategory
         const maxBytes = asset.byteSize ?? deps.MEDIA_CATEGORY_LIMITS[assetCategory]
-        if (maxBytes && bodyBuffer.length > maxBytes) {
+        const declaredBytesHeader = req.headers['x-upload-byte-size'] ?? req.headers['content-length']
+        const declaredBytes =
+          typeof declaredBytesHeader === 'string'
+            ? Number.parseInt(declaredBytesHeader, 10)
+            : Array.isArray(declaredBytesHeader) && typeof declaredBytesHeader[0] === 'string'
+              ? Number.parseInt(declaredBytesHeader[0], 10)
+              : null
+        if (typeof declaredBytes === 'number' && Number.isFinite(declaredBytes) && declaredBytes <= 0) {
+          return reply.code(400).send({ error: 'empty_upload' })
+        }
+        if (typeof declaredBytes === 'number' && Number.isFinite(declaredBytes) && maxBytes && declaredBytes > maxBytes) {
           return reply.code(400).send({ error: 'file_too_large', maxBytes })
         }
 
@@ -839,13 +920,139 @@ export function registerProfileMediaRoutes(app: FastifyInstance, deps: ProfileMe
           new PutObjectCommand({
             Bucket: deps.MEDIA_BUCKET_ORIGINAL,
             Key: asset.originalKey,
-            Body: bodyBuffer,
+            Body: req.raw,
             ContentType: asset.mime ?? 'application/octet-stream',
+            ContentLength: typeof declaredBytes === 'number' && Number.isFinite(declaredBytes) ? declaredBytes : undefined,
           }),
         )
 
-        return reply.send({ ok: true, bytesUploaded: bodyBuffer.length })
+        return reply.send({ ok: true, bytesUploaded: typeof declaredBytes === 'number' && Number.isFinite(declaredBytes) ? declaredBytes : asset.byteSize ?? null })
       }),
+  )
+
+  app.put(
+    '/media/uploads/:id/proxy/parts/:partNumber',
+    { bodyLimit: PROXY_MULTIPART_CHUNK_BYTES + 1024 * 1024 },
+    async (req: FastifyRequest, reply: FastifyReply) =>
+      deps.withSchemaGuard(req, reply, async () => {
+        const authContext = await deps.loadViewerAuthContext(req)
+        if (!authContext) return reply.code(401).send({ error: 'unauthorized' })
+        const ownerUserId = authContext.actor === 'family_member' ? authContext.member.parentId : authContext.userId
+
+        const params = MediaUploadPartParam.safeParse(req.params)
+        if (!params.success) return reply.code(400).send({ error: params.error.flatten() })
+
+        const asset = await prisma.mediaAsset.findFirst({ where: { id: params.data.id, ownerId: ownerUserId } })
+        if (!asset) return reply.code(404).send({ error: 'asset_not_found' })
+        if (authContext.actor === 'family_member' && !deps.familyMemberOwnsAssetForSession(asset, authContext.member.id)) {
+          return reply.code(403).send({ error: 'asset_not_owned_by_family_member' })
+        }
+        if (asset.status !== 'pending') return reply.code(409).send({ error: 'asset_not_pending' })
+
+        const assetMetadata = readMediaAssetMetadata(asset.metadata)
+        const proxyMultipart =
+          assetMetadata.proxyMultipart && typeof assetMetadata.proxyMultipart === 'object' && !Array.isArray(assetMetadata.proxyMultipart)
+            ? (assetMetadata.proxyMultipart as Record<string, unknown>)
+            : null
+        const uploadId = typeof proxyMultipart?.uploadId === 'string' ? proxyMultipart.uploadId : null
+        if (!uploadId) return reply.code(409).send({ error: 'multipart_upload_not_initialized' })
+
+        const declaredBytesHeader = req.headers['x-upload-byte-size'] ?? req.headers['content-length']
+        const declaredBytes =
+          typeof declaredBytesHeader === 'string'
+            ? Number.parseInt(declaredBytesHeader, 10)
+            : Array.isArray(declaredBytesHeader) && typeof declaredBytesHeader[0] === 'string'
+              ? Number.parseInt(declaredBytesHeader[0], 10)
+              : null
+        if (typeof declaredBytes === 'number' && Number.isFinite(declaredBytes) && declaredBytes <= 0) {
+          return reply.code(400).send({ error: 'empty_upload' })
+        }
+        if (typeof declaredBytes === 'number' && Number.isFinite(declaredBytes) && declaredBytes > PROXY_MULTIPART_CHUNK_BYTES) {
+          return reply.code(400).send({ error: 'multipart_part_too_large', maxBytes: PROXY_MULTIPART_CHUNK_BYTES })
+        }
+
+        const result = await deps.s3Client.send(
+          new UploadPartCommand({
+            Bucket: deps.MEDIA_BUCKET_ORIGINAL,
+            Key: asset.originalKey,
+            UploadId: uploadId,
+            PartNumber: params.data.partNumber,
+            Body: req.raw,
+            ContentLength: typeof declaredBytes === 'number' && Number.isFinite(declaredBytes) ? declaredBytes : undefined,
+          }),
+        )
+
+        if (result.ETag) {
+          reply.header('ETag', result.ETag)
+        }
+
+        return reply.send({
+          ok: true,
+          partNumber: params.data.partNumber,
+          eTag: result.ETag ?? null,
+        })
+      }),
+  )
+
+  app.post('/media/uploads/:id/proxy/complete', async (req: FastifyRequest, reply: FastifyReply) =>
+    deps.withSchemaGuard(req, reply, async () => {
+      const authContext = await deps.loadViewerAuthContext(req)
+      if (!authContext) return reply.code(401).send({ error: 'unauthorized' })
+      const ownerUserId = authContext.actor === 'family_member' ? authContext.member.parentId : authContext.userId
+
+      const params = MediaAssetParam.safeParse(req.params)
+      if (!params.success) return reply.code(400).send({ error: params.error.flatten() })
+      const body = ProxyMultipartCompleteBody.safeParse(req.body)
+      if (!body.success) return reply.code(400).send({ error: body.error.flatten() })
+
+      const asset = await prisma.mediaAsset.findFirst({ where: { id: params.data.id, ownerId: ownerUserId } })
+      if (!asset) return reply.code(404).send({ error: 'asset_not_found' })
+      if (authContext.actor === 'family_member' && !deps.familyMemberOwnsAssetForSession(asset, authContext.member.id)) {
+        return reply.code(403).send({ error: 'asset_not_owned_by_family_member' })
+      }
+      if (asset.status !== 'pending') return reply.code(409).send({ error: 'asset_not_pending' })
+
+      const assetMetadata = readMediaAssetMetadata(asset.metadata)
+      const proxyMultipart =
+        assetMetadata.proxyMultipart && typeof assetMetadata.proxyMultipart === 'object' && !Array.isArray(assetMetadata.proxyMultipart)
+          ? (assetMetadata.proxyMultipart as Record<string, unknown>)
+          : null
+      const uploadId = typeof proxyMultipart?.uploadId === 'string' ? proxyMultipart.uploadId : null
+      if (!uploadId) return reply.code(409).send({ error: 'multipart_upload_not_initialized' })
+      if (uploadId !== body.data.uploadId) return reply.code(409).send({ error: 'multipart_upload_mismatch' })
+
+      const completedParts = body.data.parts
+        .map((part) => ({ ETag: part.eTag, PartNumber: part.partNumber }))
+        .sort((a, b) => a.PartNumber - b.PartNumber)
+
+      try {
+        await deps.s3Client.send(
+          new CompleteMultipartUploadCommand({
+            Bucket: deps.MEDIA_BUCKET_ORIGINAL,
+            Key: asset.originalKey,
+            UploadId: uploadId,
+            MultipartUpload: { Parts: completedParts },
+          }),
+        )
+      } catch (error) {
+        await deps.s3Client.send(
+          new AbortMultipartUploadCommand({
+            Bucket: deps.MEDIA_BUCKET_ORIGINAL,
+            Key: asset.originalKey,
+            UploadId: uploadId,
+          }),
+        ).catch(() => undefined)
+        throw error
+      }
+
+      delete assetMetadata.proxyMultipart
+      await prisma.mediaAsset.update({
+        where: { id: asset.id },
+        data: { metadata: assetMetadata as Prisma.InputJsonValue },
+      })
+
+      return reply.send({ ok: true, assetId: asset.id })
+    }),
   )
 
   app.get('/media/assets/:id', async (req: FastifyRequest, reply: FastifyReply) =>

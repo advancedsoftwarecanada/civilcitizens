@@ -1,5 +1,6 @@
 'use client'
 
+import Link from 'next/link'
 import { useEffect, useMemo, useState } from 'react'
 import { buildApiUrl } from '../_lib/api'
 import { buildPostPath } from '../_lib/shareTarget'
@@ -186,14 +187,22 @@ export default function PodcastsRightRail({ onUploadPodcast }: PodcastsRightRail
 
   return (
     <div className="space-y-5">
-      <Block title="Upload Podcast">
-        <button
-          type="button"
-          onClick={onUploadPodcast}
-          className="inline-flex w-full items-center justify-center rounded-full bg-[var(--cc-primary)] px-4 py-3 text-sm font-semibold text-white transition hover:brightness-95"
-        >
-          Upload Podcast
-        </button>
+      <Block title="Manage Podcasts">
+        <div className="space-y-3">
+          <Link
+            href="/podcasts/manage"
+            className="inline-flex w-full items-center justify-center rounded-full border border-slate-300 px-4 py-3 text-sm font-semibold text-slate-700 transition hover:border-slate-400 hover:text-slate-950"
+          >
+            Manage Podcasts
+          </Link>
+          <button
+            type="button"
+            onClick={onUploadPodcast}
+            className="inline-flex w-full items-center justify-center rounded-full bg-[var(--cc-primary)] px-4 py-3 text-sm font-semibold text-white transition hover:brightness-95"
+          >
+            Upload Podcast
+          </button>
+        </div>
       </Block>
 
       <Block title="Trending Podcasts">

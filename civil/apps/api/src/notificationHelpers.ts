@@ -60,6 +60,11 @@ export const CAUSE_NOTIFICATION_TYPES = {
   SUBSCRIPTION_CHARGED_CREATOR: 'cause_subscription_charged_creator',
 } as const
 
+export const PODCAST_NOTIFICATION_TYPES = {
+  READY: 'podcast_draft_ready',
+  PUBLISHED: 'podcast_draft_published',
+} as const
+
 export const PROFILE_FAMILY_RELATIONSHIP_LABELS = {
   husband: 'Husband',
   wife: 'Wife',
@@ -632,6 +637,12 @@ export function createNotificationHelpers(deps: CreateNotificationHelpersDeps) {
       const targetName = typeof payload?.targetName === 'string' ? payload.targetName.trim() : ''
       const targetLabel = targetHandle ? `@${targetHandle}` : targetName || 'a user'
       return { title: 'Family user blocked', message: `${childDisplayName} blocked ${targetLabel}.` }
+    }
+    if (record.type === PODCAST_NOTIFICATION_TYPES.READY) {
+      return { title: 'Podcast ready', message: 'Your podcast finished processing. Add a description to publish it.' }
+    }
+    if (record.type === PODCAST_NOTIFICATION_TYPES.PUBLISHED) {
+      return { title: 'Podcast published', message: 'Your podcast is live on Civil.' }
     }
     return { title: 'Civil Citizens', message: `${actorLabel} sent you a notification.` }
   }
