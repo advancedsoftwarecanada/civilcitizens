@@ -73,3 +73,10 @@ _geodata/
 
 # Large SQL exports
 tests/*.sql
+
+# Generated TLS/certbot assets
+ssl/letsencrypt/
+ssl/letsencrypt-lib/
+ssl/letsencrypt-log/
+ssl/*.crt
+ssl/*.key

@@ -545,7 +545,7 @@ export default function PostFeedItem({ post, onReact, onDelete, onUpdate, viewer
         }
         content={
           <>
-            <CivilPostMedia images={post.images} mediaUrl={post.mediaUrl} video={post.video} postUrl={postUrl} />
+            <CivilPostMedia images={post.images} mediaUrl={post.mediaUrl} postId={post.id} video={post.video} postUrl={postUrl} />
 
             {(post.type === 'article' || post.type === 'cause') && post.title ? (
               <Link href={postUrl} className="text-lg font-semibold text-slate-900 hover:underline">
@@ -614,6 +614,7 @@ export default function PostFeedItem({ post, onReact, onDelete, onUpdate, viewer
 
             {post.sharedPost ? (
               <CivilPostSharedReference
+                postId={post.sharedPost.id}
                 href={sharedPostHref ?? postUrl}
                 name={
                   post.sharedPost.organization?.name

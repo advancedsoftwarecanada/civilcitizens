@@ -1,0 +1,24 @@
+[req]
+default_bits = 2048
+prompt = no
+default_md = sha256
+x509_extensions = v3_req
+distinguished_name = dn
+
+[dn]
+C = CA
+ST = Ontario
+L = Toronto
+O = Civil Citizens Dev
+OU = Dev Uploads
+CN = uploads.civilcitizens.ca
+
+[v3_req]
+subjectAltName = @alt_names
+basicConstraints = CA:FALSE
+keyUsage = digitalSignature, keyEncipherment
+extendedKeyUsage = serverAuth
+
+[alt_names]
+DNS.1 = uploads.civilcitizens.ca
+DNS.2 = uploads.dev.civilcitizens.ca

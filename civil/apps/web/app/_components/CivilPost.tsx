@@ -28,6 +28,7 @@ type CivilPostProps = {
   body?: ReactNode
   images?: string[] | null
   mediaUrl?: string | null
+  postId?: string | null
   video?: {
     assetId: string
     playbackUrl?: string | null
@@ -66,6 +67,7 @@ export default function CivilPost({
   body,
   images,
   mediaUrl,
+  postId,
   video,
   onClick,
   className,
@@ -112,7 +114,7 @@ export default function CivilPost({
         <div className={clsx('space-y-3 text-[15px] leading-6 text-slate-800', contentClassName)}>{content}</div>
       ) : (
         <div className={clsx('space-y-3 text-[15px] leading-6 text-slate-800', contentClassName)}>
-          <CivilPostMedia images={images} mediaUrl={mediaUrl} video={video} postUrl={postHref} />
+          <CivilPostMedia images={images} mediaUrl={mediaUrl} postId={postId} video={video} postUrl={postHref} />
           {bodyContent}
         </div>
       )}

@@ -837,7 +837,7 @@ export default function ChamberPostPage({ params }: PageProps) {
             </div>
 
             <div className="space-y-4 text-[16px] leading-7 text-gray-900">
-              {post.type !== 'cause' && (post.video || post.mediaUrl) ? <CivilPostMedia images={post.images} mediaUrl={post.mediaUrl} video={post.video} /> : null}
+              {post.type !== 'cause' && (post.video || post.mediaUrl) ? <CivilPostMedia images={post.images} mediaUrl={post.mediaUrl} postId={post.id} video={post.video} /> : null}
               {(post.type === 'article' || post.type === 'cause') && post.title ? (
                 <h1 className="text-2xl font-semibold text-gray-900">{post.title}</h1>
               ) : null}
@@ -848,7 +848,7 @@ export default function ChamberPostPage({ params }: PageProps) {
               ) : postBodyWithoutCivilLinks ? (
                 <LinkifiedText text={postBodyWithoutCivilLinks} className="whitespace-pre-wrap break-words" mentions={post.mentions} />
               ) : null}
-              {post.type === 'cause' ? <CivilPostMedia images={post.images} mediaUrl={post.mediaUrl} video={post.video} /> : null}
+              {post.type === 'cause' ? <CivilPostMedia images={post.images} mediaUrl={post.mediaUrl} postId={post.id} video={post.video} /> : null}
               {post.linkPreview ? <LinkPreviewCard preview={post.linkPreview} /> : <CivilLinkPreviewList body={post.body} className="mt-3 space-y-2" />}
               {post.type === 'cause' ? <CauseSummaryCard post={post} onPostUpdate={setPost} /> : null}
               {post.type === 'poll' && post.poll ? (
