@@ -15,7 +15,7 @@ import {
   type SavedShippingAddress,
   writeStoredMarketShippingAddress,
 } from '../../_lib/canadianAddresses'
-import { readMarketCart, setMarketCartQuantity, type MarketCartItem, writeMarketCart } from '../_lib/cart'
+import { getMarketCartItemKey, readMarketCart, setMarketCartQuantity, type MarketCartItem, writeMarketCart } from '../_lib/cart'
 import YourOrdersPanel from '../_components/YourOrdersPanel'
 
 type Product = {
@@ -24,9 +24,21 @@ type Product = {
   description: string | null
   priceCents: number
   currency: string
+  variants?: Array<{
+    id: string
+    productId: string
+    attributeValues: Record<string, string>
+    priceCents: number | null
+    sku: string | null
+    imageUrl: string | null
+    isActive: boolean
+    inventoryTotal: number
+  }>
   primaryImageUrl: string | null
   fulfillmentType: string
 }
+
+type ProductVariant = NonNullable<Product['variants']>[number]
 
 type Organization = {
   id: string
@@ -45,6 +57,21 @@ type CartLine = {
   item: MarketCartItem
   product: Product
   organization: Organization
+  variant: ProductVariant | null
+}
+
+function resolveSelectedVariant(product: Product, item: MarketCartItem) {
+  if (!item.variantId || !Array.isArray(product.variants)) return null
+  return product.variants.find((variant) => variant.id === item.variantId) ?? null
+}
+
+function resolveLineUnitPrice(line: CartLine) {
+  return line.variant?.priceCents ?? line.product.priceCents ?? 0
+}
+
+function formatSelectedAttributes(item: MarketCartItem) {
+  const entries = Object.entries(item.selectedAttributes ?? {}).filter(([, value]) => String(value || '').trim())
+  return entries.map(([key, value]) => `${key}: ${value}`).join(' • ')
 }
 
 function formatMoney(cents: number, currency: string) {
@@ -192,14 +219,20 @@ export default function MarketCartPageClient() {
           if (!response.ok || !parsed.json?.product || !parsed.json?.organization) {
             return { ok: false as const, item }
           }
-          return { ok: true as const, item, product: parsed.json.product, organization: parsed.json.organization }
+          return {
+            ok: true as const,
+            item,
+            product: parsed.json.product,
+            organization: parsed.json.organization,
+            variant: resolveSelectedVariant(parsed.json.product, item),
+          }
         }),
       )
 
       const nextLines: CartLine[] = []
       for (const r of results) {
         if (!r.ok) continue
-        nextLines.push({ item: r.item, product: r.product, organization: r.organization })
+        nextLines.push({ item: r.item, product: r.product, organization: r.organization, variant: r.variant })
       }
       setLines(nextLines)
     } catch {
@@ -243,27 +276,29 @@ export default function MarketCartPageClient() {
   const subtotalCents = useMemo(() => {
     let total = 0
     for (const line of lines) {
-      total += (line.product.priceCents || 0) * (line.item.quantity || 0)
+      total += resolveLineUnitPrice(line) * (line.item.quantity || 0)
     }
     return total
   }, [lines])
 
   const updateQuantity = useCallback(
-    (productId: string, quantity: number) => {
+    (item: MarketCartItem, quantity: number) => {
       if (clientSecret) return
       const current = readMarketCart()
-      const next = setMarketCartQuantity(current, productId, quantity)
+      const next = setMarketCartQuantity(current, item, quantity)
       writeMarketCart(next)
       window.dispatchEvent(new Event('civil:market-cart-changed'))
       setCart(next)
 
+      const targetKey = getMarketCartItemKey(item)
+
       const nextLines: CartLine[] = []
       for (const line of lines) {
-        if (line.product.id !== productId) {
+        if (getMarketCartItemKey(line.item) !== targetKey) {
           nextLines.push(line)
           continue
         }
-        const updatedItem = next.find((i) => i.productId === productId)
+        const updatedItem = next.find((i) => getMarketCartItemKey(i) === targetKey)
         if (updatedItem) nextLines.push({ ...line, item: updatedItem })
       }
       setLines(nextLines)
@@ -329,7 +364,7 @@ export default function MarketCartPageClient() {
             <div className="overflow-hidden rounded-2xl border border-slate-200 bg-white">
               <div className="divide-y divide-slate-100">
                 {lines.map((line) => (
-                  <div key={line.product.id} className="flex items-center gap-4 p-4">
+                  <div key={getMarketCartItemKey(line.item)} className="flex items-center gap-4 p-4">
                     <Link
                       href={`/market/products/${encodeURIComponent(line.product.id)}`}
                       className="flex min-w-0 flex-1 items-center gap-4 rounded-2xl transition hover:bg-slate-50/80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--cc-primary)]/30"
@@ -344,27 +379,28 @@ export default function MarketCartPageClient() {
                       <div className="min-w-0 flex-1">
                         <div className="truncate text-sm font-semibold text-slate-900">{line.product.name}</div>
                         <div className="mt-1 text-xs text-slate-600">{line.organization.name}</div>
-                        <div className="mt-1 text-xs text-slate-600">{formatMoney(line.product.priceCents, line.product.currency)} each</div>
+                        {formatSelectedAttributes(line.item) ? <div className="mt-1 text-xs text-slate-600">{formatSelectedAttributes(line.item)}</div> : null}
+                        <div className="mt-1 text-xs text-slate-600">{formatMoney(resolveLineUnitPrice(line), line.product.currency)} each</div>
                       </div>
                     </Link>
 
                     <div className="flex items-center gap-2">
-                      <label className="text-xs text-slate-600" htmlFor={`qty-${line.product.id}`}>
+                      <label className="text-xs text-slate-600" htmlFor={`qty-${getMarketCartItemKey(line.item)}`}>
                         Qty
                       </label>
                       <input
-                        id={`qty-${line.product.id}`}
+                        id={`qty-${getMarketCartItemKey(line.item)}`}
                         type="number"
                         min={0}
                         max={99}
                         value={line.item.quantity}
                         disabled={Boolean(clientSecret)}
-                        onChange={(e) => updateQuantity(line.product.id, Number(e.target.value))}
+                        onChange={(e) => updateQuantity(line.item, Number(e.target.value))}
                         className="w-16 rounded-xl border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900"
                       />
                       <button
                         type="button"
-                        onClick={() => updateQuantity(line.product.id, 0)}
+                        onClick={() => updateQuantity(line.item, 0)}
                         disabled={Boolean(clientSecret)}
                         className="rounded-full border border-slate-200 bg-white px-2.5 py-1 text-[11px] font-semibold text-slate-700 transition hover:bg-slate-50 disabled:opacity-60"
                       >
@@ -373,7 +409,7 @@ export default function MarketCartPageClient() {
                     </div>
 
                     <div className="w-28 text-right text-sm font-semibold text-slate-900">
-                      {formatMoney(line.product.priceCents * line.item.quantity, line.product.currency)}
+                      {formatMoney(resolveLineUnitPrice(line) * line.item.quantity, line.product.currency)}
                     </div>
                   </div>
                 ))}

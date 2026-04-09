@@ -72,6 +72,50 @@ function normalizeMarketShippingOptions(
   return MARKET_SHIPPING_POLICIES.map((policy) => byPolicy.get(policy) ?? { policy, enabled: false, weightGrams: null, flatRateFeeCents: null })
 }
 
+function normalizeMarketProductAttributes(value: unknown) {
+  if (!Array.isArray(value)) return [] as Array<{ name: string; values: string[]; position: number }>
+  const next = value
+    .map((entry, index) => {
+      if (!entry || typeof entry !== 'object') return null
+      const typed = entry as Record<string, unknown>
+      const name = String(typed.name || '').trim()
+      if (!name) return null
+      const values = Array.isArray(typed.values)
+        ? Array.from(new Set(typed.values.map((item) => String(item || '').trim()).filter(Boolean)))
+        : []
+      if (!values.length) return null
+      const position = typeof typed.position === 'number' && Number.isFinite(typed.position) ? Math.max(0, Math.round(typed.position)) : index
+      return { name, values, position }
+    })
+    .filter((entry): entry is { name: string; values: string[]; position: number } => Boolean(entry))
+  next.sort((a, b) => (a.position - b.position) || a.name.localeCompare(b.name))
+  return next.slice(0, 3)
+}
+
+function normalizeMarketVariantInventoryByWarehouse(value: unknown) {
+  const next: Record<string, number> = {}
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return next
+  for (const [warehouseId, quantity] of Object.entries(value as Record<string, unknown>)) {
+    const normalizedWarehouseId = String(warehouseId || '').trim()
+    if (!normalizedWarehouseId) continue
+    next[normalizedWarehouseId] = typeof quantity === 'number' && Number.isFinite(quantity) ? Math.max(0, Math.round(quantity)) : 0
+  }
+  return next
+}
+
+function sumMarketVariantInventoryByWarehouse(value: Record<string, number>) {
+  return Object.values(value).reduce((sum, quantity) => sum + (Number(quantity) || 0), 0)
+}
+
+function readMarketVariantAttributes(value: unknown) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return {} as Record<string, string>
+  return Object.fromEntries(
+    Object.entries(value as Record<string, unknown>)
+      .map(([key, entry]) => [String(key).trim(), String(entry || '').trim()])
+      .filter(([key, entry]) => Boolean(key && entry)),
+  )
+}
+
 function resolveMarketShippingOption(args: {
   options: ReturnType<typeof normalizeMarketShippingOptions>
   shippingAddress?: Record<string, unknown> | null
@@ -126,16 +170,27 @@ export function registerMarketStorefrontRoutes(app: FastifyInstance, deps: Marke
   }
 
   async function buildCheckoutSnapshot(body: {
-    items: Array<{ productId: string; quantity: number }>
+    items: Array<{ productId: string; variantId?: string | null; selectedAttributes?: Record<string, string> | null; quantity: number }>
     shippingAddress?: Record<string, unknown> | null
   }) {
     await deps.ensureOrganizationShopTables()
 
-    const quantitiesByProductId = new Map<string, number>()
+    const quantitiesBySelectionKey = new Map<string, number>()
+    const selectionByKey = new Map<string, { productId: string; variantId: string | null; selectedAttributes: Record<string, string> | null }>()
     for (const item of body.items) {
-      quantitiesByProductId.set(item.productId, (quantitiesByProductId.get(item.productId) ?? 0) + item.quantity)
+      const variantId = item.variantId?.trim() ? item.variantId.trim() : null
+      const selectionKey = `${item.productId}::${variantId ?? ''}`
+      quantitiesBySelectionKey.set(selectionKey, (quantitiesBySelectionKey.get(selectionKey) ?? 0) + item.quantity)
+      if (!selectionByKey.has(selectionKey)) {
+        selectionByKey.set(selectionKey, {
+          productId: item.productId,
+          variantId,
+          selectedAttributes: item.selectedAttributes ?? null,
+        })
+      }
     }
-    const productIds = Array.from(quantitiesByProductId.keys())
+    const productIds = Array.from(new Set(body.items.map((item) => item.productId)))
+    const variantIds = Array.from(new Set(body.items.map((item) => item.variantId?.trim()).filter((value): value is string => Boolean(value))))
     if (!productIds.length) {
       throw { statusCode: 400, payload: { error: 'empty_cart' } }
     }
@@ -147,6 +202,8 @@ export function registerMarketStorefrontRoutes(app: FastifyInstance, deps: Marke
       province_code: string | null
       community_slug: string | null
       name: string
+      attributes_json: unknown
+      has_variants: boolean
       price_cents: number
       currency: string
       tax_collect: boolean
@@ -161,6 +218,17 @@ export function registerMarketStorefrontRoutes(app: FastifyInstance, deps: Marke
       shipping_options: unknown
     }
 
+    type CheckoutVariantRow = {
+      id: string
+      product_id: string
+      attribute_values: unknown
+      price_cents: number | null
+      sku: string | null
+      image_url: string | null
+      is_active: boolean
+      inventory_by_warehouse: unknown
+    }
+
     const productRows: CheckoutProductRow[] = await prisma.$queryRaw<CheckoutProductRow[]>`
       SELECT
         p.id,
@@ -169,6 +237,8 @@ export function registerMarketStorefrontRoutes(app: FastifyInstance, deps: Marke
         b."provinceCode" AS province_code,
         b."communitySlug" AS community_slug,
         p.name,
+        p.attributes_json,
+        p.has_variants,
         p.price_cents,
         p.currency,
         p.tax_collect,
@@ -195,6 +265,14 @@ export function registerMarketStorefrontRoutes(app: FastifyInstance, deps: Marke
       GROUP BY p.id, b.id
     `
 
+    const variantRows: CheckoutVariantRow[] = variantIds.length
+      ? await prisma.$queryRaw<CheckoutVariantRow[]>`
+          SELECT id, product_id, attribute_values, price_cents, sku, image_url, is_active, inventory_by_warehouse
+          FROM organization_shop_product_variant
+          WHERE id IN (${Prisma.join(variantIds)})
+        `
+      : []
+
     if (productRows.length !== productIds.length) {
       throw { statusCode: 404, payload: { error: 'product_not_found' } }
     }
@@ -215,12 +293,67 @@ export function registerMarketStorefrontRoutes(app: FastifyInstance, deps: Marke
       throw { statusCode: 412, payload: { error: 'shipping_address_required' } }
     }
 
-    for (const row of productRows) {
-      if (!row.track_inventory) continue
-      const requested = quantitiesByProductId.get(row.id) ?? 0
-      const available = Number(row.inventory_total ?? 0) || 0
+    const productById = new Map(productRows.map((row) => [row.id, row]))
+    const variantById = new Map(variantRows.map((row) => [row.id, row]))
+
+    const resolvedItems = Array.from(selectionByKey.entries()).map(([selectionKey, selection]) => {
+      const product = productById.get(selection.productId)
+      if (!product) {
+        throw { statusCode: 404, payload: { error: 'product_not_found' } }
+      }
+      const quantity = quantitiesBySelectionKey.get(selectionKey) ?? 0
+      const productAttributes = normalizeMarketProductAttributes(product.attributes_json)
+      if (product.has_variants) {
+        if (!selection.variantId) {
+          throw { statusCode: 412, payload: { error: 'variant_selection_required', productId: product.id } }
+        }
+        const variant = variantById.get(selection.variantId)
+        if (!variant || variant.product_id !== product.id || !variant.is_active) {
+          throw { statusCode: 409, payload: { error: 'invalid_variant_selection', productId: product.id, variantId: selection.variantId } }
+        }
+        const inventoryByWarehouse = normalizeMarketVariantInventoryByWarehouse(variant.inventory_by_warehouse)
+        const inventoryTotal = sumMarketVariantInventoryByWarehouse(inventoryByWarehouse)
+        return {
+          key: selectionKey,
+          product,
+          variant,
+          quantity,
+          priceCents: variant.price_cents == null ? (Number(product.price_cents) || 0) : (Number(variant.price_cents) || 0),
+          inventoryTotal,
+          variantAttributes: readMarketVariantAttributes(variant.attribute_values),
+          productAttributes,
+        }
+      }
+
+      if (selection.variantId) {
+        throw { statusCode: 409, payload: { error: 'invalid_variant_selection', productId: product.id, variantId: selection.variantId } }
+      }
+
+      return {
+        key: selectionKey,
+        product,
+        variant: null,
+        quantity,
+        priceCents: Number(product.price_cents) || 0,
+        inventoryTotal: Number(product.inventory_total ?? 0) || 0,
+        variantAttributes: {} as Record<string, string>,
+        productAttributes,
+      }
+    })
+
+    for (const row of resolvedItems) {
+      if (!row.product.track_inventory) continue
+      const requested = row.quantity
+      const available = row.inventoryTotal
       if (requested > available) {
-        throw { statusCode: 409, payload: { error: 'insufficient_inventory', productId: row.id } }
+        throw {
+          statusCode: 409,
+          payload: {
+            error: 'insufficient_inventory',
+            productId: row.product.id,
+            variantId: row.variant?.id ?? null,
+          },
+        }
       }
     }
 
@@ -229,36 +362,36 @@ export function registerMarketStorefrontRoutes(app: FastifyInstance, deps: Marke
     let taxCents = 0
     const taxRegionCode = deps.resolveTaxRegionCode(shippingAddress?.province)
 
-    for (const row of productRows) {
-      const qty = quantitiesByProductId.get(row.id) ?? 0
-      const lineSubtotal = (Number(row.price_cents) || 0) * qty
+    for (const row of resolvedItems) {
+      const qty = row.quantity
+      const lineSubtotal = row.priceCents * qty
       subtotalCents += lineSubtotal
 
-      if (String(row.fulfillment_type || '').toLowerCase() === 'physical') {
+      if (String(row.product.fulfillment_type || '').toLowerCase() === 'physical') {
         const shippingOption = resolveMarketShippingOption({
-          options: normalizeMarketShippingOptions(row.shipping_options, {
-            weightGrams: row.weight_grams,
-            shippingPolicy: row.shipping_policy,
-            allowShippingContracts: row.allow_shipping_contracts,
+          options: normalizeMarketShippingOptions(row.product.shipping_options, {
+            weightGrams: row.product.weight_grams,
+            shippingPolicy: row.product.shipping_policy,
+            allowShippingContracts: row.product.allow_shipping_contracts,
           }),
           shippingAddress,
-          sellerProvinceCode: row.province_code,
-          sellerCommunitySlug: row.community_slug,
+          sellerProvinceCode: row.product.province_code,
+          sellerCommunitySlug: row.product.community_slug,
         })
         if (!shippingOption) {
-          throw { statusCode: 412, payload: { error: 'shipping_unavailable', productId: row.id } }
+          throw { statusCode: 412, payload: { error: 'shipping_unavailable', productId: row.product.id, variantId: row.variant?.id ?? null } }
         }
         shippingCents += (Math.max(0, Number(shippingOption.flatRateFeeCents) || 0) * qty)
       }
 
       if (
-        row.tax_collect &&
+        row.product.tax_collect &&
         taxRegionCode &&
-        row.tax_rates_by_region &&
-        typeof row.tax_rates_by_region === 'object' &&
-        !Array.isArray(row.tax_rates_by_region)
+        row.product.tax_rates_by_region &&
+        typeof row.product.tax_rates_by_region === 'object' &&
+        !Array.isArray(row.product.tax_rates_by_region)
       ) {
-        const ratesMap = normalizeCanadaSalesTaxRatesByRegion(row.tax_rates_by_region, { fallbackPreset: 'canada_current' }) as Record<string, unknown>
+        const ratesMap = normalizeCanadaSalesTaxRatesByRegion(row.product.tax_rates_by_region, { fallbackPreset: 'canada_current' }) as Record<string, unknown>
         const ratePct = deps.parseTaxRatePct(ratesMap[taxRegionCode])
         if (ratePct > 0) {
           taxCents += Math.max(0, Math.round(lineSubtotal * (ratePct / 100)))
@@ -284,8 +417,9 @@ export function registerMarketStorefrontRoutes(app: FastifyInstance, deps: Marke
     const totalCents = sellerAmountCents + orderFeeCents
 
     return {
-      quantitiesByProductId,
+      quantitiesBySelectionKey,
       productRows,
+      resolvedItems,
       business,
       shippingAddress,
       currency,
@@ -350,19 +484,21 @@ export function registerMarketStorefrontRoutes(app: FastifyInstance, deps: Marke
       )
     `
 
-    for (const row of snapshot.productRows) {
-      const qty = snapshot.quantitiesByProductId.get(row.id) ?? 0
+    for (const row of snapshot.resolvedItems) {
+      const qty = row.quantity
       await tx.$executeRaw`
-        INSERT INTO organization_shop_order_item (id, order_id, product_id, name, price_cents, quantity, fulfillment_type, digital_delivery_url, created_at)
+        INSERT INTO organization_shop_order_item (id, order_id, product_id, variant_id, name, price_cents, quantity, variant_attributes, fulfillment_type, digital_delivery_url, created_at)
         VALUES (
           ${randomUUID()},
           ${orderId},
-          ${row.id},
-          ${row.name},
-          ${Number(row.price_cents) || 0},
+          ${row.product.id},
+          ${row.variant?.id ?? null},
+          ${row.product.name},
+          ${row.priceCents},
           ${qty},
-          ${row.fulfillment_type || 'physical'},
-          ${String(row.fulfillment_type || '').toLowerCase() === 'digital' ? row.digital_delivery_url ?? null : null},
+          ${JSON.stringify(row.variantAttributes)}::jsonb,
+          ${row.product.fulfillment_type || 'physical'},
+          ${String(row.product.fulfillment_type || '').toLowerCase() === 'digital' ? row.product.digital_delivery_url ?? null : null},
           NOW()
         )
       `
@@ -439,21 +575,47 @@ export function registerMarketStorefrontRoutes(app: FastifyInstance, deps: Marke
 
     type PaidItemRow = {
       product_id: string | null
+      variant_id: string | null
       quantity: number
       track_inventory: boolean | null
     }
 
     const itemRows = await db.$queryRaw<PaidItemRow[]>`
-      SELECT oi.product_id, oi.quantity, p.track_inventory
+      SELECT oi.product_id, oi.variant_id, oi.quantity, p.track_inventory
       FROM organization_shop_order_item oi
       LEFT JOIN organization_shop_product p ON p.id = oi.product_id
       WHERE oi.order_id = ${args.orderId}
     `
 
     for (const item of itemRows) {
-      if (!item.product_id || !item.track_inventory) continue
+      if ((!item.product_id && !item.variant_id) || !item.track_inventory) continue
       let remaining = Number(item.quantity) || 0
       if (remaining <= 0) continue
+
+      if (item.variant_id) {
+        const variantRows = await db.$queryRaw<Array<{ inventory_by_warehouse: unknown }>>`
+          SELECT inventory_by_warehouse
+          FROM organization_shop_product_variant
+          WHERE id = ${item.variant_id}
+          LIMIT 1
+        `
+        const inventoryByWarehouse = normalizeMarketVariantInventoryByWarehouse(variantRows[0]?.inventory_by_warehouse)
+        const orderedEntries = Object.entries(inventoryByWarehouse).sort((a, b) => b[1] - a[1])
+        for (const [warehouseId, quantity] of orderedEntries) {
+          if (remaining <= 0) break
+          if (quantity <= 0) continue
+          const take = Math.min(remaining, quantity)
+          remaining -= take
+          inventoryByWarehouse[warehouseId] = Math.max(0, quantity - take)
+        }
+        await db.$executeRaw`
+          UPDATE organization_shop_product_variant
+          SET inventory_by_warehouse = ${JSON.stringify(inventoryByWarehouse)}::jsonb,
+              updated_at = NOW()
+          WHERE id = ${item.variant_id}
+        `
+        continue
+      }
 
       const inventoryRows = await db.$queryRaw<Array<{ warehouse_id: string; quantity: number }>>`
         SELECT warehouse_id, quantity
@@ -886,6 +1048,8 @@ export function registerMarketStorefrontRoutes(app: FastifyInstance, deps: Marke
         price_cents: number
         currency: string
         sku: string | null
+        has_variants: boolean
+        attributes_json: unknown
         primary_image_url: string | null
         gallery_image_urls: unknown
         weight_grams: number | null
@@ -916,6 +1080,8 @@ export function registerMarketStorefrontRoutes(app: FastifyInstance, deps: Marke
           p.price_cents,
           p.currency,
           p.sku,
+          p.has_variants,
+          p.attributes_json,
           p.primary_image_url,
           p.gallery_image_urls,
           p.weight_grams,
@@ -946,6 +1112,29 @@ export function registerMarketStorefrontRoutes(app: FastifyInstance, deps: Marke
       if (!row) return reply.code(404).send({ error: 'product_not_found' })
       if (viewerBlockState.blockedBusinessIds.has(row.business_id)) return reply.code(404).send({ error: 'product_not_found' })
 
+      type MarketProductVariantRow = {
+        id: string
+        product_id: string
+        attribute_values: unknown
+        price_cents: number | null
+        sku: string | null
+        image_url: string | null
+        is_active: boolean
+        inventory_by_warehouse: unknown
+      }
+
+      const variantRows = row.has_variants
+        ? await prisma.$queryRaw<MarketProductVariantRow[]>`
+            SELECT id, product_id, attribute_values, price_cents, sku, image_url, is_active, inventory_by_warehouse
+            FROM organization_shop_product_variant
+            WHERE product_id = ${row.id}
+              AND is_active = TRUE
+            ORDER BY created_at ASC, id ASC
+          `
+        : []
+
+      const attributes = normalizeMarketProductAttributes(row.attributes_json)
+
       return reply.send({
         product: {
           id: row.id,
@@ -956,6 +1145,18 @@ export function registerMarketStorefrontRoutes(app: FastifyInstance, deps: Marke
           priceCents: Number(row.price_cents) || 0,
           currency: row.currency,
           sku: row.sku,
+          hasVariants: row.has_variants,
+          attributes,
+          variants: variantRows.map((variant: MarketProductVariantRow) => ({
+            id: variant.id,
+            productId: variant.product_id,
+            attributeValues: readMarketVariantAttributes(variant.attribute_values),
+            priceCents: variant.price_cents == null ? null : Number(variant.price_cents) || 0,
+            sku: variant.sku,
+            imageUrl: deps.normalizeMediaUrl(variant.image_url),
+            isActive: variant.is_active,
+            inventoryTotal: sumMarketVariantInventoryByWarehouse(normalizeMarketVariantInventoryByWarehouse(variant.inventory_by_warehouse)),
+          })),
           primaryImageUrl: row.primary_image_url,
           galleryImageUrls: deps.readGalleryUrls(row.gallery_image_urls),
           fulfillmentType: row.fulfillment_type,
@@ -1245,19 +1446,21 @@ export function registerMarketStorefrontRoutes(app: FastifyInstance, deps: Marke
             )
           `
 
-          for (const row of snapshot.productRows) {
-            const qty = snapshot.quantitiesByProductId.get(row.id) ?? 0
+          for (const row of snapshot.resolvedItems) {
+            const qty = row.quantity
             await tx.$executeRaw`
-              INSERT INTO organization_shop_order_item (id, order_id, product_id, name, price_cents, quantity, fulfillment_type, digital_delivery_url, created_at)
+              INSERT INTO organization_shop_order_item (id, order_id, product_id, variant_id, name, price_cents, quantity, variant_attributes, fulfillment_type, digital_delivery_url, created_at)
               VALUES (
                 ${randomUUID()},
                 ${orderId},
-                ${row.id},
-                ${row.name},
-                ${Number(row.price_cents) || 0},
+                ${row.product.id},
+                ${row.variant?.id ?? null},
+                ${row.product.name},
+                ${row.priceCents},
                 ${qty},
-                ${row.fulfillment_type || 'physical'},
-                ${String(row.fulfillment_type || '').toLowerCase() === 'digital' ? row.digital_delivery_url ?? null : null},
+                ${JSON.stringify(row.variantAttributes)}::jsonb,
+                ${row.product.fulfillment_type || 'physical'},
+                ${String(row.product.fulfillment_type || '').toLowerCase() === 'digital' ? row.product.digital_delivery_url ?? null : null},
                 NOW()
               )
             `
@@ -1608,15 +1811,18 @@ export function registerMarketStorefrontRoutes(app: FastifyInstance, deps: Marke
 
       type OrderItemRow = {
         id: string
+        product_id: string | null
+        variant_id: string | null
         name: string
         price_cents: number
         quantity: number
+        variant_attributes: unknown
         fulfillment_type: string
         digital_delivery_url: string | null
       }
 
       const itemRows = await prisma.$queryRaw<OrderItemRow[]>`
-        SELECT id, name, price_cents, quantity, fulfillment_type, digital_delivery_url
+        SELECT id, product_id, variant_id, name, price_cents, quantity, variant_attributes, fulfillment_type, digital_delivery_url
         FROM organization_shop_order_item
         WHERE order_id = ${order.id}
         ORDER BY created_at ASC
@@ -1642,9 +1848,12 @@ export function registerMarketStorefrontRoutes(app: FastifyInstance, deps: Marke
         },
         items: itemRows.map((item: OrderItemRow) => ({
           id: item.id,
+          productId: item.product_id,
+          variantId: item.variant_id,
           name: item.name,
           priceCents: Number(item.price_cents) || 0,
           quantity: Number(item.quantity) || 0,
+          variantAttributes: readMarketVariantAttributes(item.variant_attributes),
           fulfillmentType: item.fulfillment_type,
           digitalDeliveryUrl: allowDigitalDelivery && String(item.fulfillment_type || '').toLowerCase() === 'digital' ? item.digital_delivery_url : null,
         })),

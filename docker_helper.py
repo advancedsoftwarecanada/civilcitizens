@@ -507,6 +507,7 @@ def run_helper(
     default_env_candidates: Iterable[Path | str],
     default_project_name: str,
     default_command: Optional[str],
+    pre_command: Optional[Callable[[str, Mapping[str, str]], None]] = None,
     post_command: Optional[Callable[[str, Mapping[str, str]], None]] = None,
     extra_compose_files: Iterable[Path] = [],
 ) -> None:
@@ -590,6 +591,13 @@ def run_helper(
     did_prune_cache = False
     did_prune_full = False
     try:
+        if pre_command:
+            try:
+                pre_command(args.command, dict(overrides))
+            except subprocess.CalledProcessError as exc:
+                print(f"✖ Pre-build check failed (exit code {exc.returncode})", file=sys.stderr)
+                sys.exit(exc.returncode)
+
         while True:
             try:
                 handler(compose_cmd, overrides)

@@ -6507,6 +6507,9 @@ function ensureOrganizationShopTables() {
           sku TEXT,
           primary_image_url TEXT,
           gallery_image_urls JSONB NOT NULL DEFAULT '[]'::jsonb,
+          has_variants BOOLEAN NOT NULL DEFAULT FALSE,
+          attributes_json JSONB NOT NULL DEFAULT '[]'::jsonb,
+          group_id TEXT,
           weight_grams INTEGER,
           shipping_policy TEXT NOT NULL DEFAULT 'local_community',
           allow_shipping_contracts BOOLEAN NOT NULL DEFAULT FALSE,
@@ -6527,6 +6530,22 @@ function ensureOrganizationShopTables() {
           quantity INTEGER NOT NULL DEFAULT 0,
           updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
           PRIMARY KEY (product_id, warehouse_id)
+        );
+      `)
+
+      await prisma.$executeRawUnsafe(`
+        CREATE TABLE IF NOT EXISTS organization_shop_product_variant (
+          id TEXT PRIMARY KEY,
+          product_id TEXT NOT NULL REFERENCES organization_shop_product(id) ON DELETE CASCADE,
+          attribute_values JSONB NOT NULL DEFAULT '{}'::jsonb,
+          attribute_signature TEXT NOT NULL,
+          price_cents INTEGER,
+          sku TEXT,
+          image_url TEXT,
+          is_active BOOLEAN NOT NULL DEFAULT TRUE,
+          inventory_by_warehouse JSONB NOT NULL DEFAULT '{}'::jsonb,
+          created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+          updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
         );
       `)
 
@@ -6607,9 +6626,11 @@ function ensureOrganizationShopTables() {
           id TEXT PRIMARY KEY,
           order_id TEXT NOT NULL REFERENCES organization_shop_order(id) ON DELETE CASCADE,
           product_id TEXT REFERENCES organization_shop_product(id) ON DELETE SET NULL,
+          variant_id TEXT REFERENCES organization_shop_product_variant(id) ON DELETE SET NULL,
           name TEXT NOT NULL,
           price_cents INTEGER NOT NULL,
           quantity INTEGER NOT NULL,
+          variant_attributes JSONB NOT NULL DEFAULT '{}'::jsonb,
           fulfillment_type TEXT NOT NULL DEFAULT 'physical',
           digital_delivery_url TEXT,
           created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
@@ -6662,6 +6683,16 @@ function ensureOrganizationShopTables() {
       `)
 
       await prisma.$executeRawUnsafe(`
+        CREATE INDEX IF NOT EXISTS organization_shop_product_variant_product_id_idx
+        ON organization_shop_product_variant (product_id, created_at DESC);
+      `)
+
+      await prisma.$executeRawUnsafe(`
+        CREATE UNIQUE INDEX IF NOT EXISTS organization_shop_product_variant_product_signature_uniq
+        ON organization_shop_product_variant (product_id, attribute_signature);
+      `)
+
+      await prisma.$executeRawUnsafe(`
         CREATE INDEX IF NOT EXISTS organization_shop_order_business_id_idx
         ON organization_shop_order (business_id, created_at DESC);
       `)
@@ -6689,6 +6720,21 @@ function ensureOrganizationShopTables() {
       await prisma.$executeRawUnsafe(`
         ALTER TABLE organization_shop_product
         ADD COLUMN IF NOT EXISTS gallery_image_urls JSONB NOT NULL DEFAULT '[]'::jsonb;
+      `)
+
+      await prisma.$executeRawUnsafe(`
+        ALTER TABLE organization_shop_product
+        ADD COLUMN IF NOT EXISTS has_variants BOOLEAN NOT NULL DEFAULT FALSE;
+      `)
+
+      await prisma.$executeRawUnsafe(`
+        ALTER TABLE organization_shop_product
+        ADD COLUMN IF NOT EXISTS attributes_json JSONB NOT NULL DEFAULT '[]'::jsonb;
+      `)
+
+      await prisma.$executeRawUnsafe(`
+        ALTER TABLE organization_shop_product
+        ADD COLUMN IF NOT EXISTS group_id TEXT;
       `)
 
       await prisma.$executeRawUnsafe(`
@@ -6754,6 +6800,31 @@ function ensureOrganizationShopTables() {
       await prisma.$executeRawUnsafe(`
         ALTER TABLE organization_shop_product
         ADD COLUMN IF NOT EXISTS created_by TEXT;
+      `)
+
+      await prisma.$executeRawUnsafe(`
+        ALTER TABLE organization_shop_order_item
+        ADD COLUMN IF NOT EXISTS variant_id TEXT;
+      `)
+
+      await prisma.$executeRawUnsafe(`
+        ALTER TABLE organization_shop_order_item
+        ADD COLUMN IF NOT EXISTS variant_attributes JSONB NOT NULL DEFAULT '{}'::jsonb;
+      `)
+
+      await prisma.$executeRawUnsafe(`
+        DO $$
+        BEGIN
+          IF NOT EXISTS (
+            SELECT 1 FROM pg_constraint WHERE conname = 'organization_shop_order_item_variant_id_fkey'
+          ) THEN
+            ALTER TABLE organization_shop_order_item
+            ADD CONSTRAINT organization_shop_order_item_variant_id_fkey
+            FOREIGN KEY (variant_id)
+            REFERENCES organization_shop_product_variant(id)
+            ON DELETE SET NULL;
+          END IF;
+        END $$;
       `)
 
       await prisma.$executeRawUnsafe(`
@@ -8443,6 +8514,17 @@ const CommunityOrgShopProductCreateBody = z.object({
   initialInventory: z.coerce.number().int().min(0).max(1_000_000).default(0),
 })
 
+const CommunityOrgShopProductAttributeBody = z.object({
+  name: z.string().trim().min(1).max(40),
+  values: z.array(z.string().trim().min(1).max(40)).min(1).max(30),
+  position: z.coerce.number().int().min(0).max(9),
+})
+
+const CommunityOrgShopProductAttributesUpdateBody = z.object({
+  attributes: z.array(CommunityOrgShopProductAttributeBody).max(3),
+  groupId: z.string().trim().min(1).max(120).optional().nullable(),
+})
+
 const CommunityOrgShopProductUpdateBody = z.object({
   name: z.string().trim().min(2).max(160).optional(),
   description: z.string().trim().max(5000).optional().nullable(),
@@ -8469,6 +8551,25 @@ const CommunityOrgShopProductUpdateBody = z.object({
     flatRateFeeCents: z.coerce.number().int().min(0).max(100_000_000).optional().nullable(),
   })).max(5).optional(),
   isDraft: z.boolean().optional(),
+})
+
+const CommunityOrgShopVariantInventoryBody = z.record(z.string().trim().min(1).max(120), z.coerce.number().int().min(0).max(1_000_000))
+
+const CommunityOrgShopProductVariantCreateBody = z.object({
+  attributes: z.record(z.string().trim().min(1).max(40), z.string().trim().min(1).max(40)),
+  priceCents: z.coerce.number().int().min(0).max(100_000_000).optional().nullable(),
+  sku: z.string().trim().max(80).optional().nullable(),
+  imageUrl: z.string().trim().url().max(2048).optional().nullable(),
+  isActive: z.boolean().optional().default(true),
+  inventoryByWarehouse: CommunityOrgShopVariantInventoryBody.optional(),
+})
+
+const CommunityOrgShopProductVariantUpdateBody = z.object({
+  priceCents: z.coerce.number().int().min(0).max(100_000_000).optional().nullable(),
+  sku: z.string().trim().max(80).optional().nullable(),
+  imageUrl: z.string().trim().url().max(2048).optional().nullable(),
+  isActive: z.boolean().optional(),
+  inventoryByWarehouse: CommunityOrgShopVariantInventoryBody.optional(),
 })
 
 const CommunityOrgShopSettingsBody = z.object({
@@ -8513,6 +8614,10 @@ const CommunityOrgShopCatalogReorderBody = z.object({
 
 const CommunityOrgShopProductParams = CommunityOrgSlugParams.extend({
   productId: z.string().trim().min(1).max(120),
+})
+
+const CommunityOrgShopProductVariantParams = CommunityOrgShopProductParams.extend({
+  variantId: z.string().trim().min(1).max(120),
 })
 
 const CommunityOrgShopCatalogParams = CommunityOrgSlugParams.extend({
@@ -10016,9 +10121,13 @@ registerOrganizationShopRoutes(app, {
   CommunityOrgShopCatalogUpdateBody,
   CommunityOrgShopInventoryUpdateBody,
   CommunityOrgShopProductCreateBody,
+  CommunityOrgShopProductAttributesUpdateBody,
   CommunityOrgShopProductParams,
   CommunityOrgShopProductPhotosUpdateBody,
   CommunityOrgShopProductUpdateBody,
+  CommunityOrgShopProductVariantCreateBody,
+  CommunityOrgShopProductVariantParams,
+  CommunityOrgShopProductVariantUpdateBody,
   CommunityOrgShopSettingsBody,
   CommunityOrgShopWarehouseCreateBody,
   CommunityOrgShopWarehouseParams,
@@ -10063,6 +10172,8 @@ const MarketCheckoutBody = z.object({
     .array(
       z.object({
         productId: z.string().trim().min(1).max(128),
+        variantId: z.string().trim().min(1).max(128).optional().nullable(),
+        selectedAttributes: z.record(z.string().trim().min(1).max(40), z.string().trim().min(1).max(40)).optional(),
         quantity: z.coerce.number().int().min(1).max(99),
       }),
     )

@@ -19,6 +19,106 @@ type ShopShippingOption = {
   flatRateFeeCents: number | null
 }
 
+type ShopProductAttribute = {
+  name: string
+  values: string[]
+  position: number
+}
+
+type ShopProductVariantRecord = {
+  id: string
+  productId: string
+  attributes: Record<string, string>
+  attributeSignature: string
+  priceCents: number | null
+  sku: string | null
+  imageUrl: string | null
+  isActive: boolean
+  inventoryByWarehouse: Record<string, number>
+  inventoryTotal: number
+  createdAt: string
+  updatedAt: string
+}
+
+function normalizeShopProductAttributes(value: unknown): ShopProductAttribute[] {
+  if (!Array.isArray(value)) return []
+
+  const next = value
+    .map((entry, index) => {
+      if (!entry || typeof entry !== 'object') return null
+      const typed = entry as Record<string, unknown>
+      const name = String(typed.name || '').trim()
+      if (!name) return null
+      const values = Array.isArray(typed.values)
+        ? Array.from(new Set(typed.values.map((item) => String(item || '').trim()).filter(Boolean)))
+        : []
+      if (!values.length) return null
+      const position = typeof typed.position === 'number' && Number.isFinite(typed.position) ? Math.max(0, Math.round(typed.position)) : index
+      return { name, values, position }
+    })
+    .filter((entry): entry is ShopProductAttribute => Boolean(entry))
+
+  next.sort((a, b) => (a.position - b.position) || a.name.localeCompare(b.name))
+  return next.slice(0, 3)
+}
+
+function resolveShopVariantAttributeValues(
+  attributes: ShopProductAttribute[],
+  input: Record<string, unknown>,
+): { values: Record<string, string> | null; error?: string } {
+  if (attributes.length > 3) return { values: null, error: 'Too many options. Consider separate products.' }
+
+  const resolved: Record<string, string> = {}
+  for (const attribute of attributes) {
+    const rawValue = input[attribute.name]
+    const normalizedValue = String(rawValue || '').trim()
+    if (!normalizedValue) return { values: null, error: `missing_attribute:${attribute.name}` }
+    const matchedValue = attribute.values.find((candidate) => candidate.toLowerCase() === normalizedValue.toLowerCase())
+    if (!matchedValue) return { values: null, error: `invalid_attribute:${attribute.name}` }
+    resolved[attribute.name] = matchedValue
+  }
+  return { values: resolved }
+}
+
+function buildShopVariantAttributeSignature(attributes: ShopProductAttribute[], values: Record<string, string>) {
+  return attributes.map((attribute) => `${attribute.name}:${values[attribute.name] ?? ''}`).join('|')
+}
+
+function enumerateShopVariantCombinations(attributes: ShopProductAttribute[]) {
+  if (!attributes.length) return [] as Array<Record<string, string>>
+  const results: Array<Record<string, string>> = []
+  const walk = (index: number, current: Record<string, string>) => {
+    const attribute = attributes[index]
+    if (!attribute) {
+      results.push({ ...current })
+      return
+    }
+    for (const value of attribute.values) {
+      current[attribute.name] = value
+      walk(index + 1, current)
+    }
+    delete current[attribute.name]
+  }
+  walk(0, {})
+  return results
+}
+
+function normalizeVariantInventoryByWarehouse(value: unknown) {
+  const next: Record<string, number> = {}
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return next
+  for (const [warehouseId, quantity] of Object.entries(value as Record<string, unknown>)) {
+    const normalizedWarehouseId = String(warehouseId || '').trim()
+    if (!normalizedWarehouseId) continue
+    const normalizedQuantity = typeof quantity === 'number' && Number.isFinite(quantity) ? Math.max(0, Math.round(quantity)) : 0
+    next[normalizedWarehouseId] = normalizedQuantity
+  }
+  return next
+}
+
+function sumVariantInventoryByWarehouse(value: Record<string, number>) {
+  return Object.values(value).reduce((sum, quantity) => sum + (Number(quantity) || 0), 0)
+}
+
 function normalizeShopShippingOptions(
   value: unknown,
   fallback?: { weightGrams?: number | null; shippingPolicy?: string | null; allowShippingContracts?: boolean | null },
@@ -281,6 +381,9 @@ export function registerOrganizationShopRoutes(app: FastifyInstance, deps: Organ
         sku: string | null
         primary_image_url: string | null
         gallery_image_urls: unknown
+        has_variants: boolean
+        attributes_json: unknown
+        group_id: string | null
         fulfillment_type: string
         digital_delivery_url: string | null
         weight_grams: number | null
@@ -293,6 +396,20 @@ export function registerOrganizationShopRoutes(app: FastifyInstance, deps: Organ
         created_at: Date
         updated_at: Date
         inventory_total: bigint | number | null
+      }
+
+      type ShopProductVariantRow = {
+        id: string
+        product_id: string
+        attribute_values: unknown
+        attribute_signature: string
+        price_cents: number | null
+        sku: string | null
+        image_url: string | null
+        is_active: boolean
+        inventory_by_warehouse: unknown
+        created_at: Date
+        updated_at: Date
       }
 
       type ShopInventoryRow = {
@@ -357,6 +474,9 @@ export function registerOrganizationShopRoutes(app: FastifyInstance, deps: Organ
                 p.sku,
                 p.primary_image_url,
                 p.gallery_image_urls,
+                p.has_variants,
+                p.attributes_json,
+                p.group_id,
                 p.fulfillment_type,
                 p.digital_delivery_url,
                 p.weight_grams,
@@ -395,6 +515,9 @@ export function registerOrganizationShopRoutes(app: FastifyInstance, deps: Organ
                 p.sku,
                 p.primary_image_url,
                 p.gallery_image_urls,
+                p.has_variants,
+                p.attributes_json,
+                p.group_id,
                 p.fulfillment_type,
                 p.digital_delivery_url,
                 p.weight_grams,
@@ -429,6 +552,16 @@ export function registerOrganizationShopRoutes(app: FastifyInstance, deps: Organ
       ])
 
       const settings = settingsRows[0] ?? null
+      const productIds = productRows.map((row: ShopProductRow) => row.id)
+      const variantRows = productIds.length
+        ? await prisma.$queryRaw<ShopProductVariantRow[]>`
+            SELECT id, product_id, attribute_values, attribute_signature, price_cents, sku, image_url, is_active, inventory_by_warehouse, created_at, updated_at
+            FROM organization_shop_product_variant
+            WHERE product_id IN (${Prisma.join(productIds)})
+              AND (${includePrivateShopData ? Prisma.sql`TRUE` : Prisma.sql`is_active = TRUE`})
+            ORDER BY created_at ASC
+          `
+        : []
       const productSlugsById = new Map<string, string>()
       for (const row of productRows) {
         const resolvedSlug = await resolveShopProductSlug({
@@ -445,6 +578,33 @@ export function registerOrganizationShopRoutes(app: FastifyInstance, deps: Organ
         const current = inventoryByProduct.get(row.product_id) ?? []
         current.push({ warehouseId: row.warehouse_id, quantity: Number(row.quantity) || 0, updatedAt: row.updated_at.toISOString() })
         inventoryByProduct.set(row.product_id, current)
+      }
+      const variantsByProductId = new Map<string, ShopProductVariantRecord[]>()
+      for (const row of variantRows) {
+        const inventoryByWarehouse = normalizeVariantInventoryByWarehouse(row.inventory_by_warehouse)
+        const current = variantsByProductId.get(row.product_id) ?? []
+        current.push({
+          id: row.id,
+          productId: row.product_id,
+          attributes:
+            row.attribute_values && typeof row.attribute_values === 'object' && !Array.isArray(row.attribute_values)
+              ? Object.fromEntries(
+                  Object.entries(row.attribute_values as Record<string, unknown>)
+                    .map(([key, value]) => [String(key).trim(), String(value || '').trim()])
+                    .filter(([key, value]) => Boolean(key && value)),
+                )
+              : {},
+          attributeSignature: row.attribute_signature,
+          priceCents: row.price_cents == null ? null : Number(row.price_cents) || 0,
+          sku: row.sku,
+          imageUrl: deps.normalizeMediaUrl(row.image_url),
+          isActive: row.is_active,
+          inventoryByWarehouse,
+          inventoryTotal: sumVariantInventoryByWarehouse(inventoryByWarehouse),
+          createdAt: row.created_at.toISOString(),
+          updatedAt: row.updated_at.toISOString(),
+        })
+        variantsByProductId.set(row.product_id, current)
       }
 
       const publicCatalogs: ShopCatalogRow[] = []
@@ -493,44 +653,54 @@ export function registerOrganizationShopRoutes(app: FastifyInstance, deps: Organ
           updatedAt: row.updated_at.toISOString(),
         })),
         products: productRows.map((row: ShopProductRow) => ({
-          id: row.id,
-          slug: productSlugsById.get(row.id) ?? row.slug,
-          catalogId: row.catalog_id,
-          name: row.name,
-          description: row.description,
-          listingSection: row.listing_section,
-          listingCategory: row.listing_category,
-          listingSubcategory: row.listing_subcategory,
-          featuredHomepage: row.featured_homepage,
-          taxCollect: row.tax_collect,
-          taxRatesByRegion: row.tax_collect ? normalizeCanadaSalesTaxRatesByRegion(row.tax_rates_by_region, { fallbackPreset: 'canada_current' }) : {},
-          priceCents: Number(row.price_cents) || 0,
-          currency: row.currency,
-          sku: row.sku,
-          primaryImageUrl: deps.normalizeMediaUrl(row.primary_image_url),
-          galleryImageUrls: Array.isArray(row.gallery_image_urls)
-            ? row.gallery_image_urls
-                .filter((value): value is string => typeof value === 'string')
-                .map((value: string) => deps.normalizeMediaUrl(value))
-                .filter((value: string | null): value is string => Boolean(value))
-            : [],
-          fulfillmentType: row.fulfillment_type,
-          digitalDeliveryUrl: includePrivateShopData ? row.digital_delivery_url : undefined,
-          weightGrams: row.weight_grams,
-          shippingPolicy: row.shipping_policy,
-          allowShippingContracts: row.allow_shipping_contracts,
-          shippingOptions: normalizeShopShippingOptions(row.shipping_options, {
-            weightGrams: row.weight_grams,
-            shippingPolicy: row.shipping_policy,
-            allowShippingContracts: row.allow_shipping_contracts,
-          }),
-          isDraft: row.is_draft,
-          isActive: row.is_active,
-          trackInventory: row.track_inventory,
-          inventoryTotal: Number(row.inventory_total ?? 0) || 0,
-          inventoryByWarehouse: includePrivateShopData ? inventoryByProduct.get(row.id) ?? [] : [],
-          createdAt: row.created_at.toISOString(),
-          updatedAt: row.updated_at.toISOString(),
+          ...(function () {
+            const variants = variantsByProductId.get(row.id) ?? []
+            const aggregateVariantInventory = variants.reduce((sum, variant) => sum + variant.inventoryTotal, 0)
+            return {
+              id: row.id,
+              slug: productSlugsById.get(row.id) ?? row.slug,
+              catalogId: row.catalog_id,
+              name: row.name,
+              description: row.description,
+              listingSection: row.listing_section,
+              listingCategory: row.listing_category,
+              listingSubcategory: row.listing_subcategory,
+              featuredHomepage: row.featured_homepage,
+              taxCollect: row.tax_collect,
+              taxRatesByRegion: row.tax_collect ? normalizeCanadaSalesTaxRatesByRegion(row.tax_rates_by_region, { fallbackPreset: 'canada_current' }) : {},
+              priceCents: Number(row.price_cents) || 0,
+              currency: row.currency,
+              sku: row.sku,
+              primaryImageUrl: deps.normalizeMediaUrl(row.primary_image_url),
+              galleryImageUrls: Array.isArray(row.gallery_image_urls)
+                ? row.gallery_image_urls
+                    .filter((value): value is string => typeof value === 'string')
+                    .map((value: string) => deps.normalizeMediaUrl(value))
+                    .filter((value: string | null): value is string => Boolean(value))
+                : [],
+              hasVariants: row.has_variants,
+              attributes: normalizeShopProductAttributes(row.attributes_json),
+              groupId: row.group_id,
+              variants,
+              fulfillmentType: row.fulfillment_type,
+              digitalDeliveryUrl: includePrivateShopData ? row.digital_delivery_url : undefined,
+              weightGrams: row.weight_grams,
+              shippingPolicy: row.shipping_policy,
+              allowShippingContracts: row.allow_shipping_contracts,
+              shippingOptions: normalizeShopShippingOptions(row.shipping_options, {
+                weightGrams: row.weight_grams,
+                shippingPolicy: row.shipping_policy,
+                allowShippingContracts: row.allow_shipping_contracts,
+              }),
+              isDraft: row.is_draft,
+              isActive: row.is_active,
+              trackInventory: row.track_inventory,
+              inventoryTotal: row.has_variants ? aggregateVariantInventory : (Number(row.inventory_total ?? 0) || 0),
+              inventoryByWarehouse: includePrivateShopData ? inventoryByProduct.get(row.id) ?? [] : [],
+              createdAt: row.created_at.toISOString(),
+              updatedAt: row.updated_at.toISOString(),
+            }
+          })(),
         })),
       })
     }),
@@ -1318,12 +1488,12 @@ export function registerOrganizationShopRoutes(app: FastifyInstance, deps: Organ
       await prisma.$executeRaw`
         INSERT INTO organization_shop_product (
           id, business_id, slug, name, description, price_cents, currency, sku,
-          primary_image_url, gallery_image_urls, weight_grams, shipping_policy,
+          primary_image_url, gallery_image_urls, has_variants, attributes_json, group_id, weight_grams, shipping_policy,
           allow_shipping_contracts, shipping_options, featured_homepage, tax_collect, tax_rates_by_region, is_draft, is_active, track_inventory, created_by
         )
         VALUES (
           ${productId}, ${org.id}, ${productSlug}, ${'Draft Product'}, ${null}, ${0}, ${'CAD'}, ${null},
-          ${null}, ${JSON.stringify([])}::jsonb, ${null}, ${'local_community'},
+          ${null}, ${JSON.stringify([])}::jsonb, ${false}, ${JSON.stringify([])}::jsonb, ${null}, ${null}, ${'local_community'},
           ${false}, ${JSON.stringify(draftShippingOptions)}::jsonb, ${false}, ${false}, ${JSON.stringify({})}::jsonb, ${true}, ${true}, ${true}, ${userId}
         )
       `
@@ -1505,6 +1675,338 @@ export function registerOrganizationShopRoutes(app: FastifyInstance, deps: Organ
     }),
   )
 
+  app.put('/communities/:province/:municipality/orgs/:slug/shop/products/:productId/attributes', async (req: FastifyRequest, reply: FastifyReply) =>
+    deps.withSchemaGuard(req, reply, async () => {
+      const userId = (await deps.resolveUserId(req)) ?? undefined
+      if (!userId) return reply.code(401).send({ error: 'unauthorized' })
+
+      if (Array.isArray((req.body as { attributes?: unknown[] } | null | undefined)?.attributes) && ((req.body as { attributes?: unknown[] }).attributes?.length ?? 0) > 3) {
+        return reply.code(400).send({ error: 'Too many options. Consider separate products.' })
+      }
+
+      const params = deps.CommunityOrgShopProductParams.safeParse(req.params)
+      if (!params.success) return reply.code(400).send({ error: 'invalid_params' })
+      const body = deps.CommunityOrgShopProductAttributesUpdateBody.safeParse(req.body ?? {})
+      if (!body.success) return reply.code(400).send({ error: body.error.flatten() })
+
+      const province = deps.normalizeProvinceCode(params.data.province)
+      if (!province) return reply.code(404).send({ error: 'province_not_found' })
+      const community = deps.findCommunity(province, params.data.municipality.trim().toLowerCase())
+      if (!community) return reply.code(404).send({ error: 'community_not_found' })
+
+      const org = await prisma.business.findFirst({
+        where: { provinceCode: province, communitySlug: community.slug, slug: params.data.slug.trim().toLowerCase() },
+        select: { id: true, ownerId: true, moderationStatus: true },
+      })
+      if (!org) return reply.code(404).send({ error: 'organization_not_found' })
+      if (org.moderationStatus !== deps.ModerationStatus.VISIBLE) {
+        return reply.code(423).send({ error: deps.moderationLockedErrorCode('ORGANIZATION') })
+      }
+
+      const isOwner = org.ownerId === userId
+      const membership = isOwner
+        ? { role: 'OWNER' as const }
+        : await prisma.businessMembership.findUnique({ where: { businessId_userId: { businessId: org.id, userId } }, select: { role: true } })
+      if (!membership || (membership.role !== 'OWNER' && membership.role !== 'MANAGER')) {
+        return reply.code(403).send({ error: 'forbidden' })
+      }
+
+      await deps.ensureOrganizationShopTables()
+
+      const productRows = await prisma.$queryRaw<Array<{ id: string; moderation_status: string; is_draft: boolean }>>`
+        SELECT id, moderation_status, is_draft
+        FROM organization_shop_product
+        WHERE id = ${params.data.productId} AND business_id = ${org.id}
+        LIMIT 1
+      `
+      if (!productRows[0]) return reply.code(404).send({ error: 'product_not_found' })
+      if (!productRows[0].is_draft && !deps.isVisibleModerationStatus(productRows[0].moderation_status)) {
+        return reply.code(423).send({ error: deps.moderationLockedErrorCode('MARKET_PRODUCT') })
+      }
+
+      const attributes = normalizeShopProductAttributes(body.data.attributes)
+      if (attributes.length > 3) return reply.code(400).send({ error: 'Too many options. Consider separate products.' })
+
+      await prisma.$executeRaw`
+        UPDATE organization_shop_product
+        SET has_variants = ${attributes.length > 0},
+            attributes_json = ${JSON.stringify(attributes)}::jsonb,
+            group_id = ${body.data.groupId?.trim() ? body.data.groupId.trim() : null},
+            updated_at = NOW()
+        WHERE id = ${params.data.productId}
+      `
+
+      return reply.send({ success: true, hasVariants: attributes.length > 0, attributes })
+    }),
+  )
+
+  app.post('/communities/:province/:municipality/orgs/:slug/shop/products/:productId/variants/generate', async (req: FastifyRequest, reply: FastifyReply) =>
+    deps.withSchemaGuard(req, reply, async () => {
+      const userId = (await deps.resolveUserId(req)) ?? undefined
+      if (!userId) return reply.code(401).send({ error: 'unauthorized' })
+
+      const params = deps.CommunityOrgShopProductParams.safeParse(req.params)
+      if (!params.success) return reply.code(400).send({ error: 'invalid_params' })
+
+      const province = deps.normalizeProvinceCode(params.data.province)
+      if (!province) return reply.code(404).send({ error: 'province_not_found' })
+      const community = deps.findCommunity(province, params.data.municipality.trim().toLowerCase())
+      if (!community) return reply.code(404).send({ error: 'community_not_found' })
+
+      const org = await prisma.business.findFirst({
+        where: { provinceCode: province, communitySlug: community.slug, slug: params.data.slug.trim().toLowerCase() },
+        select: { id: true, ownerId: true, moderationStatus: true },
+      })
+      if (!org) return reply.code(404).send({ error: 'organization_not_found' })
+      if (org.moderationStatus !== deps.ModerationStatus.VISIBLE) {
+        return reply.code(423).send({ error: deps.moderationLockedErrorCode('ORGANIZATION') })
+      }
+
+      const isOwner = org.ownerId === userId
+      const membership = isOwner
+        ? { role: 'OWNER' as const }
+        : await prisma.businessMembership.findUnique({ where: { businessId_userId: { businessId: org.id, userId } }, select: { role: true } })
+      if (!membership || (membership.role !== 'OWNER' && membership.role !== 'MANAGER')) {
+        return reply.code(403).send({ error: 'forbidden' })
+      }
+
+      await deps.ensureOrganizationShopTables()
+
+      const productRows = await prisma.$queryRaw<Array<{ id: string; sku: string | null; slug: string | null; attributes_json: unknown; has_variants: boolean; moderation_status: string; is_draft: boolean }>>`
+        SELECT id, sku, slug, attributes_json, has_variants, moderation_status, is_draft
+        FROM organization_shop_product
+        WHERE id = ${params.data.productId} AND business_id = ${org.id}
+        LIMIT 1
+      `
+      const product = productRows[0]
+      if (!product) return reply.code(404).send({ error: 'product_not_found' })
+      if (!product.is_draft && !deps.isVisibleModerationStatus(product.moderation_status)) {
+        return reply.code(423).send({ error: deps.moderationLockedErrorCode('MARKET_PRODUCT') })
+      }
+
+      const attributes = normalizeShopProductAttributes(product.attributes_json)
+      if (!attributes.length || !product.has_variants) return reply.code(400).send({ error: 'product_attributes_required' })
+      if (attributes.length > 3) return reply.code(400).send({ error: 'Too many options. Consider separate products.' })
+
+      const combinations = enumerateShopVariantCombinations(attributes)
+      const existingRows = await prisma.$queryRaw<Array<{ attribute_signature: string }>>`
+        SELECT attribute_signature
+        FROM organization_shop_product_variant
+        WHERE product_id = ${params.data.productId}
+      `
+      const existing = new Set(existingRows.map((row: { attribute_signature: string }) => row.attribute_signature))
+      const skuBase = String(product.sku || product.slug || params.data.productId)
+        .replace(/[^a-z0-9]+/gi, '-')
+        .replace(/^-+|-+$/g, '')
+        .toUpperCase()
+        .slice(0, 40) || 'VAR'
+
+      let createdCount = 0
+      let sequence = existing.size + 1
+      for (const combination of combinations) {
+        const signature = buildShopVariantAttributeSignature(attributes, combination)
+        if (existing.has(signature)) continue
+        await prisma.$executeRaw`
+          INSERT INTO organization_shop_product_variant (
+            id, product_id, attribute_values, attribute_signature, price_cents, sku, image_url, is_active, inventory_by_warehouse, created_at, updated_at
+          )
+          VALUES (
+            ${randomUUID()},
+            ${params.data.productId},
+            ${JSON.stringify(combination)}::jsonb,
+            ${signature},
+            ${null},
+            ${`${skuBase}-${String(sequence).padStart(3, '0')}`},
+            ${null},
+            ${true},
+            ${JSON.stringify({})}::jsonb,
+            NOW(),
+            NOW()
+          )
+        `
+        existing.add(signature)
+        createdCount += 1
+        sequence += 1
+      }
+
+      return reply.send({ success: true, createdCount })
+    }),
+  )
+
+  app.post('/communities/:province/:municipality/orgs/:slug/shop/products/:productId/variants', async (req: FastifyRequest, reply: FastifyReply) =>
+    deps.withSchemaGuard(req, reply, async () => {
+      const userId = (await deps.resolveUserId(req)) ?? undefined
+      if (!userId) return reply.code(401).send({ error: 'unauthorized' })
+
+      const params = deps.CommunityOrgShopProductParams.safeParse(req.params)
+      if (!params.success) return reply.code(400).send({ error: 'invalid_params' })
+      const body = deps.CommunityOrgShopProductVariantCreateBody.safeParse(req.body ?? {})
+      if (!body.success) return reply.code(400).send({ error: body.error.flatten() })
+
+      const province = deps.normalizeProvinceCode(params.data.province)
+      if (!province) return reply.code(404).send({ error: 'province_not_found' })
+      const community = deps.findCommunity(province, params.data.municipality.trim().toLowerCase())
+      if (!community) return reply.code(404).send({ error: 'community_not_found' })
+
+      const org = await prisma.business.findFirst({
+        where: { provinceCode: province, communitySlug: community.slug, slug: params.data.slug.trim().toLowerCase() },
+        select: { id: true, ownerId: true, moderationStatus: true },
+      })
+      if (!org) return reply.code(404).send({ error: 'organization_not_found' })
+      if (org.moderationStatus !== deps.ModerationStatus.VISIBLE) {
+        return reply.code(423).send({ error: deps.moderationLockedErrorCode('ORGANIZATION') })
+      }
+
+      const isOwner = org.ownerId === userId
+      const membership = isOwner
+        ? { role: 'OWNER' as const }
+        : await prisma.businessMembership.findUnique({ where: { businessId_userId: { businessId: org.id, userId } }, select: { role: true } })
+      if (!membership || (membership.role !== 'OWNER' && membership.role !== 'MANAGER')) {
+        return reply.code(403).send({ error: 'forbidden' })
+      }
+
+      await deps.ensureOrganizationShopTables()
+
+      const productRows = await prisma.$queryRaw<Array<{ id: string; sku: string | null; attributes_json: unknown; has_variants: boolean; moderation_status: string; is_draft: boolean }>>`
+        SELECT id, sku, attributes_json, has_variants, moderation_status, is_draft
+        FROM organization_shop_product
+        WHERE id = ${params.data.productId} AND business_id = ${org.id}
+        LIMIT 1
+      `
+      const product = productRows[0]
+      if (!product) return reply.code(404).send({ error: 'product_not_found' })
+      if (!product.is_draft && !deps.isVisibleModerationStatus(product.moderation_status)) {
+        return reply.code(423).send({ error: deps.moderationLockedErrorCode('MARKET_PRODUCT') })
+      }
+
+      const attributes = normalizeShopProductAttributes(product.attributes_json)
+      if (!attributes.length || !product.has_variants) return reply.code(400).send({ error: 'product_attributes_required' })
+      const resolvedValues = resolveShopVariantAttributeValues(attributes, body.data.attributes)
+      if (!resolvedValues.values) return reply.code(400).send({ error: resolvedValues.error ?? 'invalid_variant_attributes' })
+      const signature = buildShopVariantAttributeSignature(attributes, resolvedValues.values)
+      const existingRows = await prisma.$queryRaw<Array<{ id: string }>>`
+        SELECT id
+        FROM organization_shop_product_variant
+        WHERE product_id = ${params.data.productId}
+          AND attribute_signature = ${signature}
+        LIMIT 1
+      `
+      if (existingRows[0]) return reply.code(409).send({ error: 'variant_already_exists' })
+
+      const validWarehouses = new Set(
+        (
+          await prisma.$queryRaw<Array<{ id: string }>>`
+            SELECT id
+            FROM organization_shop_warehouse
+            WHERE business_id = ${org.id}
+          `
+        ).map((row: { id: string }) => row.id),
+      )
+      const inventoryByWarehouse = normalizeVariantInventoryByWarehouse(body.data.inventoryByWarehouse ?? {})
+      if (Object.keys(inventoryByWarehouse).some((warehouseId) => !validWarehouses.has(warehouseId))) {
+        return reply.code(400).send({ error: 'invalid_warehouse' })
+      }
+
+      const variantId = randomUUID()
+      await prisma.$executeRaw`
+        INSERT INTO organization_shop_product_variant (
+          id, product_id, attribute_values, attribute_signature, price_cents, sku, image_url, is_active, inventory_by_warehouse, created_at, updated_at
+        )
+        VALUES (
+          ${variantId},
+          ${params.data.productId},
+          ${JSON.stringify(resolvedValues.values)}::jsonb,
+          ${signature},
+          ${body.data.priceCents ?? null},
+          ${body.data.sku ?? null},
+          ${body.data.imageUrl ?? null},
+          ${typeof body.data.isActive === 'boolean' ? body.data.isActive : true},
+          ${JSON.stringify(inventoryByWarehouse)}::jsonb,
+          NOW(),
+          NOW()
+        )
+      `
+
+      return reply.code(201).send({ success: true, variantId })
+    }),
+  )
+
+  app.put('/communities/:province/:municipality/orgs/:slug/shop/products/:productId/variants/:variantId', async (req: FastifyRequest, reply: FastifyReply) =>
+    deps.withSchemaGuard(req, reply, async () => {
+      const userId = (await deps.resolveUserId(req)) ?? undefined
+      if (!userId) return reply.code(401).send({ error: 'unauthorized' })
+
+      const params = deps.CommunityOrgShopProductVariantParams.safeParse(req.params)
+      if (!params.success) return reply.code(400).send({ error: 'invalid_params' })
+      const body = deps.CommunityOrgShopProductVariantUpdateBody.safeParse(req.body ?? {})
+      if (!body.success) return reply.code(400).send({ error: body.error.flatten() })
+
+      const province = deps.normalizeProvinceCode(params.data.province)
+      if (!province) return reply.code(404).send({ error: 'province_not_found' })
+      const community = deps.findCommunity(province, params.data.municipality.trim().toLowerCase())
+      if (!community) return reply.code(404).send({ error: 'community_not_found' })
+
+      const org = await prisma.business.findFirst({
+        where: { provinceCode: province, communitySlug: community.slug, slug: params.data.slug.trim().toLowerCase() },
+        select: { id: true, ownerId: true, moderationStatus: true },
+      })
+      if (!org) return reply.code(404).send({ error: 'organization_not_found' })
+      if (org.moderationStatus !== deps.ModerationStatus.VISIBLE) {
+        return reply.code(423).send({ error: deps.moderationLockedErrorCode('ORGANIZATION') })
+      }
+
+      const isOwner = org.ownerId === userId
+      const membership = isOwner
+        ? { role: 'OWNER' as const }
+        : await prisma.businessMembership.findUnique({ where: { businessId_userId: { businessId: org.id, userId } }, select: { role: true } })
+      if (!membership || (membership.role !== 'OWNER' && membership.role !== 'MANAGER')) {
+        return reply.code(403).send({ error: 'forbidden' })
+      }
+
+      await deps.ensureOrganizationShopTables()
+
+      const variantRows = await prisma.$queryRaw<Array<{ id: string }>>`
+        SELECT v.id
+        FROM organization_shop_product_variant v
+        INNER JOIN organization_shop_product p ON p.id = v.product_id
+        WHERE v.id = ${params.data.variantId}
+          AND v.product_id = ${params.data.productId}
+          AND p.business_id = ${org.id}
+        LIMIT 1
+      `
+      if (!variantRows[0]) return reply.code(404).send({ error: 'variant_not_found' })
+
+      const validWarehouses = new Set(
+        (
+          await prisma.$queryRaw<Array<{ id: string }>>`
+            SELECT id
+            FROM organization_shop_warehouse
+            WHERE business_id = ${org.id}
+          `
+        ).map((row: { id: string }) => row.id),
+      )
+      const inventoryByWarehouse = Object.prototype.hasOwnProperty.call(body.data, 'inventoryByWarehouse')
+        ? normalizeVariantInventoryByWarehouse(body.data.inventoryByWarehouse ?? {})
+        : null
+      if (inventoryByWarehouse && Object.keys(inventoryByWarehouse).some((warehouseId) => !validWarehouses.has(warehouseId))) {
+        return reply.code(400).send({ error: 'invalid_warehouse' })
+      }
+
+      await prisma.$executeRaw`
+        UPDATE organization_shop_product_variant
+        SET price_cents = CASE WHEN ${Object.prototype.hasOwnProperty.call(body.data, 'priceCents')} THEN ${body.data.priceCents ?? null} ELSE price_cents END,
+            sku = CASE WHEN ${Object.prototype.hasOwnProperty.call(body.data, 'sku')} THEN ${body.data.sku ?? null} ELSE sku END,
+            image_url = CASE WHEN ${Object.prototype.hasOwnProperty.call(body.data, 'imageUrl')} THEN ${body.data.imageUrl ?? null} ELSE image_url END,
+            is_active = COALESCE(${typeof body.data.isActive === 'boolean' ? body.data.isActive : null}, is_active),
+            inventory_by_warehouse = CASE WHEN ${Boolean(inventoryByWarehouse)} THEN ${JSON.stringify(inventoryByWarehouse ?? {})}::jsonb ELSE inventory_by_warehouse END,
+            updated_at = NOW()
+        WHERE id = ${params.data.variantId}
+      `
+
+      return reply.send({ success: true })
+    }),
+  )
+
   app.delete('/communities/:province/:municipality/orgs/:slug/shop/products/:productId', async (req: FastifyRequest, reply: FastifyReply) =>
     deps.withSchemaGuard(req, reply, async () => {
       const userId = (await deps.resolveUserId(req)) ?? undefined
@@ -1636,12 +2138,12 @@ export function registerOrganizationShopRoutes(app: FastifyInstance, deps: Organ
       await prisma.$executeRaw`
         INSERT INTO organization_shop_product (
           id, business_id, catalog_id, slug, name, description, listing_section, listing_category, listing_subcategory, price_cents, currency, sku,
-          primary_image_url, gallery_image_urls, weight_grams, shipping_policy,
+          primary_image_url, gallery_image_urls, has_variants, attributes_json, group_id, weight_grams, shipping_policy,
           allow_shipping_contracts, shipping_options, featured_homepage, tax_collect, tax_rates_by_region, fulfillment_type, digital_delivery_url, is_draft, is_active, track_inventory, created_by
         )
         VALUES (
           ${productId}, ${org.id}, ${resolvedCatalogId}, ${productSlug}, ${body.data.name.trim()}, ${productDescription}, ${listingSection}, ${listingCategory}, ${listingSubcategory}, ${priceCents}, ${currency}, ${body.data.sku ?? null},
-          ${body.data.primaryImageUrl ?? null}, ${JSON.stringify(galleryImageUrls)}::jsonb, ${legacyShipping.weightGrams}, ${legacyShipping.shippingPolicy},
+          ${body.data.primaryImageUrl ?? null}, ${JSON.stringify(galleryImageUrls)}::jsonb, ${false}, ${JSON.stringify([])}::jsonb, ${null}, ${legacyShipping.weightGrams}, ${legacyShipping.shippingPolicy},
           ${legacyShipping.allowShippingContracts}, ${JSON.stringify(shippingOptions)}::jsonb, ${body.data.featuredHomepage}, ${body.data.taxCollect}, ${JSON.stringify(normalizedTaxRatesByRegion)}::jsonb, ${fulfillmentType}, ${fulfillmentType === 'digital' ? digitalDeliveryUrl : null}, ${false}, ${true}, ${body.data.trackInventory}, ${userId}
         )
       `
