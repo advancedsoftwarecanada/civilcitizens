@@ -7,6 +7,205 @@ import { normalizeCanadaSalesTaxRatesByRegion } from '@civil/shared'
 import { z } from 'zod'
 
 type OrganizationShopDeps = Record<string, any>
+const SHOP_PRODUCT_SLUG_MAX = 80
+const SHOP_SHIPPING_POLICIES = ['local_shipping', 'civil_driver_contracts', 'provincial', 'national', 'international'] as const
+
+type ShopShippingPolicy = (typeof SHOP_SHIPPING_POLICIES)[number]
+
+type ShopShippingOption = {
+  policy: ShopShippingPolicy
+  enabled: boolean
+  weightGrams: number | null
+  flatRateFeeCents: number | null
+}
+
+function normalizeShopShippingOptions(
+  value: unknown,
+  fallback?: { weightGrams?: number | null; shippingPolicy?: string | null; allowShippingContracts?: boolean | null },
+): ShopShippingOption[] {
+  const byPolicy = new Map<ShopShippingPolicy, ShopShippingOption>()
+  for (const policy of SHOP_SHIPPING_POLICIES) {
+    byPolicy.set(policy, { policy, enabled: false, weightGrams: null, flatRateFeeCents: null })
+  }
+
+  if (Array.isArray(value)) {
+    for (const entry of value) {
+      if (!entry || typeof entry !== 'object') continue
+      const candidate = entry as Record<string, unknown>
+      const policy = typeof candidate.policy === 'string' ? candidate.policy : ''
+      if (!SHOP_SHIPPING_POLICIES.includes(policy as ShopShippingPolicy)) continue
+      byPolicy.set(policy as ShopShippingPolicy, {
+        policy: policy as ShopShippingPolicy,
+        enabled: Boolean(candidate.enabled),
+        weightGrams: typeof candidate.weightGrams === 'number' && Number.isFinite(candidate.weightGrams)
+          ? Math.max(0, Math.round(candidate.weightGrams))
+          : null,
+        flatRateFeeCents: typeof candidate.flatRateFeeCents === 'number' && Number.isFinite(candidate.flatRateFeeCents)
+          ? Math.max(0, Math.round(candidate.flatRateFeeCents))
+          : null,
+      })
+    }
+  } else {
+    const fallbackWeight = typeof fallback?.weightGrams === 'number' && Number.isFinite(fallback.weightGrams)
+      ? Math.max(0, Math.round(fallback.weightGrams))
+      : null
+    const fallbackPolicy = String(fallback?.shippingPolicy || 'local_community').toLowerCase()
+    const primaryPolicy: ShopShippingPolicy = fallbackPolicy === 'provincial'
+      ? 'provincial'
+      : fallbackPolicy === 'national'
+        ? 'national'
+        : fallbackPolicy === 'international'
+          ? 'international'
+          : 'local_shipping'
+    byPolicy.set(primaryPolicy, {
+      policy: primaryPolicy,
+      enabled: true,
+      weightGrams: fallbackWeight,
+      flatRateFeeCents: null,
+    })
+    if (fallback?.allowShippingContracts) {
+      byPolicy.set('civil_driver_contracts', {
+        policy: 'civil_driver_contracts',
+        enabled: true,
+        weightGrams: fallbackWeight,
+        flatRateFeeCents: null,
+      })
+    }
+  }
+
+  return SHOP_SHIPPING_POLICIES.map((policy) => byPolicy.get(policy) ?? { policy, enabled: false, weightGrams: null, flatRateFeeCents: null })
+}
+
+function applyLegacyShippingOverrides(
+  options: ShopShippingOption[],
+  overrides: { weightGrams?: number | null; shippingPolicy?: string; allowShippingContracts?: boolean },
+): ShopShippingOption[] {
+  const nextOptions = options.map((option) => ({ ...option }))
+  const policyToEnable = overrides.shippingPolicy === 'provincial'
+    ? 'provincial'
+    : overrides.shippingPolicy === 'national'
+      ? 'national'
+      : overrides.shippingPolicy === 'international'
+        ? 'international'
+        : overrides.shippingPolicy === 'local_community'
+          ? 'local_shipping'
+          : null
+
+  if (policyToEnable) {
+    for (const option of nextOptions) {
+      if (option.policy === 'civil_driver_contracts') continue
+      option.enabled = option.policy === policyToEnable
+    }
+  }
+
+  if (typeof overrides.allowShippingContracts === 'boolean') {
+    const contractOption = nextOptions.find((option) => option.policy === 'civil_driver_contracts')
+    if (contractOption) contractOption.enabled = overrides.allowShippingContracts
+  }
+
+  if (Object.prototype.hasOwnProperty.call(overrides, 'weightGrams')) {
+    const nextWeight = typeof overrides.weightGrams === 'number' && Number.isFinite(overrides.weightGrams)
+      ? Math.max(0, Math.round(overrides.weightGrams))
+      : null
+    for (const option of nextOptions) {
+      if (option.enabled) option.weightGrams = nextWeight
+    }
+  }
+
+  return nextOptions
+}
+
+function deriveLegacyShopShippingFields(options: ShopShippingOption[]) {
+  const primaryOption = options.find((option) => option.enabled && option.policy !== 'civil_driver_contracts')
+  const shippingPolicy = primaryOption?.policy === 'provincial'
+    ? 'provincial'
+    : primaryOption?.policy === 'national'
+      ? 'national'
+      : primaryOption?.policy === 'international'
+        ? 'international'
+        : 'local_community'
+  const weightOption = options.find((option) => option.enabled && typeof option.weightGrams === 'number' && Number.isFinite(option.weightGrams))
+
+  return {
+    weightGrams: weightOption ? Math.max(0, Math.round(weightOption.weightGrams ?? 0)) : null,
+    shippingPolicy,
+    allowShippingContracts: options.some((option) => option.policy === 'civil_driver_contracts' && option.enabled),
+  }
+}
+
+async function ensureUniqueShopProductSlug({
+  businessId,
+  baseName,
+  excludeProductId,
+  deps,
+}: {
+  businessId: string
+  baseName: string
+  excludeProductId?: string
+  deps: OrganizationShopDeps
+}) {
+  const baseSlug = deps.trimSlugLength(deps.slugifyText(String(baseName || '').trim().toLowerCase()), SHOP_PRODUCT_SLUG_MAX) || 'product'
+  let candidate = baseSlug
+  let suffix = 2
+
+  for (;;) {
+    const existing = excludeProductId
+      ? await prisma.$queryRaw<Array<{ id: string }>>`
+          SELECT id
+          FROM organization_shop_product
+          WHERE business_id = ${businessId}
+            AND slug = ${candidate}
+            AND id <> ${excludeProductId}
+          LIMIT 1
+        `
+      : await prisma.$queryRaw<Array<{ id: string }>>`
+          SELECT id
+          FROM organization_shop_product
+          WHERE business_id = ${businessId}
+            AND slug = ${candidate}
+          LIMIT 1
+        `
+    if (!existing[0]) return candidate
+    candidate = deps.trimSlugLength(`${baseSlug}-${suffix}`, SHOP_PRODUCT_SLUG_MAX) || `product-${suffix}`
+    suffix += 1
+  }
+}
+
+async function resolveShopProductSlug({
+  businessId,
+  productId,
+  name,
+  currentSlug,
+  deps,
+  forceRegenerate = false,
+}: {
+  businessId: string
+  productId: string
+  name: string
+  currentSlug?: string | null
+  deps: OrganizationShopDeps
+  forceRegenerate?: boolean
+}) {
+  const normalizedCurrentSlug = typeof currentSlug === 'string' && currentSlug.trim() ? currentSlug.trim().toLowerCase() : null
+  if (normalizedCurrentSlug && !forceRegenerate) return normalizedCurrentSlug
+
+  const nextSlug = await ensureUniqueShopProductSlug({
+    businessId,
+    baseName: name,
+    excludeProductId: productId,
+    deps,
+  })
+
+  if (nextSlug !== normalizedCurrentSlug) {
+    await prisma.$executeRaw`
+      UPDATE organization_shop_product
+      SET slug = ${nextSlug}, updated_at = NOW()
+      WHERE id = ${productId}
+    `
+  }
+
+  return nextSlug
+}
 
 export function registerOrganizationShopRoutes(app: FastifyInstance, deps: OrganizationShopDeps) {
   app.get('/communities/:province/:municipality/orgs/:slug/shop', async (req: FastifyRequest, reply: FastifyReply) =>
@@ -68,6 +267,7 @@ export function registerOrganizationShopRoutes(app: FastifyInstance, deps: Organ
         id: string
         business_id: string
         catalog_id: string | null
+        slug: string | null
         name: string
         description: string | null
         listing_section: string | null
@@ -86,6 +286,7 @@ export function registerOrganizationShopRoutes(app: FastifyInstance, deps: Organ
         weight_grams: number | null
         shipping_policy: string
         allow_shipping_contracts: boolean
+        shipping_options: unknown
         is_draft: boolean
         is_active: boolean
         track_inventory: boolean
@@ -142,6 +343,7 @@ export function registerOrganizationShopRoutes(app: FastifyInstance, deps: Organ
                 p.id,
                 p.business_id,
                 p.catalog_id,
+                p.slug,
                 p.name,
                 p.description,
                 p.listing_section,
@@ -160,6 +362,7 @@ export function registerOrganizationShopRoutes(app: FastifyInstance, deps: Organ
                 p.weight_grams,
                 p.shipping_policy,
                 p.allow_shipping_contracts,
+                p.shipping_options,
                 p.is_draft,
                 p.is_active,
                 p.track_inventory,
@@ -178,6 +381,7 @@ export function registerOrganizationShopRoutes(app: FastifyInstance, deps: Organ
                 p.id,
                 p.business_id,
                 p.catalog_id,
+                p.slug,
                 p.name,
                 p.description,
                 p.listing_section,
@@ -196,6 +400,7 @@ export function registerOrganizationShopRoutes(app: FastifyInstance, deps: Organ
                 p.weight_grams,
                 p.shipping_policy,
                 p.allow_shipping_contracts,
+                p.shipping_options,
                 p.is_draft,
                 p.is_active,
                 p.track_inventory,
@@ -224,6 +429,17 @@ export function registerOrganizationShopRoutes(app: FastifyInstance, deps: Organ
       ])
 
       const settings = settingsRows[0] ?? null
+      const productSlugsById = new Map<string, string>()
+      for (const row of productRows) {
+        const resolvedSlug = await resolveShopProductSlug({
+          businessId: org.id,
+          productId: row.id,
+          name: row.name,
+          currentSlug: row.slug,
+          deps,
+        })
+        productSlugsById.set(row.id, resolvedSlug)
+      }
       const inventoryByProduct = new Map<string, Array<{ warehouseId: string; quantity: number; updatedAt: string }>>()
       for (const row of inventoryRows) {
         const current = inventoryByProduct.get(row.product_id) ?? []
@@ -270,7 +486,7 @@ export function registerOrganizationShopRoutes(app: FastifyInstance, deps: Organ
           id: row.id,
           title: row.title,
           description: row.description,
-          imageUrl: row.image_url,
+          imageUrl: deps.normalizeMediaUrl(row.image_url),
           sortOrder: Number(row.sort_order) || 0,
           enabled: row.enabled,
           createdAt: row.created_at.toISOString(),
@@ -278,6 +494,7 @@ export function registerOrganizationShopRoutes(app: FastifyInstance, deps: Organ
         })),
         products: productRows.map((row: ShopProductRow) => ({
           id: row.id,
+          slug: productSlugsById.get(row.id) ?? row.slug,
           catalogId: row.catalog_id,
           name: row.name,
           description: row.description,
@@ -290,15 +507,23 @@ export function registerOrganizationShopRoutes(app: FastifyInstance, deps: Organ
           priceCents: Number(row.price_cents) || 0,
           currency: row.currency,
           sku: row.sku,
-          primaryImageUrl: row.primary_image_url,
+          primaryImageUrl: deps.normalizeMediaUrl(row.primary_image_url),
           galleryImageUrls: Array.isArray(row.gallery_image_urls)
-            ? row.gallery_image_urls.filter((value): value is string => typeof value === 'string')
+            ? row.gallery_image_urls
+                .filter((value): value is string => typeof value === 'string')
+                .map((value: string) => deps.normalizeMediaUrl(value))
+                .filter((value: string | null): value is string => Boolean(value))
             : [],
           fulfillmentType: row.fulfillment_type,
           digitalDeliveryUrl: includePrivateShopData ? row.digital_delivery_url : undefined,
           weightGrams: row.weight_grams,
           shippingPolicy: row.shipping_policy,
           allowShippingContracts: row.allow_shipping_contracts,
+          shippingOptions: normalizeShopShippingOptions(row.shipping_options, {
+            weightGrams: row.weight_grams,
+            shippingPolicy: row.shipping_policy,
+            allowShippingContracts: row.allow_shipping_contracts,
+          }),
           isDraft: row.is_draft,
           isActive: row.is_active,
           trackInventory: row.track_inventory,
@@ -1080,16 +1305,26 @@ export function registerOrganizationShopRoutes(app: FastifyInstance, deps: Organ
       await deps.ensureOrganizationShopTables()
 
       const productId = randomUUID()
+      const productSlug = await ensureUniqueShopProductSlug({
+        businessId: org.id,
+        baseName: 'Draft Product',
+        deps,
+      })
+      const draftShippingOptions = normalizeShopShippingOptions(null, {
+        weightGrams: null,
+        shippingPolicy: 'local_community',
+        allowShippingContracts: false,
+      })
       await prisma.$executeRaw`
         INSERT INTO organization_shop_product (
-          id, business_id, name, description, price_cents, currency, sku,
+          id, business_id, slug, name, description, price_cents, currency, sku,
           primary_image_url, gallery_image_urls, weight_grams, shipping_policy,
-          allow_shipping_contracts, featured_homepage, tax_collect, tax_rates_by_region, is_draft, is_active, track_inventory, created_by
+          allow_shipping_contracts, shipping_options, featured_homepage, tax_collect, tax_rates_by_region, is_draft, is_active, track_inventory, created_by
         )
         VALUES (
-          ${productId}, ${org.id}, ${'Draft Product'}, ${null}, ${0}, ${'CAD'}, ${null},
+          ${productId}, ${org.id}, ${productSlug}, ${'Draft Product'}, ${null}, ${0}, ${'CAD'}, ${null},
           ${null}, ${JSON.stringify([])}::jsonb, ${null}, ${'local_community'},
-          ${false}, ${false}, ${false}, ${JSON.stringify({})}::jsonb, ${true}, ${true}, ${true}, ${userId}
+          ${false}, ${JSON.stringify(draftShippingOptions)}::jsonb, ${false}, ${false}, ${JSON.stringify({})}::jsonb, ${true}, ${true}, ${true}, ${userId}
         )
       `
 
@@ -1131,15 +1366,29 @@ export function registerOrganizationShopRoutes(app: FastifyInstance, deps: Organ
 
       await deps.ensureOrganizationShopTables()
 
-      const productRows = await prisma.$queryRaw<Array<{ id: string; fulfillment_type: string; digital_delivery_url: string | null; moderation_status: string }>>`
-        SELECT id, fulfillment_type, digital_delivery_url, moderation_status FROM organization_shop_product
+      const productRows = await prisma.$queryRaw<Array<{ id: string; name: string; slug: string | null; fulfillment_type: string; digital_delivery_url: string | null; moderation_status: string; is_draft: boolean; weight_grams: number | null; shipping_policy: string; allow_shipping_contracts: boolean; shipping_options: unknown }>>`
+        SELECT id, name, slug, fulfillment_type, digital_delivery_url, moderation_status, is_draft, weight_grams, shipping_policy, allow_shipping_contracts, shipping_options FROM organization_shop_product
         WHERE id = ${params.data.productId} AND business_id = ${org.id}
         LIMIT 1
       `
       if (!productRows[0]) return reply.code(404).send({ error: 'product_not_found' })
-      if (!deps.isVisibleModerationStatus(productRows[0].moderation_status)) {
+      if (!productRows[0].is_draft && !deps.isVisibleModerationStatus(productRows[0].moderation_status)) {
         return reply.code(423).send({ error: deps.moderationLockedErrorCode('MARKET_PRODUCT') })
       }
+
+      const providedName = typeof body.data.name === 'string' ? body.data.name.trim() : ''
+      const effectiveProductName = providedName || productRows[0].name
+      const shouldGenerateProductSlug = Boolean(
+        effectiveProductName && (!productRows[0].slug || (productRows[0].is_draft && providedName) || body.data.isDraft === false),
+      )
+      const nextProductSlug = shouldGenerateProductSlug
+        ? await ensureUniqueShopProductSlug({
+            businessId: org.id,
+            baseName: effectiveProductName,
+            excludeProductId: params.data.productId,
+            deps,
+          })
+        : null
 
       const fulfillmentProvided = Object.prototype.hasOwnProperty.call(body.data, 'fulfillmentType')
       const digitalUrlProvided = Object.prototype.hasOwnProperty.call(body.data, 'digitalDeliveryUrl')
@@ -1173,6 +1422,33 @@ export function registerOrganizationShopRoutes(app: FastifyInstance, deps: Organ
           ? {}
           : normalizeCanadaSalesTaxRatesByRegion(body.data.taxRatesByRegion ?? {}, { fallbackPreset: 'canada_current' })
         : undefined
+      const hasShippingUpdate =
+        Object.prototype.hasOwnProperty.call(body.data, 'shippingOptions')
+        || Object.prototype.hasOwnProperty.call(body.data, 'shippingPolicy')
+        || Object.prototype.hasOwnProperty.call(body.data, 'allowShippingContracts')
+        || Object.prototype.hasOwnProperty.call(body.data, 'weightGrams')
+
+      const nextShippingOptions = hasShippingUpdate
+        ? Object.prototype.hasOwnProperty.call(body.data, 'shippingOptions')
+          ? normalizeShopShippingOptions(body.data.shippingOptions, {
+              weightGrams: productRows[0].weight_grams,
+              shippingPolicy: productRows[0].shipping_policy,
+              allowShippingContracts: productRows[0].allow_shipping_contracts,
+            })
+          : applyLegacyShippingOverrides(
+              normalizeShopShippingOptions(productRows[0].shipping_options, {
+                weightGrams: productRows[0].weight_grams,
+                shippingPolicy: productRows[0].shipping_policy,
+                allowShippingContracts: productRows[0].allow_shipping_contracts,
+              }),
+              {
+                weightGrams: Object.prototype.hasOwnProperty.call(body.data, 'weightGrams') ? (body.data.weightGrams ?? null) : undefined,
+                shippingPolicy: body.data.shippingPolicy,
+                allowShippingContracts: typeof body.data.allowShippingContracts === 'boolean' ? body.data.allowShippingContracts : undefined,
+              },
+            )
+        : null
+      const nextLegacyShipping = nextShippingOptions ? deriveLegacyShopShippingFields(nextShippingOptions) : null
 
       const catalogProvided = Object.prototype.hasOwnProperty.call(body.data, 'catalogId')
       let resolvedCatalogId: string | null | undefined = undefined
@@ -1194,6 +1470,7 @@ export function registerOrganizationShopRoutes(app: FastifyInstance, deps: Organ
       await prisma.$executeRaw`
         UPDATE organization_shop_product
         SET catalog_id = CASE WHEN ${catalogProvided} THEN ${resolvedCatalogId ?? null} ELSE catalog_id END,
+            slug = COALESCE(${nextProductSlug}, slug),
             name = COALESCE(${body.data.name?.trim() ?? null}, name),
             description = CASE WHEN ${'description' in body.data} THEN ${nextProductDescription} ELSE description END,
             listing_section = CASE WHEN ${listingSectionProvided} THEN ${nextListingSection} ELSE listing_section END,
@@ -1211,9 +1488,10 @@ export function registerOrganizationShopRoutes(app: FastifyInstance, deps: Organ
             fulfillment_type = CASE WHEN ${fulfillmentProvided} THEN ${nextFulfillmentType} ELSE fulfillment_type END,
             digital_delivery_url = CASE WHEN ${hasDigitalUpdate} THEN ${nextDigitalDeliveryUrl} ELSE digital_delivery_url END,
             track_inventory = COALESCE(${typeof body.data.trackInventory === 'boolean' ? body.data.trackInventory : null}, track_inventory),
-            weight_grams = CASE WHEN ${'weightGrams' in body.data} THEN ${body.data.weightGrams ?? null} ELSE weight_grams END,
-            shipping_policy = COALESCE(${body.data.shippingPolicy ?? null}, shipping_policy),
-            allow_shipping_contracts = COALESCE(${typeof body.data.allowShippingContracts === 'boolean' ? body.data.allowShippingContracts : null}, allow_shipping_contracts),
+            weight_grams = CASE WHEN ${hasShippingUpdate} THEN ${nextLegacyShipping?.weightGrams ?? null} ELSE weight_grams END,
+            shipping_policy = CASE WHEN ${hasShippingUpdate} THEN ${nextLegacyShipping?.shippingPolicy ?? 'local_community'} ELSE shipping_policy END,
+            allow_shipping_contracts = CASE WHEN ${hasShippingUpdate} THEN ${nextLegacyShipping?.allowShippingContracts ?? false} ELSE allow_shipping_contracts END,
+            shipping_options = CASE WHEN ${hasShippingUpdate} THEN ${JSON.stringify(nextShippingOptions ?? [])}::jsonb ELSE shipping_options END,
             is_draft = COALESCE(${typeof body.data.isDraft === 'boolean' ? body.data.isDraft : null}, is_draft),
             updated_at = NOW()
         WHERE id = ${params.data.productId}
@@ -1259,14 +1537,14 @@ export function registerOrganizationShopRoutes(app: FastifyInstance, deps: Organ
 
       await deps.ensureOrganizationShopTables()
 
-      const productRows = await prisma.$queryRaw<Array<{ id: string; moderation_status: string }>>`
-        SELECT id, moderation_status
+      const productRows = await prisma.$queryRaw<Array<{ id: string; moderation_status: string; is_draft: boolean }>>`
+        SELECT id, moderation_status, is_draft
         FROM organization_shop_product
         WHERE id = ${params.data.productId} AND business_id = ${org.id}
         LIMIT 1
       `
       if (!productRows[0]) return reply.code(404).send({ error: 'product_not_found' })
-      if (!deps.isVisibleModerationStatus(productRows[0].moderation_status)) {
+      if (!productRows[0].is_draft && !deps.isVisibleModerationStatus(productRows[0].moderation_status)) {
         return reply.code(423).send({ error: deps.moderationLockedErrorCode('MARKET_PRODUCT') })
       }
 
@@ -1327,10 +1605,21 @@ export function registerOrganizationShopRoutes(app: FastifyInstance, deps: Organ
       const listingSection = body.data.listingSection?.trim() ? body.data.listingSection.trim() : null
       const listingCategory = body.data.listingCategory?.trim() ? body.data.listingCategory.trim() : null
       const listingSubcategory = body.data.listingSubcategory?.trim() ? body.data.listingSubcategory.trim() : null
+      const productSlug = await ensureUniqueShopProductSlug({
+        businessId: org.id,
+        baseName: body.data.name,
+        deps,
+      })
       const galleryImageUrls = body.data.galleryImageUrls ?? []
       const normalizedTaxRatesByRegion = body.data.taxCollect
         ? normalizeCanadaSalesTaxRatesByRegion(body.data.taxRatesByRegion ?? {}, { fallbackPreset: 'canada_current' })
         : {}
+      const shippingOptions = normalizeShopShippingOptions(body.data.shippingOptions, {
+        weightGrams: body.data.weightGrams ?? null,
+        shippingPolicy: body.data.shippingPolicy,
+        allowShippingContracts: body.data.allowShippingContracts,
+      })
+      const legacyShipping = deriveLegacyShopShippingFields(shippingOptions)
       let resolvedCatalogId: string | null = null
 
       if (body.data.catalogId != null) {
@@ -1346,14 +1635,14 @@ export function registerOrganizationShopRoutes(app: FastifyInstance, deps: Organ
 
       await prisma.$executeRaw`
         INSERT INTO organization_shop_product (
-          id, business_id, catalog_id, name, description, listing_section, listing_category, listing_subcategory, price_cents, currency, sku,
+          id, business_id, catalog_id, slug, name, description, listing_section, listing_category, listing_subcategory, price_cents, currency, sku,
           primary_image_url, gallery_image_urls, weight_grams, shipping_policy,
-          allow_shipping_contracts, featured_homepage, tax_collect, tax_rates_by_region, fulfillment_type, digital_delivery_url, is_draft, is_active, track_inventory, created_by
+          allow_shipping_contracts, shipping_options, featured_homepage, tax_collect, tax_rates_by_region, fulfillment_type, digital_delivery_url, is_draft, is_active, track_inventory, created_by
         )
         VALUES (
-          ${productId}, ${org.id}, ${resolvedCatalogId}, ${body.data.name.trim()}, ${productDescription}, ${listingSection}, ${listingCategory}, ${listingSubcategory}, ${priceCents}, ${currency}, ${body.data.sku ?? null},
-          ${body.data.primaryImageUrl ?? null}, ${JSON.stringify(galleryImageUrls)}::jsonb, ${body.data.weightGrams ?? null}, ${body.data.shippingPolicy},
-          ${body.data.allowShippingContracts}, ${body.data.featuredHomepage}, ${body.data.taxCollect}, ${JSON.stringify(normalizedTaxRatesByRegion)}::jsonb, ${fulfillmentType}, ${fulfillmentType === 'digital' ? digitalDeliveryUrl : null}, ${false}, ${true}, ${body.data.trackInventory}, ${userId}
+          ${productId}, ${org.id}, ${resolvedCatalogId}, ${productSlug}, ${body.data.name.trim()}, ${productDescription}, ${listingSection}, ${listingCategory}, ${listingSubcategory}, ${priceCents}, ${currency}, ${body.data.sku ?? null},
+          ${body.data.primaryImageUrl ?? null}, ${JSON.stringify(galleryImageUrls)}::jsonb, ${legacyShipping.weightGrams}, ${legacyShipping.shippingPolicy},
+          ${legacyShipping.allowShippingContracts}, ${JSON.stringify(shippingOptions)}::jsonb, ${body.data.featuredHomepage}, ${body.data.taxCollect}, ${JSON.stringify(normalizedTaxRatesByRegion)}::jsonb, ${fulfillmentType}, ${fulfillmentType === 'digital' ? digitalDeliveryUrl : null}, ${false}, ${true}, ${body.data.trackInventory}, ${userId}
         )
       `
 
@@ -1425,13 +1714,13 @@ export function registerOrganizationShopRoutes(app: FastifyInstance, deps: Organ
 
       await deps.ensureOrganizationShopTables()
 
-      const productRows = await prisma.$queryRaw<Array<{ id: string; moderation_status: string }>>`
-        SELECT id, moderation_status FROM organization_shop_product
+      const productRows = await prisma.$queryRaw<Array<{ id: string; moderation_status: string; is_draft: boolean }>>`
+        SELECT id, moderation_status, is_draft FROM organization_shop_product
         WHERE id = ${params.data.productId} AND business_id = ${org.id}
         LIMIT 1
       `
       if (!productRows[0]) return reply.code(404).send({ error: 'product_not_found' })
-      if (!deps.isVisibleModerationStatus(productRows[0].moderation_status)) {
+      if (!productRows[0].is_draft && !deps.isVisibleModerationStatus(productRows[0].moderation_status)) {
         return reply.code(423).send({ error: deps.moderationLockedErrorCode('MARKET_PRODUCT') })
       }
 
@@ -1493,14 +1782,14 @@ export function registerOrganizationShopRoutes(app: FastifyInstance, deps: Organ
 
       await deps.ensureOrganizationShopTables()
 
-      const productRows = await prisma.$queryRaw<Array<{ id: string; moderation_status: string }>>`
-        SELECT id, moderation_status
+      const productRows = await prisma.$queryRaw<Array<{ id: string; moderation_status: string; is_draft: boolean }>>`
+        SELECT id, moderation_status, is_draft
         FROM organization_shop_product
         WHERE id = ${params.data.productId} AND business_id = ${org.id}
         LIMIT 1
       `
       if (!productRows[0]) return reply.code(404).send({ error: 'product_not_found' })
-      if (!deps.isVisibleModerationStatus(productRows[0].moderation_status)) {
+      if (!productRows[0].is_draft && !deps.isVisibleModerationStatus(productRows[0].moderation_status)) {
         return reply.code(423).send({ error: deps.moderationLockedErrorCode('MARKET_PRODUCT') })
       }
 

@@ -1,16 +1,19 @@
 'use client'
 
-import { useCallback, useEffect, useMemo, useState } from 'react'
-import { buildCanadaSalesTaxCatalogResponse, buildCanadaSalesTaxRatesByPreset, inferCanadaSalesTaxPreset, normalizeCanadaSalesTaxRatesByRegion } from '@civil/shared'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { buildCanadaSalesTaxCatalogResponse, buildCanadaSalesTaxRatesByPreset, normalizeCanadaSalesTaxRatesByRegion } from '@civil/shared'
 import clsx from 'clsx'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
+import type { Area } from 'react-easy-crop'
 import { HiOutlineArrowLeft } from 'react-icons/hi2'
 import CivilPostMedia from '../../_components/CivilPostMedia'
+import PhotoUpdateModal from '../../_components/PhotoUpdateModal'
 import { CanadianAddressEditor } from '../../_components/address/CanadianAddressEditor'
 import RichTextEditor from '../../_components/RichTextEditor'
 import { buildApiUrl } from '../../_lib/api'
 import { createEmptyCanadianAddress, hasCanadianAddressValue, normalizeCanadianAddress, type CanadianAddress } from '../../_lib/canadianAddresses'
+import { computeFallbackCropArea, generateCroppedImageBlob, generateCroppedImageBlobFromUrl } from '../../_lib/imageCrop'
 import { getStoredToken } from '../../_lib/tokenStorage'
 import { redirectToAuthModal } from '../../_lib/authModal'
 import { ensureViewerMe } from '../../_lib/viewerMe'
@@ -26,8 +29,18 @@ type ShopWarehouse = {
   isHeadOffice: boolean
 }
 
+type ShopShippingPolicy = 'local_shipping' | 'civil_driver_contracts' | 'provincial' | 'national' | 'international'
+
+type ShopShippingOption = {
+  policy: ShopShippingPolicy
+  enabled: boolean
+  weightGrams?: number | null
+  flatRateFeeCents?: number | null
+}
+
 type ShopProduct = {
   id: string
+  slug?: string | null
   catalogId?: string | null
   name: string
   description: string | null
@@ -45,8 +58,9 @@ type ShopProduct = {
   fulfillmentType?: string
   digitalDeliveryUrl?: string | null
   weightGrams?: number | null
-  shippingPolicy?: 'local_community' | 'provincial' | 'national'
+  shippingPolicy?: 'local_community' | 'provincial' | 'national' | 'international'
   allowShippingContracts?: boolean
+  shippingOptions?: ShopShippingOption[]
   isDraft?: boolean
   isActive: boolean
   trackInventory: boolean
@@ -134,9 +148,12 @@ type ProductEditDraft = {
   fulfillmentType: 'physical' | 'digital'
   digitalDeliveryUrl: string
   trackInventory: boolean
-  weightGrams: string
-  shippingPolicy: 'local_community' | 'provincial' | 'national'
-  allowShippingContracts: boolean
+  shippingOptions: Array<{
+    policy: ShopShippingPolicy
+    enabled: boolean
+    weightGrams: string
+    flatRateFeeDollars: string
+  }>
   primaryImageUrl: string
   galleryImageUrls: string[]
 }
@@ -159,6 +176,22 @@ type MediaAssetStatusResponse = {
   }
 }
 
+type ShopImageTarget =
+  | { kind: 'catalog'; catalogId: string }
+  | { kind: 'product-primary'; productId: string }
+  | { kind: 'product-gallery'; productId: string; galleryIndex: number }
+
+type ShopImageDraft = {
+  sourceFile: File | null
+  cropperImageUrl: string | null
+  sourceImageUrl: string | null
+  crop: { x: number; y: number }
+  zoom: number
+  croppedAreaPixels: Area | null
+  uploadStatus: 'idle' | 'uploading' | 'processing' | 'ready' | 'error'
+  uploadError: string | null
+}
+
 type CanadaSalesTaxRatesResponse = {
   asOf: string
   regions: Array<{
@@ -172,6 +205,20 @@ type CanadaSalesTaxRatesResponse = {
 const ACCEPTED_IMAGE_TYPES = 'image/jpeg,image/png,image/webp,image/avif,image/heic,image/heif'
 const ACCEPTED_IMAGE_TYPE_LIST = ACCEPTED_IMAGE_TYPES.split(',')
 const PHOTO_MAX_BYTES = 25 * 1024 * 1024
+const CATALOG_BANNER_ASPECT = 16 / 5
+const PRODUCT_PRIMARY_ASPECT = 4 / 3
+const CATALOG_BANNER_WIDTH = 1920
+const CATALOG_BANNER_HEIGHT = 600
+const PRODUCT_PRIMARY_WIDTH = 1600
+const PRODUCT_PRIMARY_HEIGHT = 1200
+const MAX_CROP_ZOOM = 3
+const SHOP_SHIPPING_OPTION_ROWS: Array<{ policy: ShopShippingPolicy; label: string }> = [
+  { policy: 'local_shipping', label: 'Local Shipping' },
+  { policy: 'civil_driver_contracts', label: 'Local Delivery Contracts from Civil Drivers?' },
+  { policy: 'provincial', label: 'Provincial' },
+  { policy: 'national', label: 'National' },
+  { policy: 'international', label: 'International' },
+]
 
 const TAX_REGION_CODES = ['AB', 'BC', 'MB', 'NB', 'NL', 'NS', 'NT', 'NU', 'ON', 'PE', 'QC', 'SK', 'YT'] as const
 const CURRENT_CANADA_TAX_SELECTION = 'canada_current'
@@ -309,7 +356,78 @@ const readImageDimensions = async (file: File): Promise<{ width: number; height:
   }
 }
 
+const readRemoteImageDimensions = async (imageUrl: string): Promise<{ width: number; height: number } | null> => {
+  try {
+    return await new Promise((resolve) => {
+      const img = new Image()
+      img.onload = () => {
+        resolve({ width: img.naturalWidth || img.width, height: img.naturalHeight || img.height })
+      }
+      img.onerror = () => {
+        resolve(null)
+      }
+      img.src = imageUrl
+    })
+  } catch {
+    return null
+  }
+}
+
+const createShopImageDraft = (): ShopImageDraft => ({
+  sourceFile: null,
+  cropperImageUrl: null,
+  sourceImageUrl: null,
+  crop: { x: 0, y: 0 },
+  zoom: 1,
+  croppedAreaPixels: null,
+  uploadStatus: 'idle',
+  uploadError: null,
+})
+
 type ShopSettingsPanel = 'shipping' | 'stripe'
+
+function normalizeShippingDraftOptions(product: ShopProduct): ProductEditDraft['shippingOptions'] {
+  const byPolicy = new Map<ShopShippingPolicy, ProductEditDraft['shippingOptions'][number]>()
+  for (const row of SHOP_SHIPPING_OPTION_ROWS) {
+    byPolicy.set(row.policy, { policy: row.policy, enabled: false, weightGrams: '', flatRateFeeDollars: '' })
+  }
+
+  if (Array.isArray(product.shippingOptions) && product.shippingOptions.length > 0) {
+    for (const option of product.shippingOptions) {
+      if (!option || !byPolicy.has(option.policy)) continue
+      byPolicy.set(option.policy, {
+        policy: option.policy,
+        enabled: option.policy === 'civil_driver_contracts' ? false : Boolean(option.enabled),
+        weightGrams: option.weightGrams != null ? String(option.weightGrams) : '',
+        flatRateFeeDollars: option.flatRateFeeCents != null ? (Math.max(0, option.flatRateFeeCents) / 100).toFixed(2) : '',
+      })
+    }
+  } else {
+    const primaryPolicy: ShopShippingPolicy = product.shippingPolicy === 'provincial'
+      ? 'provincial'
+      : product.shippingPolicy === 'national'
+        ? 'national'
+        : product.shippingPolicy === 'international'
+          ? 'international'
+          : 'local_shipping'
+    byPolicy.set(primaryPolicy, {
+      policy: primaryPolicy,
+      enabled: true,
+      weightGrams: product.weightGrams != null ? String(product.weightGrams) : '',
+      flatRateFeeDollars: '',
+    })
+    if (product.allowShippingContracts) {
+      byPolicy.set('civil_driver_contracts', {
+        policy: 'civil_driver_contracts',
+        enabled: true,
+        weightGrams: product.weightGrams != null ? String(product.weightGrams) : '',
+        flatRateFeeDollars: '',
+      })
+    }
+  }
+
+  return SHOP_SHIPPING_OPTION_ROWS.map((row) => byPolicy.get(row.policy) ?? { policy: row.policy, enabled: false, weightGrams: '', flatRateFeeDollars: '' })
+}
 
 function toDraft(product: ShopProduct): ProductEditDraft {
   return {
@@ -325,9 +443,7 @@ function toDraft(product: ShopProduct): ProductEditDraft {
     fulfillmentType: String(product.fulfillmentType || 'physical').toLowerCase() === 'digital' ? 'digital' : 'physical',
     digitalDeliveryUrl: product.digitalDeliveryUrl ?? '',
     trackInventory: product.trackInventory,
-    weightGrams: product.weightGrams != null ? String(product.weightGrams) : '',
-    shippingPolicy: product.shippingPolicy ?? 'local_community',
-    allowShippingContracts: Boolean(product.allowShippingContracts),
+    shippingOptions: normalizeShippingDraftOptions(product),
     primaryImageUrl: product.primaryImageUrl ?? '',
     galleryImageUrls: Array.isArray(product.galleryImageUrls) ? product.galleryImageUrls : [],
   }
@@ -339,6 +455,7 @@ export default function OrganizationShopClient({
   slug,
   mode = 'manage',
   focusProductId,
+  focusProductSlug,
   manageSection,
 }: {
   province: string
@@ -346,6 +463,7 @@ export default function OrganizationShopClient({
   slug: string
   mode?: 'storefront' | 'manage' | 'new'
   focusProductId?: string
+  focusProductSlug?: string
   manageSection?: 'products' | 'catalogs' | 'warehouses' | 'orders' | 'settings'
 }) {
   const router = useRouter()
@@ -407,6 +525,13 @@ export default function OrganizationShopClient({
   const [inventoryAdjustQuantity, setInventoryAdjustQuantity] = useState<string>('')
   const [inventoryAdjustBatchNumber, setInventoryAdjustBatchNumber] = useState<string>('')
   const [inventoryAdjustReason, setInventoryAdjustReason] = useState<string>('')
+  const [authToken, setAuthToken] = useState<string | null>(null)
+  const [authTokenReady, setAuthTokenReady] = useState(false)
+  const [shopImageTarget, setShopImageTarget] = useState<ShopImageTarget | null>(null)
+  const [shopImageDraft, setShopImageDraft] = useState<ShopImageDraft>(() => createShopImageDraft())
+
+  const catalogImageInputRef = useRef<HTMLInputElement | null>(null)
+  const productPrimaryImageInputRef = useRef<HTMLInputElement | null>(null)
 
   const shopPath = useMemo(
     () => `/communities/${encodeURIComponent(province)}/${encodeURIComponent(municipality)}/orgs/${encodeURIComponent(slug)}/shop`,
@@ -424,6 +549,168 @@ export default function OrganizationShopClient({
   const [settingsPanel, setSettingsPanel] = useState<ShopSettingsPanel>('shipping')
   const [selectedCatalogId, setSelectedCatalogId] = useState<string | null>(null)
   const [selectedProductId, setSelectedProductId] = useState<string | null>(null)
+
+  useEffect(() => {
+    setAuthToken(getStoredToken())
+    setAuthTokenReady(true)
+  }, [])
+
+  const resetShopImageDraft = useCallback(() => {
+    setShopImageDraft((current) => {
+      if (current.cropperImageUrl?.startsWith('blob:')) {
+        URL.revokeObjectURL(current.cropperImageUrl)
+      }
+      return createShopImageDraft()
+    })
+  }, [])
+
+  const closeShopImageModal = useCallback(() => {
+    resetShopImageDraft()
+    setShopImageTarget(null)
+  }, [resetShopImageDraft])
+
+  useEffect(() => {
+    const currentUrl = shopImageDraft.cropperImageUrl
+    return () => {
+      if (currentUrl?.startsWith('blob:')) {
+        URL.revokeObjectURL(currentUrl)
+      }
+    }
+  }, [shopImageDraft.cropperImageUrl])
+
+  const openCatalogImageEditor = useCallback(
+    (catalogId: string, file?: File | null) => {
+      const existingImageUrl = catalogDrafts[catalogId]?.imageUrl ?? null
+      const sourceFile = file ?? null
+      const cropperImageUrl = sourceFile ? URL.createObjectURL(sourceFile) : existingImageUrl
+      setShopImageTarget({ kind: 'catalog', catalogId })
+      setShopImageDraft((current) => {
+        if (current.cropperImageUrl?.startsWith('blob:')) {
+          URL.revokeObjectURL(current.cropperImageUrl)
+        }
+        return {
+          sourceFile,
+          cropperImageUrl,
+          sourceImageUrl: cropperImageUrl,
+          crop: { x: 0, y: 0 },
+          zoom: 1,
+          croppedAreaPixels: null,
+          uploadStatus: 'idle',
+          uploadError: null,
+        }
+      })
+    },
+    [catalogDrafts],
+  )
+
+  const openProductPrimaryImageEditor = useCallback(
+    (productId: string, file?: File | null) => {
+      const existingImageUrl = productDrafts[productId]?.primaryImageUrl ?? null
+      const sourceFile = file ?? null
+      const cropperImageUrl = sourceFile ? URL.createObjectURL(sourceFile) : existingImageUrl
+      setShopImageTarget({ kind: 'product-primary', productId })
+      setShopImageDraft((current) => {
+        if (current.cropperImageUrl?.startsWith('blob:')) {
+          URL.revokeObjectURL(current.cropperImageUrl)
+        }
+        return {
+          sourceFile,
+          cropperImageUrl,
+          sourceImageUrl: cropperImageUrl,
+          crop: { x: 0, y: 0 },
+          zoom: 1,
+          croppedAreaPixels: null,
+          uploadStatus: 'idle',
+          uploadError: null,
+        }
+      })
+    },
+    [productDrafts],
+  )
+
+  const openProductGalleryImageEditor = useCallback(
+    (productId: string, galleryIndex: number, file?: File | null) => {
+      const existingImageUrl = productDrafts[productId]?.galleryImageUrls?.[galleryIndex] ?? null
+      const sourceFile = file ?? null
+      const cropperImageUrl = sourceFile ? URL.createObjectURL(sourceFile) : existingImageUrl
+      setShopImageTarget({ kind: 'product-gallery', productId, galleryIndex })
+      setShopImageDraft((current) => {
+        if (current.cropperImageUrl?.startsWith('blob:')) {
+          URL.revokeObjectURL(current.cropperImageUrl)
+        }
+        return {
+          sourceFile,
+          cropperImageUrl,
+          sourceImageUrl: cropperImageUrl,
+          crop: { x: 0, y: 0 },
+          zoom: 1,
+          croppedAreaPixels: null,
+          uploadStatus: 'idle',
+          uploadError: null,
+        }
+      })
+    },
+    [productDrafts],
+  )
+
+  const pickShopImageFile = useCallback(() => {
+    if (!shopImageTarget) return
+    if (shopImageTarget.kind === 'catalog') {
+      catalogImageInputRef.current?.click()
+      return
+    }
+    productPrimaryImageInputRef.current?.click()
+  }, [shopImageTarget])
+
+  const handleCatalogEditorFileChange = useCallback(
+    (file: File | null) => {
+      if (!shopImageTarget || shopImageTarget.kind !== 'catalog' || !file) return
+      openCatalogImageEditor(shopImageTarget.catalogId, file)
+    },
+    [openCatalogImageEditor, shopImageTarget],
+  )
+
+  const handleProductPrimaryEditorFileChange = useCallback(
+    (file: File | null) => {
+      if (!shopImageTarget || !file) return
+      if (shopImageTarget.kind === 'product-primary') {
+        openProductPrimaryImageEditor(shopImageTarget.productId, file)
+        return
+      }
+      if (shopImageTarget.kind === 'product-gallery') {
+        openProductGalleryImageEditor(shopImageTarget.productId, shopImageTarget.galleryIndex, file)
+      }
+    },
+    [openProductGalleryImageEditor, openProductPrimaryImageEditor, shopImageTarget],
+  )
+
+  const inferManageAccess = useCallback(
+    async (token: string) => {
+      try {
+        const [mePayload, orgRes] = await Promise.all([
+          cachedMe?.id ? Promise.resolve({ id: cachedMe.id } as { id?: string }) : ensureViewerMe({ token }),
+          fetch(
+            buildApiUrl(
+              `/communities/${encodeURIComponent(province)}/${encodeURIComponent(municipality)}/orgs/${encodeURIComponent(slug)}`,
+            ),
+            { headers: { authorization: `Bearer ${token}` }, cache: 'no-store' },
+          ),
+        ])
+
+        const viewerId = typeof (mePayload as any)?.id === 'string' ? ((mePayload as any).id as string) : null
+        const orgPayload = orgRes.ok
+          ? ((await orgRes.json().catch(() => null)) as { org?: { ownerId?: string | null; viewerRole?: 'OWNER' | 'MANAGER' | null } } | null)
+          : null
+
+        const viewerRole = orgPayload?.org?.viewerRole ?? null
+        const inferredOwner = Boolean(viewerId && orgPayload?.org?.ownerId && viewerId === orgPayload.org.ownerId)
+        return Boolean(inferredOwner || viewerRole === 'OWNER' || viewerRole === 'MANAGER')
+      } catch {
+        return false
+      }
+    },
+    [cachedMe, municipality, province, slug],
+  )
 
   const loadConnectStatus = useCallback(async () => {
     if (!canManage || mode !== 'manage') return
@@ -512,46 +799,134 @@ export default function OrganizationShopClient({
     })
   }, [])
 
+  const renderShippingOptionsEditor = useCallback((productId: string, draft: ProductEditDraft) => {
+    return (
+      <div className="space-y-2">
+        <div>
+          <h4 className="text-sm font-semibold text-slate-900">Shipping policy</h4>
+          <p className="mt-1 text-xs text-slate-500">Set which delivery options are available and the flat rate for each option.</p>
+        </div>
+        <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white">
+          <table className="min-w-full border-collapse text-sm text-slate-700">
+            <thead className="bg-slate-50 text-xs font-semibold uppercase tracking-wide text-slate-500">
+              <tr>
+                <th className="px-3 py-2 text-left">Enabled</th>
+                <th className="px-3 py-2 text-left">Shipping Policy</th>
+                <th className="px-3 py-2 text-left">Weight</th>
+                <th className="px-3 py-2 text-left">Flat Rate Fee</th>
+              </tr>
+            </thead>
+            <tbody>
+              {SHOP_SHIPPING_OPTION_ROWS.map((row) => {
+                const isComingSoon = row.policy === 'civil_driver_contracts'
+                const option = draft.shippingOptions.find((entry) => entry.policy === row.policy) ?? {
+                  policy: row.policy,
+                  enabled: false,
+                  weightGrams: '',
+                  flatRateFeeDollars: '',
+                }
+                return (
+                  <tr key={row.policy} className="border-t border-slate-200 align-top">
+                    <td className="px-3 py-3">
+                      <input
+                        type="checkbox"
+                        checked={isComingSoon ? false : option.enabled}
+                        disabled={isComingSoon}
+                        onChange={(event) =>
+                          updateProductDraft(productId, (current) => ({
+                            ...current,
+                            shippingOptions: current.shippingOptions.map((entry) =>
+                              entry.policy === row.policy ? { ...entry, enabled: event.target.checked } : entry,
+                            ),
+                          }))
+                        }
+                      />
+                    </td>
+                    <td className="px-3 py-3 font-medium text-slate-900">{isComingSoon ? `${row.label} (Coming Soon)` : row.label}</td>
+                    <td className="px-3 py-3">
+                      <input
+                        type="number"
+                        min="0"
+                        step="1"
+                        value={option.weightGrams}
+                        disabled={!option.enabled || isComingSoon}
+                        onChange={(event) =>
+                          updateProductDraft(productId, (current) => ({
+                            ...current,
+                            shippingOptions: current.shippingOptions.map((entry) =>
+                              entry.policy === row.policy ? { ...entry, weightGrams: event.target.value } : entry,
+                            ),
+                          }))
+                        }
+                        placeholder="grams"
+                        className="w-32 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 disabled:bg-slate-100 disabled:text-slate-400"
+                      />
+                    </td>
+                    <td className="px-3 py-3">
+                      <div className="flex items-center gap-2">
+                        <span className="text-slate-500">$</span>
+                        <input
+                          type="number"
+                          min="0"
+                          step="0.01"
+                          value={option.flatRateFeeDollars}
+                          disabled={!option.enabled || isComingSoon}
+                          onChange={(event) =>
+                            updateProductDraft(productId, (current) => ({
+                              ...current,
+                              shippingOptions: current.shippingOptions.map((entry) =>
+                                entry.policy === row.policy ? { ...entry, flatRateFeeDollars: event.target.value } : entry,
+                              ),
+                            }))
+                          }
+                          placeholder="0.00"
+                          className="w-32 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-900 disabled:bg-slate-100 disabled:text-slate-400"
+                        />
+                      </div>
+                    </td>
+                  </tr>
+                )
+              })}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    )
+  }, [updateProductDraft])
+
   const load = useCallback(async () => {
+    if (!authTokenReady) return
+
     setLoading(true)
     try {
-      const token = getStoredToken()
-      const res = await fetch(buildApiUrl(shopPath), {
-        headers: token ? { authorization: `Bearer ${token}` } : undefined,
-        cache: 'no-store',
-      })
+      const fetchShop = (tokenOverride?: string | null) =>
+        fetch(buildApiUrl(shopPath), {
+          headers: tokenOverride ? { authorization: `Bearer ${tokenOverride}` } : undefined,
+          cache: 'no-store',
+        })
+
+      let res = await fetchShop(authToken)
+      if (!res.ok && authToken) {
+        const hasManageAccess = await inferManageAccess(authToken)
+        if (hasManageAccess) {
+          setCanManage(true)
+          res = await fetchShop(authToken)
+        }
+      }
+
       if (!res.ok) {
+        setCatalogs([])
         setProducts([])
         setWarehouses([])
         setCanManage(false)
         return
       }
+
       const payload = (await res.json().catch(() => null)) as ShopResponse | null
 
       let canManageFinal = Boolean(payload?.canManage)
-      if (!canManageFinal && token) {
-        try {
-          const [mePayload, orgRes] = await Promise.all([
-            cachedMe?.id ? Promise.resolve({ id: cachedMe.id } as { id?: string }) : ensureViewerMe({ token }),
-            fetch(
-              buildApiUrl(
-                `/communities/${encodeURIComponent(province)}/${encodeURIComponent(municipality)}/orgs/${encodeURIComponent(slug)}`,
-              ),
-              { headers: { authorization: `Bearer ${token}` }, cache: 'no-store' },
-            ),
-          ])
-
-          const viewerId = typeof (mePayload as any)?.id === 'string' ? ((mePayload as any).id as string) : null
-          const orgPayload = orgRes.ok
-            ? ((await orgRes.json().catch(() => null)) as { org?: { ownerId?: string | null; viewerRole?: 'OWNER' | 'MANAGER' | null } } | null)
-            : null
-
-          const viewerRole = orgPayload?.org?.viewerRole ?? null
-          const inferredOwner = Boolean(viewerId && orgPayload?.org?.ownerId && viewerId === orgPayload.org.ownerId)
-          canManageFinal = Boolean(inferredOwner || viewerRole === 'OWNER' || viewerRole === 'MANAGER')
-        } catch {
-          // ignore; keep shop-provided canManage
-        }
+      if (!canManageFinal && authToken) {
+        canManageFinal = await inferManageAccess(authToken)
       }
 
       const nextProducts = Array.isArray(payload?.products) ? payload.products : []
@@ -596,10 +971,9 @@ export default function OrganizationShopClient({
           const initialRatesByRegion = product.taxCollect
             ? normalizeCanadaSalesTaxRatesByRegion(product.taxRatesByRegion, { fallbackPreset: 'canada_current' })
             : {}
-          const inferredSelection = product.taxCollect ? inferCanadaSalesTaxPreset(initialRatesByRegion) : CURRENT_CANADA_TAX_SELECTION
           next[product.id] = {
             collectTax: Boolean(product.taxCollect),
-            selectionKey: next[product.id]?.selectionKey || inferredSelection,
+            selectionKey: CURRENT_CANADA_TAX_SELECTION,
             ratesByRegion: initialRatesByRegion,
           }
         })
@@ -622,7 +996,7 @@ export default function OrganizationShopClient({
     } finally {
       setLoading(false)
     }
-  }, [cachedMe, municipality, province, shopPath, slug])
+  }, [authToken, authTokenReady, inferManageAccess, shopPath])
 
   useEffect(() => {
     void load()
@@ -657,16 +1031,6 @@ export default function OrganizationShopClient({
       cancelled = true
     }
   }, [])
-
-  const buildRatesBySelection = useCallback(
-    (selectionKey: string, existing: Record<string, string> | undefined): Record<string, string> => {
-      if (selectionKey === 'none') return buildCanadaSalesTaxRatesByPreset('none')
-      if (selectionKey === 'gst_5') return buildCanadaSalesTaxRatesByPreset('gst_5')
-      if (selectionKey === CURRENT_CANADA_TAX_SELECTION) return buildCanadaSalesTaxRatesByPreset('canada_current')
-      return normalizeCanadaSalesTaxRatesByRegion(existing ?? {}, { fallbackPreset: 'canada_current' })
-    },
-    [],
-  )
 
   useEffect(() => {
     if (!canManage || mode !== 'manage') return
@@ -893,6 +1257,37 @@ export default function OrganizationShopClient({
         return false
       }
 
+      const shippingOptions = [] as Array<{
+        policy: ShopShippingPolicy
+        enabled: boolean
+        weightGrams: number | null
+        flatRateFeeCents: number | null
+      }>
+      for (const option of draft.shippingOptions) {
+        const weightValue = option.weightGrams.trim()
+        const feeValue = option.flatRateFeeDollars.trim()
+        if (weightValue) {
+          const parsedWeight = Number(weightValue)
+          if (!Number.isFinite(parsedWeight) || parsedWeight < 0) {
+            pushToast('Enter a valid shipping weight.', 'error')
+            return false
+          }
+        }
+        if (feeValue) {
+          const parsedFee = Number(feeValue)
+          if (!Number.isFinite(parsedFee) || parsedFee < 0) {
+            pushToast('Enter a valid flat rate fee.', 'error')
+            return false
+          }
+        }
+        shippingOptions.push({
+          policy: option.policy,
+          enabled: option.enabled,
+          weightGrams: weightValue ? Math.max(0, Math.round(Number(weightValue))) : null,
+          flatRateFeeCents: feeValue ? Math.max(0, Math.round(Number(feeValue) * 100)) : null,
+        })
+      }
+
       setSaving(true)
       try {
         const res = await fetch(buildApiUrl(`${shopPath}/products/${encodeURIComponent(productId)}`), {
@@ -917,9 +1312,7 @@ export default function OrganizationShopClient({
             fulfillmentType: draft.fulfillmentType,
             digitalDeliveryUrl: draft.digitalDeliveryUrl.trim() || null,
             trackInventory: draft.trackInventory,
-            weightGrams: draft.weightGrams.trim() ? Math.max(0, Math.round(Number(draft.weightGrams) || 0)) : null,
-            shippingPolicy: draft.shippingPolicy,
-            allowShippingContracts: draft.allowShippingContracts,
+            shippingOptions,
             isDraft: typeof options?.isDraft === 'boolean' ? options.isDraft : undefined,
           }),
         })
@@ -1038,28 +1431,112 @@ export default function OrganizationShopClient({
     [shopPath],
   )
 
-  const handlePrimaryPhotoUpload = useCallback(
-    async (productId: string, file: File | null) => {
-      if (!file) return
-      setUploadingProductId(productId)
-      try {
-        const mediaUrl = await uploadMediaFile(file)
-        if (!mediaUrl) return
-        const draft = productDrafts[productId]
-        if (!draft) return
-        const ok = await savePhotos(productId, mediaUrl, draft.galleryImageUrls)
-        if (!ok) return
-        updateProductDraft(productId, (current) => ({ ...current, primaryImageUrl: mediaUrl }))
+  async function submitShopImageCrop() {
+    if (!shopImageTarget || !shopImageDraft.sourceImageUrl) return
+
+    const desiredAspect = shopImageTarget.kind === 'catalog' ? CATALOG_BANNER_ASPECT : PRODUCT_PRIMARY_ASPECT
+    let cropArea = shopImageDraft.croppedAreaPixels
+
+    if (!cropArea) {
+      const dims = shopImageDraft.sourceFile
+        ? await readImageDimensions(shopImageDraft.sourceFile)
+        : await readRemoteImageDimensions(shopImageDraft.sourceImageUrl)
+      if (!dims) {
+        setShopImageDraft((current) => ({ ...current, uploadStatus: 'error', uploadError: 'Unable to read this image.' }))
+        return
+      }
+      cropArea = computeFallbackCropArea(dims, desiredAspect)
+      setShopImageDraft((current) => ({ ...current, croppedAreaPixels: cropArea }))
+    }
+
+    if (shopImageTarget.kind !== 'catalog') {
+      setUploadingProductId(shopImageTarget.productId)
+    }
+    setShopImageDraft((current) => ({ ...current, uploadStatus: 'uploading', uploadError: null }))
+
+    try {
+      const options = shopImageTarget.kind === 'catalog'
+        ? { width: CATALOG_BANNER_WIDTH, height: CATALOG_BANNER_HEIGHT, mime: 'image/jpeg' as const }
+        : { width: PRODUCT_PRIMARY_WIDTH, height: PRODUCT_PRIMARY_HEIGHT, mime: 'image/jpeg' as const }
+
+      const croppedBlob = shopImageDraft.sourceFile
+        ? await generateCroppedImageBlob(shopImageDraft.sourceFile, cropArea, options)
+        : await generateCroppedImageBlobFromUrl(shopImageDraft.sourceImageUrl, cropArea, options)
+
+      if (!croppedBlob) {
+        setShopImageDraft((current) => ({ ...current, uploadStatus: 'error', uploadError: 'Unable to crop this image.' }))
+        return
+      }
+
+      const uploadFile = new File(
+        [croppedBlob],
+        shopImageTarget.kind === 'catalog'
+          ? 'catalog-banner.jpg'
+          : shopImageTarget.kind === 'product-gallery'
+            ? `product-gallery-${shopImageTarget.galleryIndex + 1}.jpg`
+            : 'product-primary.jpg',
+        { type: croppedBlob.type || 'image/jpeg' },
+      )
+
+      const mediaUrl = await uploadMediaFile(uploadFile)
+      if (!mediaUrl) {
+        setShopImageDraft((current) => ({ ...current, uploadStatus: 'error', uploadError: 'Unable to upload the image.' }))
+        return
+      }
+
+      if (shopImageTarget.kind === 'catalog') {
+        const current = catalogDrafts[shopImageTarget.catalogId]
+        if (!current) return
+        const nextDraft = { ...current, imageUrl: mediaUrl }
+        setCatalogDrafts((prev) => ({ ...prev, [shopImageTarget.catalogId]: nextDraft }))
+        const ok = await saveCatalog(shopImageTarget.catalogId, nextDraft)
+        if (ok) closeShopImageModal()
+        return
+      }
+
+      const draft = productDrafts[shopImageTarget.productId]
+      if (!draft) return
+
+      if (shopImageTarget.kind === 'product-gallery') {
+        const nextGalleryImageUrls = [...draft.galleryImageUrls]
+        nextGalleryImageUrls[shopImageTarget.galleryIndex] = mediaUrl
+        const ok = await savePhotos(shopImageTarget.productId, draft.primaryImageUrl, nextGalleryImageUrls)
+        if (!ok) {
+          setShopImageDraft((current) => ({ ...current, uploadStatus: 'error', uploadError: 'Unable to save the gallery image.' }))
+          return
+        }
+
+        updateProductDraft(shopImageTarget.productId, (current) => ({ ...current, galleryImageUrls: nextGalleryImageUrls }))
         setProducts((prev) =>
-          prev.map((product) => (product.id === productId ? { ...product, primaryImageUrl: mediaUrl } : product)),
+          prev.map((product) =>
+            product.id === shopImageTarget.productId ? { ...product, galleryImageUrls: nextGalleryImageUrls } : product,
+          ),
         )
-        pushToast('Primary photo uploaded.', 'success')
-      } finally {
+        pushToast('Gallery photo updated.', 'success')
+        closeShopImageModal()
+        return
+      }
+
+      const ok = await savePhotos(shopImageTarget.productId, mediaUrl, draft.galleryImageUrls)
+      if (!ok) {
+        setShopImageDraft((current) => ({ ...current, uploadStatus: 'error', uploadError: 'Unable to save the product image.' }))
+        return
+      }
+
+      updateProductDraft(shopImageTarget.productId, (current) => ({ ...current, primaryImageUrl: mediaUrl }))
+      setProducts((prev) =>
+        prev.map((product) =>
+          product.id === shopImageTarget.productId ? { ...product, primaryImageUrl: mediaUrl } : product,
+        ),
+      )
+      pushToast('Primary photo updated.', 'success')
+      closeShopImageModal()
+    } finally {
+      if (shopImageTarget.kind !== 'catalog') {
         setUploadingProductId(null)
       }
-    },
-    [productDrafts, savePhotos, updateProductDraft, uploadMediaFile],
-  )
+    }
+  }
 
   const handleGalleryPhotoUpload = useCallback(
     async (productId: string, files: FileList | null) => {
@@ -1393,17 +1870,17 @@ export default function OrganizationShopClient({
   }, [])
 
   const saveCatalog = useCallback(
-    async (catalogId: string) => {
+    async (catalogId: string, draftOverride?: CatalogEditDraft) => {
       const token = getStoredToken()
       if (!token) {
         redirectToAuthModal('login')
-        return
+        return false
       }
-      const draft = catalogDrafts[catalogId]
-      if (!draft) return
+      const draft = draftOverride ?? catalogDrafts[catalogId]
+      if (!draft) return false
       if (!draft.title.trim()) {
         pushToast('Catalog title is required.', 'error')
-        return
+        return false
       }
 
       setSaving(true)
@@ -1424,12 +1901,27 @@ export default function OrganizationShopClient({
         const payload = (await res.json().catch(() => null)) as { error?: string } | null
         if (!res.ok) {
           pushToast(payload?.error ?? 'Unable to save catalog.', 'error')
-          return
+          return false
         }
+        setCatalogs((prev) =>
+          prev.map((catalog) =>
+            catalog.id === catalogId
+              ? {
+                  ...catalog,
+                  title: draft.title.trim(),
+                  description: draft.description.trim() || null,
+                  imageUrl: draft.imageUrl.trim() || null,
+                  enabled: draft.enabled,
+                }
+              : catalog,
+          ),
+        )
         pushToast('Catalog saved.', 'success')
         await load()
+        return true
       } catch {
         pushToast('Unable to save catalog.', 'error')
+        return false
       } finally {
         setSaving(false)
       }
@@ -1439,22 +1931,13 @@ export default function OrganizationShopClient({
 
   const uploadCatalogImage = useCallback(
     async (catalogId: string, file: File | null) => {
-      if (!file) return
-      const mediaUrl = await uploadMediaFile(file)
-      if (!mediaUrl) return
-      setCatalogDrafts((prev) => {
-        const current = prev[catalogId]
-        if (!current) return prev
-        return {
-          ...prev,
-          [catalogId]: {
-            ...current,
-            imageUrl: mediaUrl,
-          },
-        }
-      })
+      if (file) {
+        openCatalogImageEditor(catalogId, file)
+        return
+      }
+      openCatalogImageEditor(catalogId)
     },
-    [uploadMediaFile],
+    [openCatalogImageEditor],
   )
 
   const saveCatalogOrder = useCallback(
@@ -1593,9 +2076,11 @@ export default function OrganizationShopClient({
 
   useEffect(() => {
     if (mode !== 'storefront') return
-    if (!focusProductId) return
+    if (!focusProductSlug && !focusProductId) return
 
-    const target = visibleProducts.find((product) => product.id === focusProductId)
+    const target = focusProductSlug
+      ? visibleProducts.find((product) => product.slug === focusProductSlug)
+      : visibleProducts.find((product) => product.id === focusProductId)
     if (!target) {
       setSelectedProductId(null)
       return
@@ -1605,7 +2090,7 @@ export default function OrganizationShopClient({
     if (target.catalogId) {
       setSelectedCatalogId(target.catalogId)
     }
-  }, [focusProductId, mode, visibleProducts])
+  }, [focusProductId, focusProductSlug, mode, visibleProducts])
 
   const [autoDraftAttempted, setAutoDraftAttempted] = useState(false)
 
@@ -1628,16 +2113,111 @@ export default function OrganizationShopClient({
     [],
   )
 
+  const shopImageEditor = (
+    <>
+      <input
+        ref={catalogImageInputRef}
+        type="file"
+        accept={ACCEPTED_IMAGE_TYPES}
+        className="hidden"
+        onChange={(event) => {
+          handleCatalogEditorFileChange(event.target.files?.[0] ?? null)
+          event.currentTarget.value = ''
+        }}
+      />
+
+      <input
+        ref={productPrimaryImageInputRef}
+        type="file"
+        accept={ACCEPTED_IMAGE_TYPES}
+        className="hidden"
+        onChange={(event) => {
+          handleProductPrimaryEditorFileChange(event.target.files?.[0] ?? null)
+          event.currentTarget.value = ''
+        }}
+      />
+
+      <PhotoUpdateModal
+        open={Boolean(shopImageTarget)}
+        title={
+          shopImageTarget?.kind === 'catalog'
+            ? 'Edit catalog banner'
+            : shopImageTarget?.kind === 'product-gallery'
+              ? 'Edit gallery photo'
+              : 'Edit primary product photo'
+        }
+        subtitle={
+          shopImageTarget?.kind === 'catalog'
+            ? 'Use a wide crop so the catalog reads as a banner across the shop.'
+            : shopImageTarget?.kind === 'product-gallery'
+              ? 'Adjust the framing for this gallery photo.'
+              : 'Set the framing for the main product photo shown in the shop.'
+        }
+        imageUrl={shopImageDraft.sourceImageUrl}
+        cropperImageUrl={shopImageDraft.cropperImageUrl}
+        aspect={shopImageTarget?.kind === 'catalog' ? CATALOG_BANNER_ASPECT : PRODUCT_PRIMARY_ASPECT}
+        cropShape="rect"
+        showGrid
+        crop={shopImageDraft.crop}
+        zoom={shopImageDraft.zoom}
+        maxZoom={MAX_CROP_ZOOM}
+        onCropChange={(nextCrop) => setShopImageDraft((current) => ({ ...current, crop: nextCrop }))}
+        onZoomChange={(nextZoom) => setShopImageDraft((current) => ({ ...current, zoom: nextZoom }))}
+        onCropComplete={(_, areaPixels) => setShopImageDraft((current) => ({ ...current, croppedAreaPixels: areaPixels }))}
+        onResetPosition={() =>
+          setShopImageDraft((current) => ({
+            ...current,
+            crop: { x: 0, y: 0 },
+            zoom: 1,
+            croppedAreaPixels: null,
+            uploadError: null,
+          }))
+        }
+        onPickFile={pickShopImageFile}
+        uploadStatus={shopImageDraft.uploadStatus}
+        uploadError={shopImageDraft.uploadError}
+        showCaption={false}
+        caption=""
+        onCaptionChange={() => undefined}
+        primaryLabel={
+          shopImageTarget?.kind === 'catalog'
+            ? 'Save banner'
+            : shopImageTarget?.kind === 'product-gallery'
+              ? 'Save gallery photo'
+              : 'Save primary photo'
+        }
+        primaryDisabled={!shopImageDraft.sourceImageUrl}
+        primaryLoading={shopImageDraft.uploadStatus === 'uploading' || shopImageDraft.uploadStatus === 'processing'}
+        primaryLoadingLabel={
+          shopImageTarget?.kind === 'catalog'
+            ? 'Saving banner…'
+            : shopImageTarget?.kind === 'product-gallery'
+              ? 'Saving gallery photo…'
+              : 'Saving photo…'
+        }
+        onPrimary={() => {
+          void submitShopImageCrop()
+        }}
+        onClose={closeShopImageModal}
+      />
+    </>
+  )
+
   if (loading) {
     return <p className="text-sm text-slate-500">Loading shop…</p>
   }
 
   if (mode === 'storefront') {
+    const storefrontProductHref = (product: ShopProduct) => {
+      const productKey = product.slug?.trim() || product.id
+      return `${baseComPath}/shop/${encodeURIComponent(productKey)}`
+    }
+
     const renderProductCard = (product: ShopProduct) => (
       <button
         key={product.id}
         type="button"
-        onClick={() => setSelectedProductId(product.id)}
+        onClick={() => router.push(storefrontProductHref(product))}
         className="w-full rounded-2xl border border-slate-200 bg-white p-4 text-left transition hover:border-slate-300"
       >
         {product.primaryImageUrl ? (
@@ -1655,7 +2235,13 @@ export default function OrganizationShopClient({
           <section className="space-y-4 rounded-2xl border border-slate-200 bg-white p-4">
             <button
               type="button"
-              onClick={() => setSelectedProductId(null)}
+              onClick={() => {
+                if (focusProductSlug || focusProductId) {
+                  router.push(`${baseComPath}/shop`)
+                  return
+                }
+                setSelectedProductId(null)
+              }}
               className="inline-flex items-center gap-2 rounded-full border border-sky-200 bg-white px-4 py-2 text-xs font-semibold text-sky-700 hover:bg-sky-50"
             >
               <HiOutlineArrowLeft className="h-4 w-4" />
@@ -1833,7 +2419,8 @@ export default function OrganizationShopClient({
         const currentListingSummary = listingTypeSummary(draft.listingSection, draft.listingCategory, draft.listingSubcategory)
 
         return (
-          <div className="mx-auto w-full max-w-3xl space-y-6">
+          <>
+            <div className="mx-auto w-full max-w-3xl space-y-6">
             <section className="surface-card p-4 shadow-subtle">
               <div className="space-y-3">
                 <div>
@@ -1906,31 +2493,30 @@ export default function OrganizationShopClient({
               {draft.galleryImageUrls.length ? (
                 <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
                   {draft.galleryImageUrls.slice(0, 12).map((url, index) => (
-                    <img
+                    <button
                       key={`${focusedProduct.id}-gallery-${index}`}
-                      src={url}
-                      alt={`${focusedProduct.name} gallery ${index + 1}`}
-                      className="h-20 w-full rounded-lg border border-slate-200 object-cover"
-                    />
+                      type="button"
+                      onClick={() => openProductGalleryImageEditor(focusedProduct.id, index)}
+                      className="group relative overflow-hidden rounded-lg border border-slate-200 text-left"
+                    >
+                      <img src={url} alt={`${focusedProduct.name} gallery ${index + 1}`} className="h-20 w-full object-cover" />
+                      <span className="absolute inset-x-0 bottom-0 bg-slate-900/70 px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-white opacity-0 transition group-hover:opacity-100">
+                        Reposition
+                      </span>
+                    </button>
                   ))}
                 </div>
               ) : null}
 
               {canManage ? (
                 <div className="flex flex-wrap gap-2">
-                  <label className="inline-flex cursor-pointer items-center justify-center rounded-full border border-slate-200 bg-white px-4 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50">
-                    Upload primary
-                    <input
-                      type="file"
-                      accept={ACCEPTED_IMAGE_TYPES}
-                      className="hidden"
-                      onChange={(event) => {
-                        const file = event.target.files?.[0] ?? null
-                        void handlePrimaryPhotoUpload(focusedProduct.id, file)
-                        event.currentTarget.value = ''
-                      }}
-                    />
-                  </label>
+                  <button
+                    type="button"
+                    onClick={() => openProductPrimaryImageEditor(focusedProduct.id)}
+                    className="inline-flex items-center justify-center rounded-full border border-slate-200 bg-white px-4 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50"
+                  >
+                    {draft.primaryImageUrl ? 'Edit primary' : 'Add primary'}
+                  </button>
 
                   <label className="inline-flex cursor-pointer items-center justify-center rounded-full border border-slate-200 bg-white px-4 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50">
                     Upload gallery
@@ -2118,15 +2704,14 @@ export default function OrganizationShopClient({
                     setTaxDrafts((prev) => {
                       const current = prev[focusedProduct.id] ?? { collectTax: false, selectionKey: CURRENT_CANADA_TAX_SELECTION, ratesByRegion: {} }
                       const nextCollectTax = event.target.checked
-                      const nextSelectionKey = current.selectionKey || CURRENT_CANADA_TAX_SELECTION
-                      const nextRates = nextCollectTax ? buildRatesBySelection(nextSelectionKey, current.ratesByRegion) : current.ratesByRegion
+                      const nextRates = nextCollectTax ? buildCanadaSalesTaxRatesByPreset('canada_current') : {}
 
                       return {
                         ...prev,
                         [focusedProduct.id]: {
                           ...current,
                           collectTax: nextCollectTax,
-                          selectionKey: nextSelectionKey,
+                          selectionKey: CURRENT_CANADA_TAX_SELECTION,
                           ratesByRegion: nextRates,
                         },
                       }
@@ -2138,34 +2723,8 @@ export default function OrganizationShopClient({
 
               {taxDraft.collectTax ? (
                 <div className="space-y-2">
-                  <label className="grid gap-1 text-xs font-semibold uppercase tracking-wide text-slate-500">
-                    Sales tax preset
-                    <select
-                      value={taxDraft.selectionKey || CURRENT_CANADA_TAX_SELECTION}
-                      onChange={(event) => {
-                        const selectionKey = String(event.target.value || CURRENT_CANADA_TAX_SELECTION)
-                        setTaxDrafts((prev) => {
-                          const current = prev[focusedProduct.id] ?? { collectTax: false, selectionKey: CURRENT_CANADA_TAX_SELECTION, ratesByRegion: {} }
-                          return {
-                            ...prev,
-                            [focusedProduct.id]: {
-                              ...current,
-                              selectionKey,
-                              ratesByRegion: buildRatesBySelection(selectionKey, current.ratesByRegion),
-                            },
-                          }
-                        })
-                      }}
-                      className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-semibold text-slate-700 focus:border-[var(--cc-primary)] focus:outline-none"
-                    >
-                      <option value={CURRENT_CANADA_TAX_SELECTION}>Current Canadian sales taxes</option>
-                      <option value="gst_5">GST only — 5%</option>
-                      <option value="none">No tax — 0%</option>
-                      <option value="custom">Custom rates</option>
-                    </select>
-                  </label>
                   <p className="text-xs text-slate-500">
-                    Current Canadian rates apply GST, HST, PST, RST, and QST by province using today&apos;s combined rates.
+                    Current Canadian rates apply GST, HST, PST, RST, and QST by province automatically.
                   </p>
                   <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
                     {TAX_REGION_CODES.map((code) => {
@@ -2223,44 +2782,7 @@ export default function OrganizationShopClient({
                 </label>
               ) : null}
 
-              <label className="grid gap-1 text-xs font-semibold uppercase tracking-wide text-slate-500">
-                Weight (grams)
-                <input
-                  type="number"
-                  min="0"
-                  step="1"
-                  value={draft.weightGrams}
-                  onChange={(event) => updateProductDraft(focusedProduct.id, (current) => ({ ...current, weightGrams: event.target.value }))}
-                  className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-normal normal-case tracking-normal text-slate-900"
-                />
-              </label>
-
-              <label className="grid gap-1 text-xs font-semibold uppercase tracking-wide text-slate-500">
-                Shipping policy
-                <select
-                  value={draft.shippingPolicy}
-                  onChange={(event) =>
-                    updateProductDraft(focusedProduct.id, (current) => ({
-                      ...current,
-                      shippingPolicy: event.target.value as 'local_community' | 'provincial' | 'national',
-                    }))
-                  }
-                  className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-normal normal-case tracking-normal text-slate-900"
-                >
-                  <option value="local_community">Local community only</option>
-                  <option value="provincial">Provincial</option>
-                  <option value="national">National</option>
-                </select>
-              </label>
-
-              <label className="inline-flex items-center gap-2 text-sm text-slate-700">
-                <input
-                  type="checkbox"
-                  checked={draft.allowShippingContracts}
-                  onChange={(event) => updateProductDraft(focusedProduct.id, (current) => ({ ...current, allowShippingContracts: event.target.checked }))}
-                />
-                Allow shipping contracts at customer purchase
-              </label>
+              {renderShippingOptionsEditor(focusedProduct.id, draft)}
             </section>
 
             <section className="surface-card space-y-4 p-4 shadow-subtle">
@@ -2517,12 +3039,15 @@ export default function OrganizationShopClient({
                 </div>
               </div>
             ) : null}
-          </div>
+            </div>
+            {shopImageEditor}
+          </>
         )
       }
 
       return (
-        <div className="space-y-5">
+        <>
+          <div className="space-y-5">
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div className="flex flex-wrap items-center gap-3">
               <Link
@@ -2572,13 +3097,16 @@ export default function OrganizationShopClient({
               </div>
             </div>
           ) : null}
-        </div>
+          </div>
+          {shopImageEditor}
+        </>
       )
     }
 
     if (section === 'catalogs') {
       return (
-        <div className="space-y-5">
+        <>
+          <div className="space-y-5">
           {renderReturnRow()}
 
           {canManage ? (
@@ -2682,13 +3210,13 @@ export default function OrganizationShopClient({
                           </label>
                         </div>
 
-                        <div className="mt-3 grid gap-3 md:grid-cols-[220px_1fr]">
+                        <div className="mt-3 grid gap-3">
                           <div className="overflow-hidden rounded-xl border border-slate-200 bg-slate-100">
                             {draft.imageUrl ? (
-                              <img src={draft.imageUrl} alt={`${draft.title || 'Catalog'} thumbnail`} className="h-36 w-full object-cover" />
+                              <img src={draft.imageUrl} alt={`${draft.title || 'Catalog'} banner`} className="h-40 w-full object-cover md:h-48" />
                             ) : (
-                              <div className="flex h-36 w-full items-center justify-center bg-gradient-to-br from-slate-200 to-slate-100 text-xs font-semibold uppercase tracking-wide text-slate-500">
-                                Thumbnail
+                              <div className="flex h-40 w-full items-center justify-center bg-gradient-to-r from-slate-200 via-slate-100 to-white text-xs font-semibold uppercase tracking-[0.2em] text-slate-500 md:h-48">
+                                Catalog banner
                               </div>
                             )}
                           </div>
@@ -2714,19 +3242,13 @@ export default function OrganizationShopClient({
                         </div>
 
                         <div className="mt-3 flex flex-wrap items-center gap-2">
-                          <label className="inline-flex cursor-pointer items-center justify-center rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-100">
-                            Upload image
-                            <input
-                              type="file"
-                              accept={ACCEPTED_IMAGE_TYPES}
-                              className="hidden"
-                              onChange={(event) => {
-                                const file = event.target.files?.[0] ?? null
-                                void uploadCatalogImage(catalog.id, file)
-                                event.currentTarget.value = ''
-                              }}
-                            />
-                          </label>
+                          <button
+                            type="button"
+                            onClick={() => void uploadCatalogImage(catalog.id, null)}
+                            className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-100"
+                          >
+                            {draft.imageUrl ? 'Edit banner' : 'Add banner'}
+                          </button>
                           <button
                             type="button"
                             onClick={() => void saveCatalog(catalog.id)}
@@ -2745,7 +3267,9 @@ export default function OrganizationShopClient({
           ) : (
             <p className="text-sm text-slate-500">You don’t have access to manage catalogs.</p>
           )}
-        </div>
+          </div>
+          {shopImageEditor}
+        </>
       )
     }
 
@@ -3236,7 +3760,17 @@ export default function OrganizationShopClient({
                 {draft.galleryImageUrls.length ? (
                   <div className="mb-3 grid grid-cols-2 gap-2 sm:grid-cols-4">
                     {draft.galleryImageUrls.slice(0, 12).map((url, index) => (
-                      <img key={`${product.id}-gallery-${index}`} src={url} alt={`${product.name} gallery ${index + 1}`} className="h-20 w-full rounded-lg border border-slate-200 object-cover" />
+                      <button
+                        key={`${product.id}-gallery-${index}`}
+                        type="button"
+                        onClick={() => openProductGalleryImageEditor(product.id, index)}
+                        className="group relative overflow-hidden rounded-lg border border-slate-200 text-left"
+                      >
+                        <img src={url} alt={`${product.name} gallery ${index + 1}`} className="h-20 w-full object-cover" />
+                        <span className="absolute inset-x-0 bottom-0 bg-slate-900/70 px-2 py-1 text-[10px] font-semibold uppercase tracking-wide text-white opacity-0 transition group-hover:opacity-100">
+                          Reposition
+                        </span>
+                      </button>
                     ))}
                   </div>
                 ) : null}
@@ -3245,19 +3779,13 @@ export default function OrganizationShopClient({
                   <div className="mb-4 rounded-xl border border-slate-100 bg-slate-50 p-3">
                     <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Photo uploads</p>
                     <div className="mt-2 flex flex-wrap gap-2">
-                      <label className="inline-flex cursor-pointer items-center justify-center rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-100">
-                        Upload primary
-                        <input
-                          type="file"
-                          accept={ACCEPTED_IMAGE_TYPES}
-                          className="hidden"
-                          onChange={(event) => {
-                            const file = event.target.files?.[0] ?? null
-                            void handlePrimaryPhotoUpload(product.id, file)
-                            event.currentTarget.value = ''
-                          }}
-                        />
-                      </label>
+                      <button
+                        type="button"
+                        onClick={() => openProductPrimaryImageEditor(product.id)}
+                        className="rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-100"
+                      >
+                        {draft.primaryImageUrl ? 'Edit primary' : 'Add primary'}
+                      </button>
 
                       <label className="inline-flex cursor-pointer items-center justify-center rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-100">
                         Upload gallery
@@ -3362,19 +3890,6 @@ export default function OrganizationShopClient({
                         </label>
                       ) : null}
 
-                      <label className="grid gap-1 text-xs font-semibold uppercase tracking-wide text-slate-500">
-                        Weight (grams)
-                        <input
-                          type="number"
-                          min="0"
-                          step="1"
-                          value={draft.weightGrams}
-                          onChange={(event) =>
-                            updateProductDraft(product.id, (current) => ({ ...current, weightGrams: event.target.value }))
-                          }
-                          className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-normal normal-case tracking-normal text-slate-900"
-                        />
-                      </label>
                     </div>
 
                     <label className="grid gap-1 text-xs font-semibold uppercase tracking-wide text-slate-500">
@@ -3389,36 +3904,7 @@ export default function OrganizationShopClient({
                       />
                     </label>
 
-                    <div className="grid gap-3 sm:grid-cols-2">
-                      <label className="grid gap-1 text-xs font-semibold uppercase tracking-wide text-slate-500">
-                        Shipping policy
-                        <select
-                          value={draft.shippingPolicy}
-                          onChange={(event) =>
-                            updateProductDraft(product.id, (current) => ({
-                              ...current,
-                              shippingPolicy: event.target.value as 'local_community' | 'provincial' | 'national',
-                            }))
-                          }
-                          className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-normal normal-case tracking-normal text-slate-900"
-                        >
-                          <option value="local_community">Local community only</option>
-                          <option value="provincial">Provincial</option>
-                          <option value="national">National</option>
-                        </select>
-                      </label>
-
-                      <label className="mt-5 inline-flex items-center gap-2 text-sm text-slate-700">
-                        <input
-                          type="checkbox"
-                          checked={draft.allowShippingContracts}
-                          onChange={(event) =>
-                            updateProductDraft(product.id, (current) => ({ ...current, allowShippingContracts: event.target.checked }))
-                          }
-                        />
-                        Allow shipping contracts at customer purchase
-                      </label>
-                    </div>
+                    {renderShippingOptionsEditor(product.id, draft)}
 
                     <label className="inline-flex items-center gap-2 text-sm text-slate-700">
                       <input
@@ -3497,6 +3983,7 @@ export default function OrganizationShopClient({
           })}
         </div>
       ) : null}
+      {shopImageEditor}
     </div>
   )
 }

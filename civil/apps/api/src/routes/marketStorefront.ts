@@ -10,6 +10,106 @@ import { applyWalletUserTransfer } from '../walletTransactions.js'
 import { readWalletSummary, walletHasConnectPayoutsEnabled } from '../walletHelpers.js'
 
 type MarketStorefrontDeps = Record<string, any>
+const MARKET_SHIPPING_POLICIES = ['local_shipping', 'civil_driver_contracts', 'provincial', 'national', 'international'] as const
+
+function normalizeMarketLocationKey(value: unknown) {
+  return String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '')
+}
+
+function normalizeMarketShippingOptions(
+  value: unknown,
+  fallback?: { weightGrams?: number | null; shippingPolicy?: string | null; allowShippingContracts?: boolean | null },
+) {
+  const byPolicy = new Map<string, { policy: string; enabled: boolean; weightGrams: number | null; flatRateFeeCents: number | null }>()
+  for (const policy of MARKET_SHIPPING_POLICIES) {
+    byPolicy.set(policy, { policy, enabled: false, weightGrams: null, flatRateFeeCents: null })
+  }
+
+  if (Array.isArray(value)) {
+    for (const entry of value) {
+      if (!entry || typeof entry !== 'object') continue
+      const candidate = entry as Record<string, unknown>
+      const policy = typeof candidate.policy === 'string' ? candidate.policy : ''
+      if (!byPolicy.has(policy)) continue
+      byPolicy.set(policy, {
+        policy,
+        enabled: Boolean(candidate.enabled),
+        weightGrams: typeof candidate.weightGrams === 'number' && Number.isFinite(candidate.weightGrams)
+          ? Math.max(0, Math.round(candidate.weightGrams))
+          : null,
+        flatRateFeeCents: typeof candidate.flatRateFeeCents === 'number' && Number.isFinite(candidate.flatRateFeeCents)
+          ? Math.max(0, Math.round(candidate.flatRateFeeCents))
+          : null,
+      })
+    }
+  } else {
+    const fallbackWeight = typeof fallback?.weightGrams === 'number' && Number.isFinite(fallback.weightGrams)
+      ? Math.max(0, Math.round(fallback.weightGrams))
+      : null
+    const fallbackPolicy = String(fallback?.shippingPolicy || 'local_community').toLowerCase()
+    const primaryPolicy = fallbackPolicy === 'provincial'
+      ? 'provincial'
+      : fallbackPolicy === 'national'
+        ? 'national'
+        : fallbackPolicy === 'international'
+          ? 'international'
+          : 'local_shipping'
+    byPolicy.set(primaryPolicy, { policy: primaryPolicy, enabled: true, weightGrams: fallbackWeight, flatRateFeeCents: null })
+    if (fallback?.allowShippingContracts) {
+      byPolicy.set('civil_driver_contracts', {
+        policy: 'civil_driver_contracts',
+        enabled: true,
+        weightGrams: fallbackWeight,
+        flatRateFeeCents: null,
+      })
+    }
+  }
+
+  return MARKET_SHIPPING_POLICIES.map((policy) => byPolicy.get(policy) ?? { policy, enabled: false, weightGrams: null, flatRateFeeCents: null })
+}
+
+function resolveMarketShippingOption(args: {
+  options: ReturnType<typeof normalizeMarketShippingOptions>
+  shippingAddress?: Record<string, unknown> | null
+  sellerProvinceCode?: string | null
+  sellerCommunitySlug?: string | null
+}) {
+  const country = String(args.shippingAddress?.country || 'CA').trim().toUpperCase()
+  const province = String(args.shippingAddress?.province || '').trim().toUpperCase()
+  const cityKey = normalizeMarketLocationKey(args.shippingAddress?.city)
+  const sellerProvinceCode = String(args.sellerProvinceCode || '').trim().toUpperCase()
+  const sellerCommunitySlug = normalizeMarketLocationKey(args.sellerCommunitySlug)
+  const isInternational = country !== 'CA'
+  const isLocal = !isInternational && cityKey && sellerCommunitySlug && cityKey === sellerCommunitySlug
+  const isProvincial = !isInternational && province && sellerProvinceCode && province === sellerProvinceCode
+
+  if (isInternational) {
+    return args.options.find((option) => option.policy === 'international' && option.enabled) ?? null
+  }
+
+  if (isLocal) {
+    return (
+      args.options.find((option) => option.policy === 'local_shipping' && option.enabled)
+      ?? args.options.find((option) => option.policy === 'provincial' && option.enabled)
+      ?? args.options.find((option) => option.policy === 'national' && option.enabled)
+      ?? null
+    )
+  }
+
+  if (isProvincial) {
+    return (
+      args.options.find((option) => option.policy === 'provincial' && option.enabled)
+      ?? args.options.find((option) => option.policy === 'national' && option.enabled)
+      ?? null
+    )
+  }
+
+  return args.options.find((option) => option.policy === 'national' && option.enabled) ?? null
+}
 
 export function registerMarketStorefrontRoutes(app: FastifyInstance, deps: MarketStorefrontDeps) {
   const MARKET_ORDER_NOTIFICATION_TYPE = 'market_order_received'
@@ -43,6 +143,9 @@ export function registerMarketStorefrontRoutes(app: FastifyInstance, deps: Marke
     type CheckoutProductRow = {
       id: string
       business_id: string
+      business_name: string
+      province_code: string | null
+      community_slug: string | null
       name: string
       price_cents: number
       currency: string
@@ -52,12 +155,19 @@ export function registerMarketStorefrontRoutes(app: FastifyInstance, deps: Marke
       inventory_total: bigint | number | null
       fulfillment_type: string
       digital_delivery_url: string | null
+      weight_grams: number | null
+      shipping_policy: string
+      allow_shipping_contracts: boolean
+      shipping_options: unknown
     }
 
     const productRows: CheckoutProductRow[] = await prisma.$queryRaw<CheckoutProductRow[]>`
       SELECT
         p.id,
         p.business_id,
+        b.name AS business_name,
+        b."provinceCode" AS province_code,
+        b."communitySlug" AS community_slug,
         p.name,
         p.price_cents,
         p.currency,
@@ -66,7 +176,11 @@ export function registerMarketStorefrontRoutes(app: FastifyInstance, deps: Marke
         p.track_inventory,
         COALESCE(SUM(i.quantity), 0)::bigint AS inventory_total,
         p.fulfillment_type,
-        p.digital_delivery_url
+        p.digital_delivery_url,
+        p.weight_grams,
+        p.shipping_policy,
+        p.allow_shipping_contracts,
+        p.shipping_options
       FROM organization_shop_product p
       INNER JOIN "Business" b ON b.id = p.business_id
       LEFT JOIN organization_shop_catalog c ON c.id = p.catalog_id
@@ -111,6 +225,7 @@ export function registerMarketStorefrontRoutes(app: FastifyInstance, deps: Marke
     }
 
     let subtotalCents = 0
+    let shippingCents = 0
     let taxCents = 0
     const taxRegionCode = deps.resolveTaxRegionCode(shippingAddress?.province)
 
@@ -118,6 +233,23 @@ export function registerMarketStorefrontRoutes(app: FastifyInstance, deps: Marke
       const qty = quantitiesByProductId.get(row.id) ?? 0
       const lineSubtotal = (Number(row.price_cents) || 0) * qty
       subtotalCents += lineSubtotal
+
+      if (String(row.fulfillment_type || '').toLowerCase() === 'physical') {
+        const shippingOption = resolveMarketShippingOption({
+          options: normalizeMarketShippingOptions(row.shipping_options, {
+            weightGrams: row.weight_grams,
+            shippingPolicy: row.shipping_policy,
+            allowShippingContracts: row.allow_shipping_contracts,
+          }),
+          shippingAddress,
+          sellerProvinceCode: row.province_code,
+          sellerCommunitySlug: row.community_slug,
+        })
+        if (!shippingOption) {
+          throw { statusCode: 412, payload: { error: 'shipping_unavailable', productId: row.id } }
+        }
+        shippingCents += (Math.max(0, Number(shippingOption.flatRateFeeCents) || 0) * qty)
+      }
 
       if (
         row.tax_collect &&
@@ -145,7 +277,7 @@ export function registerMarketStorefrontRoutes(app: FastifyInstance, deps: Marke
       throw { statusCode: 404, payload: { error: 'organization_not_found' } }
     }
 
-    const sellerAmountCents = subtotalCents + taxCents
+    const sellerAmountCents = subtotalCents + shippingCents + taxCents
     const civilFeeCents = computeCivilPayFeeCents(subtotalCents)
     const stripeFeeCents = computeStripeCardProcessingFeeCents(sellerAmountCents)
     const orderFeeCents = civilFeeCents + stripeFeeCents
@@ -158,6 +290,7 @@ export function registerMarketStorefrontRoutes(app: FastifyInstance, deps: Marke
       shippingAddress,
       currency,
       subtotalCents,
+      shippingCents,
       taxCents,
       sellerAmountCents,
       civilFeeCents,
@@ -188,6 +321,7 @@ export function registerMarketStorefrontRoutes(app: FastifyInstance, deps: Marke
         status,
         currency,
         subtotal_cents,
+        shipping_cents,
         tax_cents,
         civil_fee_cents,
         stripe_fee_cents,
@@ -204,6 +338,7 @@ export function registerMarketStorefrontRoutes(app: FastifyInstance, deps: Marke
         ${args.orderStatus ?? 'pending'},
         ${snapshot.currency},
         ${snapshot.subtotalCents},
+        ${snapshot.shippingCents},
         ${snapshot.taxCents},
         ${snapshot.civilFeeCents},
         ${args.paymentMethod === 'credit_card' ? snapshot.stripeFeeCents : 0},
@@ -756,6 +891,7 @@ export function registerMarketStorefrontRoutes(app: FastifyInstance, deps: Marke
         weight_grams: number | null
         shipping_policy: string
         allow_shipping_contracts: boolean
+        shipping_options: unknown
         track_inventory: boolean
         fulfillment_type: string
         inventory_total: bigint | number | null
@@ -785,6 +921,7 @@ export function registerMarketStorefrontRoutes(app: FastifyInstance, deps: Marke
           p.weight_grams,
           p.shipping_policy,
           p.allow_shipping_contracts,
+          p.shipping_options,
           p.track_inventory,
           p.fulfillment_type,
           COALESCE(SUM(i.quantity), 0)::bigint AS inventory_total,
@@ -825,6 +962,11 @@ export function registerMarketStorefrontRoutes(app: FastifyInstance, deps: Marke
           weightGrams: row.weight_grams,
           shippingPolicy: row.shipping_policy,
           allowShippingContracts: row.allow_shipping_contracts,
+          shippingOptions: normalizeMarketShippingOptions(row.shipping_options, {
+            weightGrams: row.weight_grams,
+            shippingPolicy: row.shipping_policy,
+            allowShippingContracts: row.allow_shipping_contracts,
+          }),
           trackInventory: row.track_inventory,
           inventoryTotal: Number(row.inventory_total ?? 0) || 0,
           createdAt: row.created_at.toISOString(),
@@ -982,6 +1124,7 @@ export function registerMarketStorefrontRoutes(app: FastifyInstance, deps: Marke
           orderId,
           totals: {
             subtotalCents: snapshot.subtotalCents,
+            shippingCents: snapshot.shippingCents,
             taxCents: snapshot.taxCents,
             civilFeeCents: snapshot.civilFeeCents,
             stripeCardFeeCents: snapshot.stripeFeeCents,
@@ -1059,6 +1202,7 @@ export function registerMarketStorefrontRoutes(app: FastifyInstance, deps: Marke
             buyerUserId: buyerId ?? '',
             civilFeeCents: String(snapshot.civilFeeCents),
             stripeFeeCents: String(snapshot.stripeFeeCents),
+            shippingCents: String(snapshot.shippingCents),
             sellerAmountCents: String(snapshot.sellerAmountCents),
           },
         })
@@ -1072,6 +1216,7 @@ export function registerMarketStorefrontRoutes(app: FastifyInstance, deps: Marke
               status,
               currency,
               subtotal_cents,
+              shipping_cents,
               tax_cents,
               civil_fee_cents,
               stripe_fee_cents,
@@ -1088,6 +1233,7 @@ export function registerMarketStorefrontRoutes(app: FastifyInstance, deps: Marke
               ${'pending'},
               ${snapshot.currency},
               ${snapshot.subtotalCents},
+              ${snapshot.shippingCents},
               ${snapshot.taxCents},
               ${snapshot.civilFeeCents},
               ${snapshot.stripeFeeCents},
@@ -1153,6 +1299,7 @@ export function registerMarketStorefrontRoutes(app: FastifyInstance, deps: Marke
           publishableKey: deps.STRIPE_PUBLISHABLE_KEY,
           totals: {
             subtotalCents: snapshot.subtotalCents,
+            shippingCents: snapshot.shippingCents,
             taxCents: snapshot.taxCents,
             civilFeeCents: snapshot.civilFeeCents,
             stripeCardFeeCents: snapshot.stripeFeeCents,
@@ -1277,6 +1424,7 @@ export function registerMarketStorefrontRoutes(app: FastifyInstance, deps: Marke
               orderId: orderIdValue,
               businessId: snapshot.business.id,
               subtotalCents: snapshot.subtotalCents,
+              shippingCents: snapshot.shippingCents,
               taxCents: snapshot.taxCents,
               civilFeeCents: snapshot.civilFeeCents,
             },
@@ -1328,6 +1476,7 @@ export function registerMarketStorefrontRoutes(app: FastifyInstance, deps: Marke
           transactionId,
           totals: {
             subtotalCents: snapshot.subtotalCents,
+            shippingCents: snapshot.shippingCents,
             taxCents: snapshot.taxCents,
             civilFeeCents: snapshot.civilFeeCents,
             stripeCardFeeCents: 0,
@@ -1370,6 +1519,7 @@ export function registerMarketStorefrontRoutes(app: FastifyInstance, deps: Marke
         status: string
         currency: string
         subtotal_cents: number
+        shipping_cents: number
         fee_cents: number
         total_cents: number
         created_at: Date
@@ -1384,6 +1534,7 @@ export function registerMarketStorefrontRoutes(app: FastifyInstance, deps: Marke
           o.status,
           o.currency,
           o.subtotal_cents,
+          o.shipping_cents,
           o.fee_cents,
           o.total_cents,
           o.created_at,
@@ -1405,6 +1556,7 @@ export function registerMarketStorefrontRoutes(app: FastifyInstance, deps: Marke
           status: row.status,
           currency: row.currency,
           subtotalCents: Number(row.subtotal_cents) || 0,
+          shippingCents: Number(row.shipping_cents) || 0,
           feeCents: Number(row.fee_cents) || 0,
           totalCents: Number(row.total_cents) || 0,
           itemCount: Number(row.item_count ?? 0) || 0,
@@ -1430,6 +1582,7 @@ export function registerMarketStorefrontRoutes(app: FastifyInstance, deps: Marke
         status: string
         currency: string
         subtotal_cents: number
+        shipping_cents: number
         tax_cents: number
         civil_fee_cents: number
         stripe_fee_cents: number
@@ -1444,7 +1597,7 @@ export function registerMarketStorefrontRoutes(app: FastifyInstance, deps: Marke
         : Prisma.sql`buyer_user_id IS NULL`
 
       const orderRows = await prisma.$queryRaw<OrderRow[]>`
-        SELECT id, business_id, buyer_user_id, status, currency, subtotal_cents, tax_cents, civil_fee_cents, stripe_fee_cents, fee_cents, total_cents, shipping_address, created_at
+        SELECT id, business_id, buyer_user_id, status, currency, subtotal_cents, shipping_cents, tax_cents, civil_fee_cents, stripe_fee_cents, fee_cents, total_cents, shipping_address, created_at
         FROM organization_shop_order
         WHERE id = ${params.data.orderId}
           AND ${orderVisibilityFilter}
@@ -1478,6 +1631,7 @@ export function registerMarketStorefrontRoutes(app: FastifyInstance, deps: Marke
           status: order.status,
           currency: order.currency,
           subtotalCents: Number(order.subtotal_cents) || 0,
+          shippingCents: Number(order.shipping_cents) || 0,
           taxCents: Number(order.tax_cents) || 0,
           civilFeeCents: Number(order.civil_fee_cents) || 0,
           stripeFeeCents: Number(order.stripe_fee_cents) || 0,
