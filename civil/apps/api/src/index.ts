@@ -6499,6 +6499,7 @@ function ensureOrganizationShopTables() {
           id TEXT PRIMARY KEY,
           business_id TEXT NOT NULL REFERENCES "Business"(id) ON DELETE CASCADE,
           catalog_id TEXT REFERENCES organization_shop_catalog(id) ON DELETE SET NULL,
+          slug TEXT,
           name TEXT NOT NULL,
           description TEXT,
           price_cents INTEGER NOT NULL,
@@ -6509,6 +6510,7 @@ function ensureOrganizationShopTables() {
           weight_grams INTEGER,
           shipping_policy TEXT NOT NULL DEFAULT 'local_community',
           allow_shipping_contracts BOOLEAN NOT NULL DEFAULT FALSE,
+          shipping_options JSONB NOT NULL DEFAULT '[]'::jsonb,
           is_draft BOOLEAN NOT NULL DEFAULT FALSE,
           is_active BOOLEAN NOT NULL DEFAULT TRUE,
           track_inventory BOOLEAN NOT NULL DEFAULT TRUE,
@@ -6536,6 +6538,7 @@ function ensureOrganizationShopTables() {
           status TEXT NOT NULL DEFAULT 'pending',
           currency TEXT NOT NULL DEFAULT 'CAD',
           subtotal_cents INTEGER NOT NULL,
+          shipping_cents INTEGER NOT NULL DEFAULT 0,
           fee_cents INTEGER NOT NULL,
           total_cents INTEGER NOT NULL,
           shipping_address JSONB,
@@ -6552,6 +6555,11 @@ function ensureOrganizationShopTables() {
       await prisma.$executeRawUnsafe(`
         ALTER TABLE organization_shop_order
         ADD COLUMN IF NOT EXISTS subtotal_cents INTEGER NOT NULL DEFAULT 0;
+      `)
+
+      await prisma.$executeRawUnsafe(`
+        ALTER TABLE organization_shop_order
+        ADD COLUMN IF NOT EXISTS shipping_cents INTEGER NOT NULL DEFAULT 0;
       `)
 
       await prisma.$executeRawUnsafe(`
@@ -6700,6 +6708,11 @@ function ensureOrganizationShopTables() {
 
       await prisma.$executeRawUnsafe(`
         ALTER TABLE organization_shop_product
+        ADD COLUMN IF NOT EXISTS shipping_options JSONB NOT NULL DEFAULT '[]'::jsonb;
+      `)
+
+      await prisma.$executeRawUnsafe(`
+        ALTER TABLE organization_shop_product
         ADD COLUMN IF NOT EXISTS featured_homepage BOOLEAN NOT NULL DEFAULT FALSE;
       `)
 
@@ -6731,6 +6744,11 @@ function ensureOrganizationShopTables() {
       await prisma.$executeRawUnsafe(`
         ALTER TABLE organization_shop_product
         ADD COLUMN IF NOT EXISTS catalog_id TEXT;
+      `)
+
+      await prisma.$executeRawUnsafe(`
+        ALTER TABLE organization_shop_product
+        ADD COLUMN IF NOT EXISTS slug TEXT;
       `)
 
       await prisma.$executeRawUnsafe(`
@@ -6816,6 +6834,64 @@ function ensureOrganizationShopTables() {
       await prisma.$executeRawUnsafe(`
         CREATE INDEX IF NOT EXISTS organization_shop_product_catalog_id_idx
         ON organization_shop_product (catalog_id);
+      `)
+
+      await prisma.$executeRawUnsafe(`
+        UPDATE organization_shop_product
+        SET slug = NULL
+        WHERE slug IS NOT NULL
+          AND BTRIM(slug) = '';
+      `)
+
+      await prisma.$executeRawUnsafe(`
+        UPDATE organization_shop_product
+        SET slug = LOWER(BTRIM(slug))
+        WHERE slug IS NOT NULL
+          AND slug <> LOWER(BTRIM(slug));
+      `)
+
+      await prisma.$executeRawUnsafe(`
+        WITH ranked AS (
+          SELECT
+            id,
+            business_id,
+            slug,
+            ROW_NUMBER() OVER (PARTITION BY business_id, slug ORDER BY created_at ASC, id ASC) AS duplicate_rank
+          FROM organization_shop_product
+          WHERE slug IS NOT NULL
+        )
+        UPDATE organization_shop_product p
+        SET slug = LEFT(r.slug, 71) || '-' || LEFT(r.id, 8)
+        FROM ranked r
+        WHERE p.id = r.id
+          AND r.duplicate_rank > 1;
+      `)
+
+      await prisma.$executeRawUnsafe(`
+        CREATE UNIQUE INDEX IF NOT EXISTS organization_shop_product_business_slug_uniq
+        ON organization_shop_product (business_id, slug)
+        WHERE slug IS NOT NULL;
+      `)
+
+      await prisma.$executeRawUnsafe(`
+        WITH ranked AS (
+          SELECT
+            ctid,
+            ROW_NUMBER() OVER (
+              PARTITION BY product_id, warehouse_id
+              ORDER BY updated_at DESC, ctid DESC
+            ) AS duplicate_rank
+          FROM organization_shop_inventory
+        )
+        DELETE FROM organization_shop_inventory i
+        USING ranked
+        WHERE i.ctid = ranked.ctid
+          AND ranked.duplicate_rank > 1;
+      `)
+
+      await prisma.$executeRawUnsafe(`
+        CREATE UNIQUE INDEX IF NOT EXISTS organization_shop_inventory_product_warehouse_uniq
+        ON organization_shop_inventory (product_id, warehouse_id);
       `)
 
       await prisma.$executeRawUnsafe(`
@@ -8355,8 +8431,14 @@ const CommunityOrgShopProductCreateBody = z.object({
   fulfillmentType: z.enum(['physical', 'digital']).default('physical'),
   digitalDeliveryUrl: z.string().trim().url().max(2048).optional().nullable(),
   weightGrams: z.coerce.number().int().min(0).max(2_000_000).optional().nullable(),
-  shippingPolicy: z.enum(['local_community', 'provincial', 'national']).default('local_community'),
+  shippingPolicy: z.enum(['local_community', 'provincial', 'national', 'international']).default('local_community'),
   allowShippingContracts: z.boolean().default(false),
+  shippingOptions: z.array(z.object({
+    policy: z.enum(['local_shipping', 'civil_driver_contracts', 'provincial', 'national', 'international']),
+    enabled: z.boolean().default(false),
+    weightGrams: z.coerce.number().int().min(0).max(2_000_000).optional().nullable(),
+    flatRateFeeCents: z.coerce.number().int().min(0).max(100_000_000).optional().nullable(),
+  })).max(5).optional(),
   trackInventory: z.boolean().default(true),
   initialInventory: z.coerce.number().int().min(0).max(1_000_000).default(0),
 })
@@ -8378,8 +8460,14 @@ const CommunityOrgShopProductUpdateBody = z.object({
   digitalDeliveryUrl: z.string().trim().url().max(2048).optional().nullable(),
   trackInventory: z.boolean().optional(),
   weightGrams: z.coerce.number().int().min(0).max(2_000_000).optional().nullable(),
-  shippingPolicy: z.enum(['local_community', 'provincial', 'national']).optional(),
+  shippingPolicy: z.enum(['local_community', 'provincial', 'national', 'international']).optional(),
   allowShippingContracts: z.boolean().optional(),
+  shippingOptions: z.array(z.object({
+    policy: z.enum(['local_shipping', 'civil_driver_contracts', 'provincial', 'national', 'international']),
+    enabled: z.boolean().default(false),
+    weightGrams: z.coerce.number().int().min(0).max(2_000_000).optional().nullable(),
+    flatRateFeeCents: z.coerce.number().int().min(0).max(100_000_000).optional().nullable(),
+  })).max(5).optional(),
   isDraft: z.boolean().optional(),
 })
 
@@ -9946,11 +10034,14 @@ registerOrganizationShopRoutes(app, {
   loadViewerBlockState,
   mergeOrganizationShopPaymentsStateIntoMetadata,
   moderationLockedErrorCode,
+  normalizeMediaUrl,
   normalizeProvinceCode,
   readOrganizationShopPaymentsState,
   resolveUserId,
   sanitizePlainText,
   sanitizeRichTextHtml,
+  slugifyText,
+  trimSlugLength,
   withSchemaGuard,
 })
 

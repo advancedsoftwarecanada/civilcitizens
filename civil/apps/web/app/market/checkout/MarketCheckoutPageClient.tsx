@@ -56,6 +56,7 @@ type PaymentMethod = 'civil_wallet' | 'credit_card'
 
 type CheckoutTotals = {
   subtotalCents: number
+  shippingCents: number
   taxCents: number
   civilFeeCents: number
   stripeCardFeeCents: number
@@ -366,12 +367,14 @@ export default function MarketCheckoutPageClient() {
   const sellerAmountCents = subtotalCents + taxCents
   const walletCivilFeeCents = useMemo(() => calculateCivilFeeCents(subtotalCents), [subtotalCents])
   const cardStripeFeeCents = useMemo(() => computeStripeCardFeeCents(sellerAmountCents), [sellerAmountCents])
+  const hasQuotedShipping = typeof cardSession?.totals?.shippingCents === 'number'
 
   const checkoutTotals = useMemo<CheckoutTotals>(() => {
     if (cardSession?.totals) return cardSession.totals
 
     return {
       subtotalCents,
+      shippingCents: 0,
       taxCents,
       civilFeeCents: walletCivilFeeCents,
       stripeCardFeeCents: paymentMethod === 'credit_card' ? cardStripeFeeCents : 0,
@@ -447,6 +450,7 @@ export default function MarketCheckoutPageClient() {
     if (code === 'single_seller_required') return 'Checkout supports items from a single seller. Remove items to continue.'
     if (code === 'single_currency_required') return 'Checkout supports a single currency per order.'
     if (code === 'shipping_address_required') return 'Shipping address is required for physical items.'
+    if (code === 'shipping_unavailable') return 'No shipping option is currently available for this destination.'
     if (code === 'insufficient_inventory') return 'One of these products no longer has enough inventory.'
     if (code === 'card_checkout_unavailable') return 'This organization is not ready for credit card checkout yet.'
     if (code === 'civil_wallet_unavailable') return 'This organization cannot receive Civil Wallet payments right now.'
@@ -668,6 +672,14 @@ export default function MarketCheckoutPageClient() {
                   <div>Subtotal</div>
                   <div className="font-semibold text-slate-900">{formatMoney(checkoutTotals.subtotalCents, currency)}</div>
                 </div>
+                {needsShipping ? (
+                  <div className="flex items-center justify-between">
+                    <div>Shipping</div>
+                    <div className="font-semibold text-slate-900">
+                      {hasQuotedShipping ? formatMoney(checkoutTotals.shippingCents, currency) : 'Calculated at payment'}
+                    </div>
+                  </div>
+                ) : null}
                 <div className="flex items-center justify-between">
                   <div>Taxes</div>
                   <div className="font-semibold text-slate-900">{formatMoney(checkoutTotals.taxCents, currency)}</div>
@@ -688,6 +700,9 @@ export default function MarketCheckoutPageClient() {
                   <div className="font-semibold text-slate-900">{formatMoney(checkoutTotals.grandTotalCents, currency)}</div>
                 </div>
               </div>
+              {needsShipping && !hasQuotedShipping ? (
+                <p className="mt-3 text-xs text-slate-500">Shipping is finalized once checkout confirms the destination and available shipping policy.</p>
+              ) : null}
             </div>
 
             {!hasSession ? (

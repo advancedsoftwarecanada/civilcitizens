@@ -1,5 +1,6 @@
 import type { Metadata } from 'next'
 import { headers } from 'next/headers'
+import { redirect } from 'next/navigation'
 import type { ReactNode } from 'react'
 import { OrganizationContextProvider } from '../../../../_components/OrganizationContext'
 import OrganizationLayoutClient from '../../../../_components/OrganizationLayoutClient'
@@ -83,13 +84,14 @@ export async function generateMetadata({ params }: LayoutProps): Promise<Metadat
   const baseUrl = resolveRequestBaseUrl()
 
   const org = await fetchCommunityOrganization({ province, municipality, slug })
+  const canonicalSlug = org?.slug?.trim() || slug
   const orgName = org?.name?.trim() || titleCase(slug)
   const description =
     sanitizeDescriptionForMetadata(org?.headline) ||
     sanitizeDescriptionForMetadata(org?.description) ||
     `View ${orgName} on Civil Citizens.`
 
-  const canonicalPath = `/com/${encodeURIComponent(province)}/${encodeURIComponent(municipality)}/orgs/${encodeURIComponent(slug)}`
+  const canonicalPath = `/com/${encodeURIComponent(province)}/${encodeURIComponent(municipality)}/orgs/${encodeURIComponent(canonicalSlug)}`
   const canonicalUrl = `${baseUrl}${canonicalPath}`
   const imageUrl =
     toAbsoluteUrl(org?.coverUrl, baseUrl) ||
@@ -130,8 +132,12 @@ export default async function OrganizationLayout({ children, params }: LayoutPro
     municipality,
     slug,
   })
+  const canonicalSlug = org?.slug?.trim().toLowerCase() || slug
+  if (org && canonicalSlug !== slug) {
+    redirect(`/com/${encodeURIComponent(province)}/${encodeURIComponent(municipality)}/orgs/${encodeURIComponent(canonicalSlug)}`)
+  }
   const name = org?.name ?? titleCase(slug)
-  const canonicalPath = `/com/${encodeURIComponent(province)}/${encodeURIComponent(municipality)}/orgs/${encodeURIComponent(slug)}`
+  const canonicalPath = `/com/${encodeURIComponent(province)}/${encodeURIComponent(municipality)}/orgs/${encodeURIComponent(canonicalSlug)}`
   const canonicalUrl = `${baseUrl}${canonicalPath}`
   const imageUrl = toAbsoluteUrl(org?.coverUrl, baseUrl) || toAbsoluteUrl(org?.logoUrl, baseUrl)
   const logoUrl = toAbsoluteUrl(org?.logoUrl, baseUrl) || imageUrl
@@ -163,7 +169,7 @@ export default async function OrganizationLayout({ children, params }: LayoutPro
   }
 
   return (
-    <OrganizationContextProvider value={{ slug, name }}>
+    <OrganizationContextProvider value={{ slug: canonicalSlug, name }}>
       <script
         type="application/ld+json"
         dangerouslySetInnerHTML={{ __html: JSON.stringify(organizationSchema) }}

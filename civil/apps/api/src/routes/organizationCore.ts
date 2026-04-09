@@ -566,6 +566,10 @@ export function registerOrganizationCoreRoutes(app: FastifyInstance, deps: Organ
       if (!membership) return reply.code(403).send({ error: 'forbidden' })
 
       const nextData: Prisma.BusinessUpdateInput = {}
+      const shouldAutoRegenerateSlugFromName = (currentSlug: string, status: string) => {
+        if (status === 'DRAFT') return true
+        return /^(?:untitled-organization|organization)(?:-\d+)?$/.test(currentSlug)
+      }
       let nextMetadata = org.metadata && typeof org.metadata === 'object' && !Array.isArray(org.metadata)
         ? ({ ...(org.metadata as Record<string, unknown>) } as Record<string, unknown>)
         : {}
@@ -584,7 +588,19 @@ export function registerOrganizationCoreRoutes(app: FastifyInstance, deps: Organ
       if ('name' in body.data && typeof body.data.name === 'string') {
         if (!isOwner) return reply.code(403).send({ error: 'owner_required_for_rename' })
         const nextName = body.data.name.trim()
-        if (nextName && nextName !== org.name) nextData.name = nextName
+        if (nextName && nextName !== org.name) {
+          nextData.name = nextName
+          if (!('slug' in body.data) && shouldAutoRegenerateSlugFromName(org.slug, org.status)) {
+            const nextSlugBase = deps.trimSlugLength(deps.slugifyText(nextName.toLowerCase()), 80) || 'organization'
+            if (nextSlugBase !== org.slug) {
+              nextData.slug = await deps.ensureUniqueCommunityOrgSlug({
+                provinceCode: province,
+                communitySlug: resolvedCommunitySlug,
+                baseSlug: nextSlugBase,
+              })
+            }
+          }
+        }
       }
       if ('type' in body.data && body.data.type) {
         if (!isOwner) return reply.code(403).send({ error: 'owner_required_for_type_change' })

@@ -12,6 +12,7 @@ type Order = {
   status: string
   currency: string
   subtotalCents: number
+  shippingCents: number
   taxCents: number
   civilFeeCents: number
   stripeFeeCents: number
@@ -153,6 +154,10 @@ export default function MarketOrderPageClient({ orderId }: { orderId: string }) 
                 <div className="flex items-center justify-between">
                   <span>Subtotal</span>
                   <span className="font-semibold text-slate-900">{formatMoney(data.order.subtotalCents, data.order.currency)}</span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span>Shipping</span>
+                  <span className="font-semibold text-slate-900">{formatMoney(data.order.shippingCents, data.order.currency)}</span>
                 </div>
                 <div className="flex items-center justify-between">
                   <span>Taxes</span>

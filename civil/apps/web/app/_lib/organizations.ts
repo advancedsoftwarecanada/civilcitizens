@@ -63,18 +63,23 @@ export async function fetchCommunityOrganization({
   municipality: string
   slug: string
 }): Promise<CommunityOrganization | null> {
-  const apiPath = buildApiUrl(
-    `/communities/${encodeURIComponent(province)}/${encodeURIComponent(municipality)}/orgs/${encodeURIComponent(slug)}`,
-  )
+  const fetchBySlug = async (candidateSlug: string): Promise<CommunityOrganization | null> => {
+    const apiPath = buildApiUrl(
+      `/communities/${encodeURIComponent(province)}/${encodeURIComponent(municipality)}/orgs/${encodeURIComponent(candidateSlug)}`,
+    )
 
-  try {
-    const response = await fetch(apiPath, { cache: 'no-store' })
-    if (!response.ok) {
+    try {
+      const response = await fetch(apiPath, { cache: 'no-store' })
+      if (!response.ok) {
+        return null
+      }
+      const { json } = await parseApiResponse<{ org?: CommunityOrganization }>(response)
+      return json?.org ?? null
+    } catch {
       return null
     }
-    const { json } = await parseApiResponse<{ org?: CommunityOrganization }>(response)
-    return json?.org ?? null
-  } catch {
-    return null
   }
+
+  const normalizedSlug = slug.trim().toLowerCase()
+  return fetchBySlug(normalizedSlug)
 }

@@ -7,6 +7,53 @@ export type CropExportOptions = {
   quality?: number
 }
 
+async function loadImageElement(src: string): Promise<HTMLImageElement> {
+  return await new Promise((resolve, reject) => {
+    const img = new Image()
+    img.crossOrigin = 'anonymous'
+    img.onload = () => resolve(img)
+    img.onerror = () => reject(new Error('image_load_failed'))
+    img.src = src
+  })
+}
+
+async function renderCroppedImageBlob(sourceUrl: string, croppedAreaPixels: Area, options: CropExportOptions): Promise<Blob | null> {
+  const { width: outWidth, height: outHeight, mime = 'image/jpeg', quality = 0.92 } = options
+
+  const image = await loadImageElement(sourceUrl)
+
+  const canvas = document.createElement('canvas')
+  canvas.width = outWidth
+  canvas.height = outHeight
+  const ctx = canvas.getContext('2d')
+  if (!ctx) return null
+
+  ctx.imageSmoothingEnabled = true
+  ctx.imageSmoothingQuality = 'high'
+
+  ctx.drawImage(
+    image,
+    croppedAreaPixels.x,
+    croppedAreaPixels.y,
+    croppedAreaPixels.width,
+    croppedAreaPixels.height,
+    0,
+    0,
+    outWidth,
+    outHeight,
+  )
+
+  return await new Promise<Blob | null>((resolve) => {
+    canvas.toBlob(
+      (b) => {
+        resolve(b)
+      },
+      mime,
+      mime === 'image/jpeg' ? quality : undefined,
+    )
+  })
+}
+
 export async function readImageDimensions(file: File): Promise<{ width: number; height: number } | null> {
   try {
     const objectUrl = URL.createObjectURL(file)
@@ -48,53 +95,18 @@ export function computeFallbackCropArea(dims: { width: number; height: number },
 
 export async function generateCroppedImageBlob(file: File, croppedAreaPixels: Area, options: CropExportOptions): Promise<Blob | null> {
   try {
-    const { width: outWidth, height: outHeight, mime = 'image/jpeg', quality = 0.92 } = options
-
     const imageUrl = URL.createObjectURL(file)
-    const image = await new Promise<HTMLImageElement>((resolve, reject) => {
-      const img = new Image()
-      img.onload = () => resolve(img)
-      img.onerror = () => reject(new Error('image_load_failed'))
-      img.src = imageUrl
-    })
-
-    const canvas = document.createElement('canvas')
-    canvas.width = outWidth
-    canvas.height = outHeight
-    const ctx = canvas.getContext('2d')
-    if (!ctx) {
-      URL.revokeObjectURL(imageUrl)
-      return null
-    }
-
-    ctx.imageSmoothingEnabled = true
-    ctx.imageSmoothingQuality = 'high'
-
-    ctx.drawImage(
-      image,
-      croppedAreaPixels.x,
-      croppedAreaPixels.y,
-      croppedAreaPixels.width,
-      croppedAreaPixels.height,
-      0,
-      0,
-      outWidth,
-      outHeight,
-    )
-
+    const blob = await renderCroppedImageBlob(imageUrl, croppedAreaPixels, options)
     URL.revokeObjectURL(imageUrl)
-
-    const blob = await new Promise<Blob | null>((resolve) => {
-      canvas.toBlob(
-        (b) => {
-          resolve(b)
-        },
-        mime,
-        mime === 'image/jpeg' ? quality : undefined,
-      )
-    })
-
     return blob
+  } catch {
+    return null
+  }
+}
+
+export async function generateCroppedImageBlobFromUrl(imageUrl: string, croppedAreaPixels: Area, options: CropExportOptions): Promise<Blob | null> {
+  try {
+    return await renderCroppedImageBlob(imageUrl, croppedAreaPixels, options)
   } catch {
     return null
   }
