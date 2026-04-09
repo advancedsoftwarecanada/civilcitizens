@@ -24,9 +24,12 @@ type Order = {
 
 type OrderItem = {
   id: string
+  productId: string | null
+  variantId: string | null
   name: string
   priceCents: number
   quantity: number
+  variantAttributes: Record<string, string>
   fulfillmentType: string
   digitalDeliveryUrl: string | null
 }
@@ -71,6 +74,13 @@ function formatShippingAddress(raw: unknown): string[] {
   if (cityLine) lines.push(cityLine)
   if (country) lines.push(country)
   return lines
+}
+
+function formatSelectedAttributes(value: Record<string, string>) {
+  return Object.entries(value)
+    .filter(([, entry]) => String(entry || '').trim())
+    .map(([key, entry]) => `${key}: ${entry}`)
+    .join(' • ')
 }
 
 export default function MarketOrderPageClient({ orderId }: { orderId: string }) {
@@ -201,6 +211,9 @@ export default function MarketOrderPageClient({ orderId }: { orderId: string }) 
                   <div key={item.id} className="flex items-start justify-between gap-4 p-4">
                     <div className="min-w-0">
                       <div className="text-sm font-semibold text-slate-900">{item.name}</div>
+                      {formatSelectedAttributes(item.variantAttributes) ? (
+                        <div className="mt-1 text-xs text-slate-600">{formatSelectedAttributes(item.variantAttributes)}</div>
+                      ) : null}
                       <div className="mt-1 text-xs text-slate-600">
                         Qty {item.quantity} • {formatMoney(item.priceCents, data.order.currency)} each
                       </div>

@@ -38,10 +38,29 @@ type ShopShippingOption = {
   flatRateFeeCents?: number | null
 }
 
+type ShopProductAttribute = {
+  key: string
+  label: string
+  values: string[]
+}
+
+type ShopProductVariant = {
+  id: string
+  productId: string
+  attributeValues: Record<string, string>
+  priceCents: number | null
+  sku: string | null
+  imageUrl?: string | null
+  isActive: boolean
+  inventoryByWarehouse: Record<string, number>
+  inventoryTotal: number
+}
+
 type ShopProduct = {
   id: string
   slug?: string | null
   catalogId?: string | null
+  groupId?: string | null
   name: string
   description: string | null
   listingSection?: string | null
@@ -53,6 +72,9 @@ type ShopProduct = {
   priceCents: number
   currency: string
   sku: string | null
+  hasVariants?: boolean
+  attributes?: ShopProductAttribute[]
+  variants?: ShopProductVariant[]
   primaryImageUrl?: string | null
   galleryImageUrls?: string[]
   fulfillmentType?: string
@@ -67,6 +89,31 @@ type ShopProduct = {
   inventoryTotal: number
   inventoryByWarehouse: Array<{ warehouseId: string; quantity: number; updatedAt: string }>
   createdAt: string
+}
+
+type ProductVariationAttributeDraft = {
+  key: string
+  label: string
+  valuesText: string
+}
+
+type ProductVariantEditorDraft = {
+  id: string
+  attributes: Record<string, string>
+  priceDollars: string
+  sku: string
+  imageUrl: string
+  isActive: boolean
+  inventoryByWarehouse: Record<string, string>
+}
+
+type ProductManualVariantDraft = {
+  attributes: Record<string, string>
+  priceDollars: string
+  sku: string
+  imageUrl: string
+  isActive: boolean
+  inventoryByWarehouse: Record<string, string>
 }
 
 type ShopCatalog = {
@@ -241,6 +288,14 @@ const DEFAULT_TAX_RATE_CATALOG = (() => {
 const listingTypeSummary = (section?: string | null, category?: string | null, subcategory?: string | null) => {
   const parts = [section, category, subcategory].map((value) => (value ?? '').trim()).filter(Boolean)
   return parts.length ? parts.join(' / ') : null
+}
+
+const formatVariantAttributes = (value?: Record<string, string> | null) => {
+  if (!value) return ''
+  return Object.entries(value)
+    .filter(([, entry]) => String(entry || '').trim())
+    .map(([key, entry]) => `${key}: ${entry}`)
+    .join(' • ')
 }
 
 const parseWarehouseAddress = (value?: string | null): CanadianAddress => {
@@ -449,6 +504,59 @@ function toDraft(product: ShopProduct): ProductEditDraft {
   }
 }
 
+function toVariationAttributeDrafts(product: ShopProduct): ProductVariationAttributeDraft[] {
+  return Array.isArray(product.attributes)
+    ? product.attributes.map((attribute) => ({
+        key: attribute.key ?? '',
+        label: attribute.label ?? '',
+        valuesText: Array.isArray(attribute.values) ? attribute.values.join(', ') : '',
+      }))
+    : []
+}
+
+function buildVariantInventoryDraft(
+  warehouses: ShopWarehouse[],
+  inventoryTotal: number,
+  inventoryByWarehouse?: Record<string, string | number>,
+): Record<string, string> {
+  const next: Record<string, string> = {}
+  for (const warehouse of warehouses) {
+    const value = inventoryByWarehouse?.[warehouse.id]
+    next[warehouse.id] = value == null ? '' : String(value)
+  }
+  if (!warehouses.length && inventoryTotal > 0) {
+    next.default = String(inventoryTotal)
+  }
+  return next
+}
+
+function toVariantEditorDrafts(product: ShopProduct, warehouses: ShopWarehouse[]): Record<string, ProductVariantEditorDraft> {
+  const next: Record<string, ProductVariantEditorDraft> = {}
+  for (const variant of product.variants ?? []) {
+    next[variant.id] = {
+      id: variant.id,
+      attributes: variant.attributeValues ?? {},
+      priceDollars: variant.priceCents == null ? '' : (Math.max(0, variant.priceCents) / 100).toFixed(2),
+      sku: variant.sku ?? '',
+      imageUrl: variant.imageUrl ?? '',
+      isActive: Boolean(variant.isActive),
+      inventoryByWarehouse: buildVariantInventoryDraft(warehouses, variant.inventoryTotal, variant.inventoryByWarehouse),
+    }
+  }
+  return next
+}
+
+function createManualVariantDraft(warehouses: ShopWarehouse[]): ProductManualVariantDraft {
+  return {
+    attributes: {},
+    priceDollars: '',
+    sku: '',
+    imageUrl: '',
+    isActive: true,
+    inventoryByWarehouse: buildVariantInventoryDraft(warehouses, 0),
+  }
+}
+
 export default function OrganizationShopClient({
   province,
   municipality,
@@ -486,6 +594,9 @@ export default function OrganizationShopClient({
   const [dragOverCatalogId, setDragOverCatalogId] = useState<string | null>(null)
   const [inventoryDraft, setInventoryDraft] = useState<Record<string, Record<string, number>>>({})
   const [productDrafts, setProductDrafts] = useState<Record<string, ProductEditDraft>>({})
+  const [variationAttributeDrafts, setVariationAttributeDrafts] = useState<Record<string, ProductVariationAttributeDraft[]>>({})
+  const [variantEditorDrafts, setVariantEditorDrafts] = useState<Record<string, Record<string, ProductVariantEditorDraft>>>({})
+  const [manualVariantDrafts, setManualVariantDrafts] = useState<Record<string, ProductManualVariantDraft>>({})
   const [taxDrafts, setTaxDrafts] = useState<
     Record<
       string,
@@ -496,6 +607,7 @@ export default function OrganizationShopClient({
       }
     >
   >({})
+  const [variationSavingProductId, setVariationSavingProductId] = useState<string | null>(null)
   const [taxRateCatalog, setTaxRateCatalog] = useState<null | {
     asOf: string
     byCode: Record<string, { name: string; defaultRatePct: number; options: Array<{ label: string; ratePct: number }> }>
@@ -549,6 +661,7 @@ export default function OrganizationShopClient({
   const [settingsPanel, setSettingsPanel] = useState<ShopSettingsPanel>('shipping')
   const [selectedCatalogId, setSelectedCatalogId] = useState<string | null>(null)
   const [selectedProductId, setSelectedProductId] = useState<string | null>(null)
+  const [storefrontVariantSelections, setStorefrontVariantSelections] = useState<Record<string, Record<string, string>>>({})
 
   useEffect(() => {
     setAuthToken(getStoredToken())
@@ -799,6 +912,105 @@ export default function OrganizationShopClient({
     })
   }, [])
 
+  const updateVariationAttributeDraft = useCallback(
+    (productId: string, index: number, updater: (current: ProductVariationAttributeDraft) => ProductVariationAttributeDraft) => {
+      setVariationAttributeDrafts((prev) => {
+        const current = prev[productId] ?? []
+        const currentDraft = current[index]
+        if (!currentDraft) return prev
+        const next = [...current]
+        next[index] = updater(currentDraft)
+        return { ...prev, [productId]: next }
+      })
+    },
+    [],
+  )
+
+  const addVariationAttributeDraft = useCallback((productId: string) => {
+    setVariationAttributeDrafts((prev) => {
+      const current = prev[productId] ?? []
+      if (current.length >= 3) return prev
+      return {
+        ...prev,
+        [productId]: [...current, { key: '', label: '', valuesText: '' }],
+      }
+    })
+  }, [])
+
+  const removeVariationAttributeDraft = useCallback((productId: string, index: number) => {
+    setVariationAttributeDrafts((prev) => {
+      const current = prev[productId] ?? []
+      return {
+        ...prev,
+        [productId]: current.filter((_, currentIndex) => currentIndex !== index),
+      }
+    })
+  }, [])
+
+  const updateVariantEditorDraft = useCallback(
+    (productId: string, variantId: string, updater: (current: ProductVariantEditorDraft) => ProductVariantEditorDraft) => {
+      setVariantEditorDrafts((prev) => {
+        const current = prev[productId]?.[variantId]
+        if (!current) return prev
+        return {
+          ...prev,
+          [productId]: {
+            ...(prev[productId] ?? {}),
+            [variantId]: updater(current),
+          },
+        }
+      })
+    },
+    [],
+  )
+
+  const updateManualVariantDraft = useCallback(
+    (productId: string, updater: (current: ProductManualVariantDraft) => ProductManualVariantDraft) => {
+      setManualVariantDrafts((prev) => {
+        const current = prev[productId] ?? createManualVariantDraft(warehouses)
+        return {
+          ...prev,
+          [productId]: updater(current),
+        }
+      })
+    },
+    [warehouses],
+  )
+
+  const normalizeVariationAttributePayload = useCallback((drafts: ProductVariationAttributeDraft[]) => {
+    return drafts
+      .map((draft, index) => {
+        const label = draft.label.trim()
+        const key = draft.key.trim() || label.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '') || `option_${index + 1}`
+        const values = draft.valuesText
+          .split(',')
+          .map((value) => value.trim())
+          .filter(Boolean)
+        if (!label || !values.length) return null
+        return { key, label, values }
+      })
+      .filter((entry): entry is { key: string; label: string; values: string[] } => Boolean(entry))
+  }, [])
+
+  const parseDollarsToCents = useCallback((value: string) => {
+    const normalized = value.trim()
+    if (!normalized) return null
+    const numeric = Number(normalized)
+    if (!Number.isFinite(numeric) || numeric < 0) return null
+    return Math.round(numeric * 100)
+  }, [])
+
+  const normalizeVariantInventoryPayload = useCallback((inventoryByWarehouse: Record<string, string>) => {
+    const next: Record<string, number> = {}
+    for (const [warehouseId, rawValue] of Object.entries(inventoryByWarehouse)) {
+      const trimmed = rawValue.trim()
+      if (!trimmed) continue
+      const numeric = Math.max(0, Math.floor(Number(trimmed)))
+      if (Number.isFinite(numeric)) next[warehouseId] = numeric
+    }
+    return next
+  }, [])
+
   const renderShippingOptionsEditor = useCallback((productId: string, draft: ProductEditDraft) => {
     return (
       <div className="space-y-2">
@@ -944,6 +1156,9 @@ export default function OrganizationShopClient({
 
       const nextInventoryDraft: Record<string, Record<string, number>> = {}
       const nextProductDrafts: Record<string, ProductEditDraft> = {}
+      const nextVariationAttributeDrafts: Record<string, ProductVariationAttributeDraft[]> = {}
+      const nextVariantEditorDrafts: Record<string, Record<string, ProductVariantEditorDraft>> = {}
+      const nextManualVariantDrafts: Record<string, ProductManualVariantDraft> = {}
       const nextCatalogDrafts: Record<string, CatalogEditDraft> = {}
       nextCatalogs.forEach((catalog) => {
         nextCatalogDrafts[catalog.id] = {
@@ -955,6 +1170,9 @@ export default function OrganizationShopClient({
       })
       nextProducts.forEach((product) => {
         nextProductDrafts[product.id] = toDraft(product)
+        nextVariationAttributeDrafts[product.id] = toVariationAttributeDrafts(product)
+        nextVariantEditorDrafts[product.id] = toVariantEditorDrafts(product, nextWarehouses)
+        nextManualVariantDrafts[product.id] = createManualVariantDraft(nextWarehouses)
         const productInventoryDraft: Record<string, number> = {}
         nextWarehouses.forEach((warehouse) => {
           const found = product.inventoryByWarehouse.find((entry) => entry.warehouseId === warehouse.id)
@@ -964,6 +1182,9 @@ export default function OrganizationShopClient({
       })
       setCatalogDrafts(nextCatalogDrafts)
       setProductDrafts(nextProductDrafts)
+      setVariationAttributeDrafts(nextVariationAttributeDrafts)
+      setVariantEditorDrafts(nextVariantEditorDrafts)
+      setManualVariantDrafts(nextManualVariantDrafts)
       setInventoryDraft(nextInventoryDraft)
       setTaxDrafts((prev) => {
         const next = { ...prev }
@@ -1001,6 +1222,161 @@ export default function OrganizationShopClient({
   useEffect(() => {
     void load()
   }, [load])
+
+  const saveVariationAttributes = useCallback(
+    async (productId: string) => {
+      const token = getStoredToken()
+      if (!token) {
+        redirectToAuthModal('login')
+        return false
+      }
+      const payloadAttributes = normalizeVariationAttributePayload(variationAttributeDrafts[productId] ?? [])
+      if (payloadAttributes.length > 3) {
+        pushToast('Too many options. Consider separate products.', 'error')
+        return false
+      }
+
+      setVariationSavingProductId(productId)
+      try {
+        const res = await fetch(buildApiUrl(`${shopPath}/products/${encodeURIComponent(productId)}/attributes`), {
+          method: 'PUT',
+          headers: {
+            'content-type': 'application/json',
+            authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({ attributes: payloadAttributes }),
+        })
+        const payload = (await res.json().catch(() => null)) as { error?: string } | null
+        if (!res.ok) {
+          pushToast(payload?.error ?? 'Unable to save variation options.', 'error')
+          return false
+        }
+        pushToast('Variation options saved.', 'success')
+        await load()
+        return true
+      } catch {
+        pushToast('Unable to save variation options.', 'error')
+        return false
+      } finally {
+        setVariationSavingProductId(null)
+      }
+    },
+    [load, normalizeVariationAttributePayload, shopPath, variationAttributeDrafts],
+  )
+
+  const generateVariants = useCallback(
+    async (productId: string) => {
+      const token = getStoredToken()
+      if (!token) {
+        redirectToAuthModal('login')
+        return
+      }
+      setVariationSavingProductId(productId)
+      try {
+        const res = await fetch(buildApiUrl(`${shopPath}/products/${encodeURIComponent(productId)}/variants/generate`), {
+          method: 'POST',
+          headers: { authorization: `Bearer ${token}` },
+        })
+        const payload = (await res.json().catch(() => null)) as { error?: string; createdCount?: number } | null
+        if (!res.ok) {
+          pushToast(payload?.error ?? 'Unable to generate variants.', 'error')
+          return
+        }
+        pushToast(`Generated ${payload?.createdCount ?? 0} variants.`, 'success')
+        await load()
+      } catch {
+        pushToast('Unable to generate variants.', 'error')
+      } finally {
+        setVariationSavingProductId(null)
+      }
+    },
+    [load, shopPath],
+  )
+
+  const createVariant = useCallback(
+    async (productId: string) => {
+      const token = getStoredToken()
+      if (!token) {
+        redirectToAuthModal('login')
+        return
+      }
+      const draft = manualVariantDrafts[productId]
+      if (!draft) return
+
+      setVariationSavingProductId(productId)
+      try {
+        const res = await fetch(buildApiUrl(`${shopPath}/products/${encodeURIComponent(productId)}/variants`), {
+          method: 'POST',
+          headers: {
+            'content-type': 'application/json',
+            authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({
+            attributes: draft.attributes,
+            priceCents: parseDollarsToCents(draft.priceDollars),
+            sku: draft.sku.trim() || null,
+            imageUrl: draft.imageUrl.trim() || null,
+            isActive: draft.isActive,
+            inventoryByWarehouse: normalizeVariantInventoryPayload(draft.inventoryByWarehouse),
+          }),
+        })
+        const payload = (await res.json().catch(() => null)) as { error?: string } | null
+        if (!res.ok) {
+          pushToast(payload?.error ?? 'Unable to create variant.', 'error')
+          return
+        }
+        pushToast('Variant created.', 'success')
+        await load()
+      } catch {
+        pushToast('Unable to create variant.', 'error')
+      } finally {
+        setVariationSavingProductId(null)
+      }
+    },
+    [load, manualVariantDrafts, normalizeVariantInventoryPayload, parseDollarsToCents, shopPath],
+  )
+
+  const saveVariant = useCallback(
+    async (productId: string, variantId: string) => {
+      const token = getStoredToken()
+      if (!token) {
+        redirectToAuthModal('login')
+        return
+      }
+      const draft = variantEditorDrafts[productId]?.[variantId]
+      if (!draft) return
+
+      setVariationSavingProductId(productId)
+      try {
+        const res = await fetch(buildApiUrl(`${shopPath}/products/${encodeURIComponent(productId)}/variants/${encodeURIComponent(variantId)}`), {
+          method: 'PUT',
+          headers: {
+            'content-type': 'application/json',
+            authorization: `Bearer ${token}`,
+          },
+          body: JSON.stringify({
+            priceCents: parseDollarsToCents(draft.priceDollars),
+            sku: draft.sku.trim() || null,
+            imageUrl: draft.imageUrl.trim() || null,
+            isActive: draft.isActive,
+            inventoryByWarehouse: normalizeVariantInventoryPayload(draft.inventoryByWarehouse),
+          }),
+        })
+        const payload = (await res.json().catch(() => null)) as { error?: string } | null
+        if (!res.ok) {
+          pushToast(payload?.error ?? 'Unable to save variant.', 'error')
+          return
+        }
+        pushToast('Variant saved.', 'success')
+        await load()
+      } catch {
+        pushToast('Unable to save variant.', 'error')
+      } finally {
+        setVariationSavingProductId(null)
+      }
+    },
+    [load, normalizeVariantInventoryPayload, parseDollarsToCents, shopPath, variantEditorDrafts],
+  )
 
   useEffect(() => {
     let cancelled = false
@@ -2026,6 +2402,28 @@ export default function OrganizationShopClient({
     () => visibleProducts.find((product) => product.id === selectedProductId) ?? null,
     [selectedProductId, visibleProducts],
   )
+  const storefrontSelectedAttributes = useMemo(
+    () => (storefrontSelectedProduct ? storefrontVariantSelections[storefrontSelectedProduct.id] ?? {} : {}),
+    [storefrontSelectedProduct, storefrontVariantSelections],
+  )
+  const storefrontSelectedVariant = useMemo(() => {
+    if (!storefrontSelectedProduct?.hasVariants) return null
+    const variants = Array.isArray(storefrontSelectedProduct.variants) ? storefrontSelectedProduct.variants : []
+    const attributes = Array.isArray(storefrontSelectedProduct.attributes) ? storefrontSelectedProduct.attributes : []
+    if (!attributes.length) return null
+    const requiredKeys = attributes.map((attribute) => attribute.key).filter(Boolean)
+    if (!requiredKeys.every((key) => String(storefrontSelectedAttributes[key] || '').trim())) return null
+    return (
+      variants.find((variant) =>
+        requiredKeys.every((key) => String(variant.attributeValues?.[key] || '').trim() === String(storefrontSelectedAttributes[key] || '').trim()),
+      ) ?? null
+    )
+  }, [storefrontSelectedAttributes, storefrontSelectedProduct])
+  const storefrontHasCompleteVariantSelection = useMemo(() => {
+    if (!storefrontSelectedProduct?.hasVariants) return true
+    const attributes = Array.isArray(storefrontSelectedProduct.attributes) ? storefrontSelectedProduct.attributes : []
+    return attributes.every((attribute) => String(storefrontSelectedAttributes[attribute.key] || '').trim())
+  }, [storefrontSelectedAttributes, storefrontSelectedProduct])
   const draftProducts = useMemo(() => products.filter((product) => product.isDraft), [products])
   const activeProducts = useMemo(() => products.filter((product) => !product.isDraft), [products])
   const sortedProducts = useMemo(() => {
@@ -2103,9 +2501,17 @@ export default function OrganizationShopClient({
   }, [autoDraftAttempted, createDraftProduct, mode, saving])
 
   const addToCart = useCallback(
-    (productId: string, delta = 1) => {
+    (productId: string, delta = 1, variant?: { variantId?: string | null; selectedAttributes?: Record<string, string> | null }) => {
       const current = readMarketCart()
-      const next = addMarketCartItem(current, productId, delta)
+      const next = addMarketCartItem(
+        current,
+        {
+          productId,
+          variantId: variant?.variantId ?? null,
+          selectedAttributes: variant?.selectedAttributes ?? null,
+        },
+        delta,
+      )
       writeMarketCart(next)
       window.dispatchEvent(new Event('civil:market-cart-changed'))
       pushToast('Added to cart.', 'success')
@@ -2265,8 +2671,75 @@ export default function OrganizationShopClient({
             <div>
               <h3 className="text-xl font-semibold text-slate-900">{storefrontSelectedProduct.name}</h3>
               <p className="mt-2 text-sm font-semibold text-slate-900">
-                {formatCurrency(storefrontSelectedProduct.priceCents, storefrontSelectedProduct.currency)}
+                {formatCurrency(storefrontSelectedVariant?.priceCents ?? storefrontSelectedProduct.priceCents, storefrontSelectedProduct.currency)}
               </p>
+              {storefrontSelectedProduct.hasVariants && Array.isArray(storefrontSelectedProduct.attributes) && storefrontSelectedProduct.attributes.length ? (
+                <div className="mt-4 space-y-3">
+                  {storefrontSelectedProduct.attributes.map((attribute) => {
+                    const selectedValue = storefrontSelectedAttributes[attribute.key] ?? ''
+                    return (
+                      <div key={attribute.key} className="space-y-2">
+                        <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">{attribute.label}</div>
+                        <div className="flex flex-wrap gap-2">
+                          {attribute.values.map((value) => {
+                            const variants = Array.isArray(storefrontSelectedProduct.variants) ? storefrontSelectedProduct.variants : []
+                            const enabled = variants.some((variant) => {
+                              if (!variant.isActive) return false
+                              if (String(variant.attributeValues?.[attribute.key] || '').trim() !== value) return false
+                              return (storefrontSelectedProduct.attributes ?? []).every((candidate) => {
+                                if (candidate.key === attribute.key) return true
+                                const selectedCandidate = storefrontSelectedAttributes[candidate.key]
+                                if (!selectedCandidate) return true
+                                return String(variant.attributeValues?.[candidate.key] || '').trim() === selectedCandidate
+                              })
+                            })
+                            const active = selectedValue === value
+                            return (
+                              <button
+                                key={value}
+                                type="button"
+                                disabled={!enabled}
+                                onClick={() => {
+                                  setStorefrontVariantSelections((current) => ({
+                                    ...current,
+                                    [storefrontSelectedProduct.id]: {
+                                      ...(current[storefrontSelectedProduct.id] ?? {}),
+                                      [attribute.key]: value,
+                                    },
+                                  }))
+                                }}
+                                className={clsx(
+                                  'rounded-full border px-3 py-1 text-xs font-semibold transition',
+                                  active
+                                    ? 'border-slate-900 bg-slate-900 text-white'
+                                    : 'border-slate-200 bg-white text-slate-700 hover:bg-slate-50',
+                                  !enabled && 'cursor-not-allowed opacity-40 hover:bg-white',
+                                )}
+                              >
+                                {value}
+                              </button>
+                            )
+                          })}
+                        </div>
+                      </div>
+                    )
+                  })}
+                  {storefrontSelectedVariant ? (
+                    <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">
+                      {formatVariantAttributes(storefrontSelectedVariant.attributeValues)}
+                      {storefrontSelectedVariant.sku ? ` • SKU: ${storefrontSelectedVariant.sku}` : ''}
+                    </div>
+                  ) : !storefrontHasCompleteVariantSelection ? (
+                    <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                      Choose all options to add this item to cart.
+                    </div>
+                  ) : (
+                    <div className="rounded-xl border border-rose-200 bg-rose-50 px-3 py-2 text-xs text-rose-700">
+                      That combination is unavailable.
+                    </div>
+                  )}
+                </div>
+              ) : null}
               {storefrontSelectedProduct.description ? (
                 <div
                   className="cc-article-rich-content mt-2 text-sm text-slate-600"
@@ -2278,7 +2751,13 @@ export default function OrganizationShopClient({
             <div className="flex flex-wrap items-center gap-2">
               <button
                 type="button"
-                onClick={() => addToCart(storefrontSelectedProduct.id, 1)}
+                onClick={() =>
+                  addToCart(storefrontSelectedProduct.id, 1, {
+                    variantId: storefrontSelectedVariant?.id ?? null,
+                    selectedAttributes: storefrontSelectedVariant?.attributeValues ?? storefrontSelectedAttributes,
+                  })
+                }
+                disabled={Boolean(storefrontSelectedProduct.hasVariants && !storefrontSelectedVariant)}
                 className="inline-flex items-center justify-center rounded-full bg-[var(--cc-primary)] px-5 py-2 text-xs font-semibold text-white transition hover:brightness-110"
               >
                 Add to cart
@@ -2417,11 +2896,16 @@ export default function OrganizationShopClient({
         const selectedSection = getMarketListingSection(draft.listingSection)
         const selectedCategory = getMarketListingCategory(draft.listingSection, draft.listingCategory)
         const currentListingSummary = listingTypeSummary(draft.listingSection, draft.listingCategory, draft.listingSubcategory)
+        const attributeDrafts = variationAttributeDrafts[focusedProduct.id] ?? []
+        const variantDraftById = variantEditorDrafts[focusedProduct.id] ?? {}
+        const manualVariantDraft = manualVariantDrafts[focusedProduct.id] ?? createManualVariantDraft(warehouses)
+        const variationAttributesPreview = normalizeVariationAttributePayload(attributeDrafts)
+        const variationBusy = variationSavingProductId === focusedProduct.id
 
         return (
           <>
-            <div className="mx-auto w-full max-w-3xl space-y-6">
-            <section className="surface-card p-4 shadow-subtle">
+            <div className="w-full max-w-6xl space-y-6">
+            <section className="space-y-3 px-1">
               <div className="space-y-3">
                 <div>
                   <Link
@@ -2607,6 +3091,285 @@ export default function OrganizationShopClient({
                 />
                 Feature product on shop homepage
               </label>
+            </section>
+
+            <section className="surface-card space-y-4 p-4 shadow-subtle">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <h4 className="text-sm font-semibold text-slate-900">Variations</h4>
+                  <p className="mt-1 text-xs text-slate-500">Define product options, generate combinations, and edit purchasable variants.</p>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={() => addVariationAttributeDraft(focusedProduct.id)}
+                    disabled={variationBusy || attributeDrafts.length >= 3}
+                    className="rounded-full border border-slate-200 bg-white px-4 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-60"
+                  >
+                    Add option
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void saveVariationAttributes(focusedProduct.id)}
+                    disabled={variationBusy}
+                    className="rounded-full border border-slate-200 bg-white px-4 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-60"
+                  >
+                    Save options
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => void generateVariants(focusedProduct.id)}
+                    disabled={variationBusy || !variationAttributesPreview.length}
+                    className="rounded-full bg-[var(--cc-primary)] px-4 py-2 text-xs font-semibold text-white transition hover:brightness-110 disabled:opacity-60"
+                  >
+                    Generate variants
+                  </button>
+                </div>
+              </div>
+
+              {attributeDrafts.length ? (
+                <div className="space-y-3">
+                  {attributeDrafts.map((attributeDraft, index) => (
+                    <div key={`${focusedProduct.id}-attribute-${index}`} className="grid gap-3 rounded-xl border border-slate-200 bg-white p-3 lg:grid-cols-[1fr_1fr_auto]">
+                      <label className="grid gap-1 text-xs font-semibold uppercase tracking-wide text-slate-500">
+                        Option label
+                        <input
+                          value={attributeDraft.label}
+                          onChange={(event) => updateVariationAttributeDraft(focusedProduct.id, index, (current) => ({ ...current, label: event.target.value }))}
+                          placeholder="Size"
+                          className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-normal normal-case tracking-normal text-slate-900"
+                        />
+                      </label>
+                      <label className="grid gap-1 text-xs font-semibold uppercase tracking-wide text-slate-500">
+                        Values
+                        <input
+                          value={attributeDraft.valuesText}
+                          onChange={(event) => updateVariationAttributeDraft(focusedProduct.id, index, (current) => ({ ...current, valuesText: event.target.value }))}
+                          placeholder="Small, Medium, Large"
+                          className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-normal normal-case tracking-normal text-slate-900"
+                        />
+                      </label>
+                      <div className="flex items-end">
+                        <button
+                          type="button"
+                          onClick={() => removeVariationAttributeDraft(focusedProduct.id, index)}
+                          className="rounded-full border border-rose-200 bg-white px-4 py-2 text-xs font-semibold text-rose-700 hover:bg-rose-50"
+                        >
+                          Remove
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 px-3 py-3 text-sm text-slate-500">
+                  No variation options yet. Add up to three options like Size, Color, or Material.
+                </div>
+              )}
+
+              {variationAttributesPreview.length ? (
+                <div className="space-y-3">
+                  <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-2 text-xs text-slate-600">
+                    Parent products with saved options are not purchased directly. Buyers choose a valid variant combination instead.
+                  </div>
+
+                  <div className="space-y-3 rounded-xl border border-slate-200 bg-white p-3">
+                    <div>
+                      <h5 className="text-sm font-semibold text-slate-900">Create single variant</h5>
+                      <p className="mt-1 text-xs text-slate-500">Useful when you don’t want to generate every combination.</p>
+                    </div>
+                    <div className="grid gap-3 lg:grid-cols-2">
+                      {variationAttributesPreview.map((attribute) => (
+                        <label key={`manual-${attribute.key}`} className="grid gap-1 text-xs font-semibold uppercase tracking-wide text-slate-500">
+                          {attribute.label}
+                          <select
+                            value={manualVariantDraft.attributes[attribute.key] ?? ''}
+                            onChange={(event) =>
+                              updateManualVariantDraft(focusedProduct.id, (current) => ({
+                                ...current,
+                                attributes: { ...current.attributes, [attribute.key]: event.target.value },
+                              }))
+                            }
+                            className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-normal normal-case tracking-normal text-slate-900"
+                          >
+                            <option value="">Select {attribute.label}</option>
+                            {attribute.values.map((value) => (
+                              <option key={`${attribute.key}-${value}`} value={value}>
+                                {value}
+                              </option>
+                            ))}
+                          </select>
+                        </label>
+                      ))}
+                      <label className="grid gap-1 text-xs font-semibold uppercase tracking-wide text-slate-500">
+                        Price override (CAD)
+                        <input
+                          type="number"
+                          min="0"
+                          step="0.01"
+                          value={manualVariantDraft.priceDollars}
+                          onChange={(event) => updateManualVariantDraft(focusedProduct.id, (current) => ({ ...current, priceDollars: event.target.value }))}
+                          placeholder="Leave blank to inherit parent price"
+                          className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-normal normal-case tracking-normal text-slate-900"
+                        />
+                      </label>
+                      <label className="grid gap-1 text-xs font-semibold uppercase tracking-wide text-slate-500">
+                        SKU
+                        <input
+                          value={manualVariantDraft.sku}
+                          onChange={(event) => updateManualVariantDraft(focusedProduct.id, (current) => ({ ...current, sku: event.target.value }))}
+                          className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-normal normal-case tracking-normal text-slate-900"
+                        />
+                      </label>
+                      <label className="grid gap-1 text-xs font-semibold uppercase tracking-wide text-slate-500 lg:col-span-2">
+                        Variant image URL override
+                        <input
+                          value={manualVariantDraft.imageUrl}
+                          onChange={(event) => updateManualVariantDraft(focusedProduct.id, (current) => ({ ...current, imageUrl: event.target.value }))}
+                          placeholder="Optional"
+                          className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-normal normal-case tracking-normal text-slate-900"
+                        />
+                      </label>
+                    </div>
+                    {warehouses.length ? (
+                      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+                        {warehouses.map((warehouse) => (
+                          <label key={`manual-${warehouse.id}`} className="grid gap-1 text-xs font-semibold uppercase tracking-wide text-slate-500">
+                            {warehouse.name} inventory
+                            <input
+                              type="number"
+                              min="0"
+                              step="1"
+                              value={manualVariantDraft.inventoryByWarehouse[warehouse.id] ?? ''}
+                              onChange={(event) =>
+                                updateManualVariantDraft(focusedProduct.id, (current) => ({
+                                  ...current,
+                                  inventoryByWarehouse: { ...current.inventoryByWarehouse, [warehouse.id]: event.target.value },
+                                }))
+                              }
+                              className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-normal normal-case tracking-normal text-slate-900"
+                            />
+                          </label>
+                        ))}
+                      </div>
+                    ) : null}
+                    <label className="inline-flex items-center gap-2 text-sm font-semibold text-slate-700">
+                      <input
+                        type="checkbox"
+                        checked={manualVariantDraft.isActive}
+                        onChange={(event) => updateManualVariantDraft(focusedProduct.id, (current) => ({ ...current, isActive: event.target.checked }))}
+                      />
+                      Variant is active
+                    </label>
+                    <div className="flex justify-end">
+                      <button
+                        type="button"
+                        onClick={() => void createVariant(focusedProduct.id)}
+                        disabled={variationBusy || variationAttributesPreview.some((attribute) => !manualVariantDraft.attributes[attribute.key])}
+                        className="rounded-full border border-slate-200 bg-white px-4 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-60"
+                      >
+                        Create variant
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="space-y-3">
+                    <div>
+                      <h5 className="text-sm font-semibold text-slate-900">Existing variants</h5>
+                      <p className="mt-1 text-xs text-slate-500">Each row is a purchasable SKU with its own price and inventory.</p>
+                    </div>
+                    {(focusedProduct.variants ?? []).length ? (
+                      <div className="space-y-3">
+                        {(focusedProduct.variants ?? []).map((variant) => {
+                          const variantDraft = variantDraftById[variant.id]
+                          if (!variantDraft) return null
+                          return (
+                            <div key={variant.id} className="space-y-3 rounded-xl border border-slate-200 bg-white p-3">
+                              <div className="flex flex-wrap items-center justify-between gap-2">
+                                <div className="text-sm font-semibold text-slate-900">{formatVariantAttributes(variant.attributeValues) || 'Variant'}</div>
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <label className="inline-flex items-center gap-2 text-xs font-semibold text-slate-600">
+                                    <input
+                                      type="checkbox"
+                                      checked={variantDraft.isActive}
+                                      onChange={(event) => updateVariantEditorDraft(focusedProduct.id, variant.id, (current) => ({ ...current, isActive: event.target.checked }))}
+                                    />
+                                    Active
+                                  </label>
+                                  <button
+                                    type="button"
+                                    onClick={() => void saveVariant(focusedProduct.id, variant.id)}
+                                    disabled={variationBusy}
+                                    className="rounded-full border border-slate-200 bg-white px-4 py-2 text-xs font-semibold text-slate-700 hover:bg-slate-50 disabled:opacity-60"
+                                  >
+                                    Save variant
+                                  </button>
+                                </div>
+                              </div>
+                              <div className="grid gap-3 lg:grid-cols-3">
+                                <label className="grid gap-1 text-xs font-semibold uppercase tracking-wide text-slate-500">
+                                  Price override (CAD)
+                                  <input
+                                    type="number"
+                                    min="0"
+                                    step="0.01"
+                                    value={variantDraft.priceDollars}
+                                    onChange={(event) => updateVariantEditorDraft(focusedProduct.id, variant.id, (current) => ({ ...current, priceDollars: event.target.value }))}
+                                    placeholder="Leave blank to inherit"
+                                    className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-normal normal-case tracking-normal text-slate-900"
+                                  />
+                                </label>
+                                <label className="grid gap-1 text-xs font-semibold uppercase tracking-wide text-slate-500">
+                                  SKU
+                                  <input
+                                    value={variantDraft.sku}
+                                    onChange={(event) => updateVariantEditorDraft(focusedProduct.id, variant.id, (current) => ({ ...current, sku: event.target.value }))}
+                                    className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-normal normal-case tracking-normal text-slate-900"
+                                  />
+                                </label>
+                                <label className="grid gap-1 text-xs font-semibold uppercase tracking-wide text-slate-500">
+                                  Image URL override
+                                  <input
+                                    value={variantDraft.imageUrl}
+                                    onChange={(event) => updateVariantEditorDraft(focusedProduct.id, variant.id, (current) => ({ ...current, imageUrl: event.target.value }))}
+                                    className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-normal normal-case tracking-normal text-slate-900"
+                                  />
+                                </label>
+                              </div>
+                              {warehouses.length ? (
+                                <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+                                  {warehouses.map((warehouse) => (
+                                    <label key={`${variant.id}-${warehouse.id}`} className="grid gap-1 text-xs font-semibold uppercase tracking-wide text-slate-500">
+                                      {warehouse.name} inventory
+                                      <input
+                                        type="number"
+                                        min="0"
+                                        step="1"
+                                        value={variantDraft.inventoryByWarehouse[warehouse.id] ?? ''}
+                                        onChange={(event) =>
+                                          updateVariantEditorDraft(focusedProduct.id, variant.id, (current) => ({
+                                            ...current,
+                                            inventoryByWarehouse: { ...current.inventoryByWarehouse, [warehouse.id]: event.target.value },
+                                          }))
+                                        }
+                                        className="rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm font-normal normal-case tracking-normal text-slate-900"
+                                      />
+                                    </label>
+                                  ))}
+                                </div>
+                              ) : null}
+                            </div>
+                          )
+                        })}
+                      </div>
+                    ) : (
+                      <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50 px-3 py-3 text-sm text-slate-500">
+                        No variants yet. Save options, then generate combinations or create one manually.
+                      </div>
+                    )}
+                  </div>
+                </div>
+              ) : null}
             </section>
 
             <section className="surface-card space-y-4 p-4 shadow-subtle">

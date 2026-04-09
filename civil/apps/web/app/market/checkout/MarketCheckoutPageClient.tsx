@@ -23,7 +23,7 @@ import {
 } from '../../_lib/canadianAddresses'
 import { ensureViewerMe } from '../../_lib/viewerMe'
 import { useViewerStore } from '../../_lib/viewerStore'
-import { readMarketCart, writeMarketCart, type MarketCartItem } from '../_lib/cart'
+import { getMarketCartItemKey, readMarketCart, writeMarketCart, type MarketCartItem } from '../_lib/cart'
 
 type Product = {
   id: string
@@ -32,9 +32,23 @@ type Product = {
   taxRatesByRegion?: Record<string, string>
   priceCents: number
   currency: string
+  hasVariants?: boolean
+  attributes?: Array<{ key: string; label: string; values: string[] }>
+  variants?: Array<{
+    id: string
+    productId: string
+    attributeValues: Record<string, string>
+    priceCents: number | null
+    sku: string | null
+    imageUrl: string | null
+    isActive: boolean
+    inventoryTotal: number
+  }>
   primaryImageUrl: string | null
   fulfillmentType: string
 }
+
+type ProductVariant = NonNullable<Product['variants']>[number]
 
 type Organization = {
   id: string
@@ -50,6 +64,7 @@ type CartLine = {
   item: MarketCartItem
   product: Product
   organization: Organization
+  variant: ProductVariant | null
 }
 
 type PaymentMethod = 'civil_wallet' | 'credit_card'
@@ -126,6 +141,20 @@ function resolveTaxRegionCode(value: unknown): string | null {
   if (CANADA_TAX_REGION_CODES.has(normalized)) return normalized
   const compact = normalized.replace(/[^A-Z]/g, '')
   return CANADA_TAX_REGION_NAME_TO_CODE[compact] ?? null
+}
+
+function resolveSelectedVariant(product: Product, item: MarketCartItem) {
+  if (!item.variantId || !Array.isArray(product.variants)) return null
+  return product.variants.find((variant) => variant.id === item.variantId) ?? null
+}
+
+function resolveLineUnitPrice(line: CartLine) {
+  return line.variant?.priceCents ?? line.product.priceCents ?? 0
+}
+
+function formatSelectedAttributes(item: MarketCartItem) {
+  const entries = Object.entries(item.selectedAttributes ?? {}).filter(([, value]) => String(value || '').trim())
+  return entries.map(([key, value]) => `${key}: ${value}`).join(' • ')
 }
 
 function CardCheckoutForm({
@@ -305,14 +334,20 @@ export default function MarketCheckoutPageClient() {
           if (!response.ok || !parsed.json?.product || !parsed.json?.organization) {
             return { ok: false as const, item }
           }
-          return { ok: true as const, item, product: parsed.json.product, organization: parsed.json.organization }
+          return {
+            ok: true as const,
+            item,
+            product: parsed.json.product,
+            organization: parsed.json.organization,
+            variant: resolveSelectedVariant(parsed.json.product, item),
+          }
         }),
       )
 
       const nextLines: CartLine[] = []
       for (const result of results) {
         if (!result.ok) continue
-        nextLines.push({ item: result.item, product: result.product, organization: result.organization })
+        nextLines.push({ item: result.item, product: result.product, organization: result.organization, variant: result.variant })
       }
       setLines(nextLines)
     } catch {
@@ -342,7 +377,7 @@ export default function MarketCheckoutPageClient() {
   const subtotalCents = useMemo(() => {
     let total = 0
     for (const line of lines) {
-      total += (line.product.priceCents || 0) * (line.item.quantity || 0)
+      total += resolveLineUnitPrice(line) * (line.item.quantity || 0)
     }
     return total
   }, [lines])
@@ -358,7 +393,7 @@ export default function MarketCheckoutPageClient() {
       if (!rates || typeof rates !== 'object') continue
       const ratePct = parseTaxRatePct((rates as Record<string, unknown>)[taxRegionCode])
       if (ratePct <= 0) continue
-      const lineSubtotal = (line.product.priceCents || 0) * (line.item.quantity || 0)
+      const lineSubtotal = resolveLineUnitPrice(line) * (line.item.quantity || 0)
       total += Math.max(0, Math.round(lineSubtotal * (ratePct / 100)))
     }
     return total
@@ -419,7 +454,15 @@ export default function MarketCheckoutPageClient() {
       }
     }
 
-    return { items, shippingAddress: shipping }
+    return {
+      items: items.map((item) => ({
+        productId: item.productId,
+        variantId: item.variantId ?? null,
+        selectedAttributes: item.selectedAttributes ?? null,
+        quantity: item.quantity,
+      })),
+      shippingAddress: shipping,
+    }
   }, [needsShipping, rememberShippingAddress, shippingAddress])
 
   const persistShippingAddress = useCallback(async () => {
@@ -450,6 +493,8 @@ export default function MarketCheckoutPageClient() {
     if (code === 'single_seller_required') return 'Checkout supports items from a single seller. Remove items to continue.'
     if (code === 'single_currency_required') return 'Checkout supports a single currency per order.'
     if (code === 'shipping_address_required') return 'Shipping address is required for physical items.'
+    if (code === 'variant_selection_required') return 'Choose product options before checkout.'
+    if (code === 'invalid_variant_selection') return 'One of the selected product options is no longer available.'
     if (code === 'shipping_unavailable') return 'No shipping option is currently available for this destination.'
     if (code === 'insufficient_inventory') return 'One of these products no longer has enough inventory.'
     if (code === 'card_checkout_unavailable') return 'This organization is not ready for credit card checkout yet.'
@@ -574,7 +619,7 @@ export default function MarketCheckoutPageClient() {
               <div className="border-b border-slate-100 px-4 py-3 text-sm font-semibold text-slate-900">Items</div>
               <div className="divide-y divide-slate-100">
                 {lines.map((line) => (
-                  <div key={line.product.id} className="flex items-center gap-4 p-4">
+                  <div key={getMarketCartItemKey(line.item)} className="flex items-center gap-4 p-4">
                     <Link
                       href={`/market/products/${encodeURIComponent(line.product.id)}`}
                       className="flex min-w-0 flex-1 items-center gap-4 rounded-2xl transition hover:bg-slate-50/80 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--cc-primary)]/30"
@@ -589,12 +634,13 @@ export default function MarketCheckoutPageClient() {
                       <div className="min-w-0 flex-1">
                         <div className="truncate text-sm font-semibold text-slate-900">{line.product.name}</div>
                         <div className="mt-1 text-xs text-slate-600">{line.organization.name}</div>
+                        {formatSelectedAttributes(line.item) ? <div className="mt-1 text-xs text-slate-600">{formatSelectedAttributes(line.item)}</div> : null}
                         <div className="mt-1 text-xs text-slate-600">Qty {line.item.quantity}</div>
                       </div>
                     </Link>
 
                     <div className="w-28 text-right text-sm font-semibold text-slate-900">
-                      {formatMoney(line.product.priceCents * line.item.quantity, line.product.currency)}
+                      {formatMoney(resolveLineUnitPrice(line) * line.item.quantity, line.product.currency)}
                     </div>
                   </div>
                 ))}

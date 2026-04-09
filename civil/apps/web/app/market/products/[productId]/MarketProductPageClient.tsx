@@ -51,7 +51,7 @@ export default function MarketProductPageClient({
     setAdding(true)
     try {
       const current = readMarketCart()
-      const next: MarketCartItem[] = addMarketCartItem(current, product.id, 1)
+      const next: MarketCartItem[] = addMarketCartItem(current, { productId: product.id, variantId: null, selectedAttributes: null }, 1)
       writeMarketCart(next)
       window.dispatchEvent(new Event('civil:market-cart-changed'))
     } finally {
