@@ -118,7 +118,7 @@ function LoginPageInner() {
   const footer = (
     <div className="space-y-2">
       <p>
-        New to Civil?{' '}
+        New to MapleRides?{' '}
         <Link href="/register" className="font-semibold text-[var(--cc-primary)]">
           Create an account
         </Link>
@@ -135,7 +135,7 @@ function LoginPageInner() {
   return (
     <>
       <AppleInstallRedirect source="login" />
-      <AuthScreen title="Welcome back" subtitle="Sign in to post, follow, and coordinate inside your city." footer={footer} hideSidePanel useWallpaper>
+      <AuthScreen title="Welcome back" subtitle="Sign in to book rides, manage trips, and access your MapleRides account." footer={footer} hideSidePanel>
         <form onSubmit={handleSubmit} className="space-y-5" autoCapitalize="none" autoCorrect="off" spellCheck={false}>
           <label className="block text-sm font-medium text-slate-700">
             Email or handle

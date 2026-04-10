@@ -199,7 +199,7 @@ export default function RegisterPage() {
   const footer = (
     <div className="space-y-2">
       <p>
-        Already have an account?{' '}
+        Already have a MapleRides account?{' '}
         <Link href="/login" className="font-semibold text-[var(--cc-primary)]">
           Sign in
         </Link>
@@ -217,11 +217,10 @@ export default function RegisterPage() {
     <>
       <AppleInstallRedirect source="register" />
       <AuthScreen
-        title="Create your Civil account"
-        subtitle="Reserve your handle, pick your home city, and get access to Canada’s civic operating system."
+        title="Create your MapleRides account"
+        subtitle="Sign up to book rides, manage your account, and get ready to drive with MapleRides."
         footer={footer}
         hideSidePanel
-        useWallpaper
       >
         <form onSubmit={handleSubmit} className="space-y-5" autoCapitalize="none" autoCorrect="off" spellCheck={false}>
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
@@ -237,7 +236,7 @@ export default function RegisterPage() {
             </label>
           </div>
           <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
-            Your Civil handle will be <span className="font-semibold text-slate-900">@{previewHandle}</span>. If it&apos;s taken, we&apos;ll make a tiny tweak to keep it unique.
+            Your MapleRides handle will be <span className="font-semibold text-slate-900">@{previewHandle}</span>. If it&apos;s taken, we&apos;ll make a tiny tweak to keep it unique.
           </div>
           <label className="block text-sm font-medium text-slate-700">
             Email
@@ -304,7 +303,7 @@ export default function RegisterPage() {
                   onClick={() => setLegalDocument(null)}
                   className="rounded-2xl bg-[var(--cc-primary)] px-4 py-2 text-sm font-semibold text-white transition hover:bg-[var(--cc-primary-700)]"
                 >
-                  Back to registration
+                  Back to sign up
                 </button>
               </div>
             </div>

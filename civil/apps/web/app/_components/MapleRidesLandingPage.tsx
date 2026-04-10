@@ -2,6 +2,7 @@ import type { ReactNode } from 'react'
 import type { IconType } from 'react-icons'
 import Image from 'next/image'
 import Link from 'next/link'
+import AuthAwareCtaButton from './AuthAwareCtaButton'
 import {
   FaArrowRight,
   FaCarSide,
@@ -17,9 +18,6 @@ import {
   FaStore,
   FaUsers,
 } from 'react-icons/fa'
-
-const bookRideHref = '/drive/ride'
-const driveWithMapleHref = '/drive/onboarding'
 
 const heroHighlights = [
   {
@@ -169,19 +167,19 @@ function CtaRow({ final = false, light = false }: { final?: boolean; light?: boo
 
   return (
     <div className="flex flex-col gap-3 sm:flex-row">
-      <Link
-        href={bookRideHref}
+      <AuthAwareCtaButton
+        ariaLabel="Book a Ride"
         className="inline-flex w-full items-center justify-center gap-2 rounded-full bg-[#d9222a] px-6 py-3.5 text-sm font-semibold text-white shadow-[0_18px_40px_rgba(217,34,42,0.26)] transition hover:bg-[#bd1d24] sm:w-auto"
       >
         Book a Ride
         <FaArrowRight className="text-xs" aria-hidden="true" />
-      </Link>
-      <Link
-        href={driveWithMapleHref}
+      </AuthAwareCtaButton>
+      <AuthAwareCtaButton
+        ariaLabel={secondaryLabel}
         className={`inline-flex w-full items-center justify-center rounded-full px-6 py-3.5 text-sm font-semibold transition sm:w-auto ${secondaryClassName}`}
       >
         {secondaryLabel}
-      </Link>
+      </AuthAwareCtaButton>
     </div>
   )
 }

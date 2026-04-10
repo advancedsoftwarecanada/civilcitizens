@@ -4,20 +4,12 @@ import Link from 'next/link'
 import { useMemo, type CSSProperties } from 'react'
 import clsx from 'clsx'
 import { usePathname } from 'next/navigation'
-import { FaBroadcastTower, FaCarSide, FaHouseUser, FaPlayCircle, FaPodcast, FaPrayingHands, FaUserTie, FaWallet } from 'react-icons/fa'
+import { FaCarSide, FaWallet } from 'react-icons/fa'
 import {
-  HiOutlineChatBubbleOvalLeft,
-  HiOutlineCurrencyDollar,
   HiOutlineHome,
-  HiOutlineCalendarDays,
-  HiOutlineShoppingCart,
-  HiOutlineTag,
   HiOutlineUserCircle,
-  HiOutlineUsers,
 } from 'react-icons/hi2'
 import type { IconType } from 'react-icons'
-import { RiCommunityLine } from 'react-icons/ri'
-import { VscOrganization } from 'react-icons/vsc'
 import CivilCard from './CivilCard'
 import { getFamilyLockedCardIdentity } from '../_lib/familyIdentity'
 import { formatDisplayName } from '../_lib/text'
@@ -52,50 +44,23 @@ export type SidebarNavItem = {
 }
 
 export const PRIMARY_NAV: SidebarNavItem[] = [
-  { key: 'home', label: 'Civil Pulse', href: '/home', icon: HiOutlineHome },
-  { key: 'messages', label: 'Messages', href: '/messages', icon: HiOutlineChatBubbleOvalLeft },
-  { key: 'friends', label: 'Friends', href: '/friends', icon: HiOutlineUsers },
-  { key: 'network', label: 'Network', href: '/network', icon: FaUserTie },
-  { key: 'communities', label: 'Chambers of Citizens', href: '/chambers', icon: RiCommunityLine },
-  { key: 'organizations', label: 'Organizations', href: '/organizations', icon: VscOrganization },
-  { key: 'topics', label: 'Topics', href: '/topics', icon: HiOutlineTag },
-  { key: 'events', label: 'Events', href: '/events', icon: HiOutlineCalendarDays },
-  { key: 'market', label: 'Market', href: '/market', icon: HiOutlineShoppingCart },
-  { key: 'live', label: 'Live', href: '/live', icon: FaBroadcastTower },
-  { key: 'video', label: 'Video', href: '/video', icon: FaPlayCircle },
-  { key: 'podcasts', label: 'Podcasts', href: '/podcasts', icon: FaPodcast },
-  { key: 'work', label: 'Work', href: '/work', icon: HiOutlineCurrencyDollar },
+  { key: 'home', label: 'Home', href: '/home', icon: HiOutlineHome },
   { key: 'drive', label: 'Drive', href: '/drive', icon: FaCarSide },
-  { key: 'causes', label: 'Causes', href: '/causes', icon: FaPrayingHands },
   { key: 'wallet', label: 'Wallet', href: '/wallet', icon: FaWallet },
-  // TODO(app-store): restore News and Music nav items once those product areas are ready.
-  { key: 'account', label: 'Account Settings', href: '/settings', icon: HiOutlineUserCircle },
+  { key: 'account', label: 'Account', href: '/settings', icon: HiOutlineUserCircle },
 ]
 
 const FAMILY_CHILD_NAV: SidebarNavItem[] = [
   { key: 'home', label: 'Family & Friends', href: '/home', icon: HiOutlineHome },
-  { key: 'messages', label: 'Messages', href: '/messages', icon: HiOutlineChatBubbleOvalLeft },
-  { key: 'friends', label: 'My Friends', href: '/friends', icon: HiOutlineUsers },
-  { key: 'account', label: 'Settings', href: '/settings/guardian/settings', icon: HiOutlineUserCircle },
+  { key: 'account', label: 'Account', href: '/settings/guardian/settings', icon: HiOutlineUserCircle },
 ]
 
 export function getSidebarNavItems(
   familyView: FamilyViewState | null | undefined,
-  me?: Pick<MeResponse, 'accountType' | 'familyMode'> | null,
+  _me?: Pick<MeResponse, 'accountType' | 'familyMode'> | null,
 ): SidebarNavItem[] {
+  void _me
   if (!familyView) {
-    if (me?.accountType === 'user') {
-      const [homeItem, messagesItem, friendsItem] = PRIMARY_NAV
-      if (!homeItem || !messagesItem || !friendsItem) return PRIMARY_NAV
-
-      return [
-        homeItem,
-        messagesItem,
-        { key: 'family', label: 'Family', href: '/family', icon: FaHouseUser },
-        friendsItem,
-        ...PRIMARY_NAV.slice(3),
-      ]
-    }
     return PRIMARY_NAV
   }
   return FAMILY_CHILD_NAV
@@ -140,7 +105,7 @@ export default function Sidebar({ me, active }: SidebarProps) {
   const profileHref = familyCardIdentity?.href ?? (effectiveMe?.handle ? `/u/${effectiveMe.handle}` : '/profile/edit')
   const verified = familyCardIdentity?.isVerified ?? Boolean(effectiveMe?.isVerified)
   const business = familyCardIdentity?.isBusiness ?? Boolean(effectiveMe?.isPremium)
-  const navItems = getSidebarNavItems(familyView, effectiveMe)
+  const navItems = getSidebarNavItems(familyView)
   const isOnOwnProfile = Boolean(
     profileHref && pathname && (pathname === profileHref || pathname.startsWith(`${profileHref}/`)),
   )
