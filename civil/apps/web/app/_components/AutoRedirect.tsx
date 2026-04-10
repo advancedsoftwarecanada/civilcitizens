@@ -11,7 +11,7 @@ import { ensureNativeNotificationTapListener, getLastNativeNotificationTapUrl } 
 import { normalizePushDeepLinkUrl } from '../_lib/pushDeepLink'
 import { emitPushUiReset } from '../_lib/pushNavigation'
 
-export default function AutoRedirect() {
+export default function AutoRedirect({ targetPath }: { targetPath?: string }) {
   const router = useRouter()
   const hydrated = useViewerStore((s) => s.hydrated)
   const didNavigateRef = useRef(false)
@@ -52,7 +52,7 @@ export default function AutoRedirect() {
       if (storedFamilyView && storedParentToken) {
         if (cancelled || didNavigateRef.current) return
         didNavigateRef.current = true
-        router.replace(resolvePendingPushRedirectOrFallback(storedFamilyView.suspended ? '/suspended' : '/home'))
+        router.replace(targetPath ?? resolvePendingPushRedirectOrFallback(storedFamilyView.suspended ? '/suspended' : '/home'))
         return
       }
 
@@ -68,7 +68,7 @@ export default function AutoRedirect() {
         return
       }
       didNavigateRef.current = true
-      router.replace(resolvePendingPushRedirectOrFallback(getAuthedEntryPath(data)))
+      router.replace(targetPath ?? resolvePendingPushRedirectOrFallback(getAuthedEntryPath(data)))
     }
 
     void redirectFromLanding().catch(() => {
@@ -80,6 +80,6 @@ export default function AutoRedirect() {
     return () => {
       cancelled = true
     }
-  }, [hydrated, router])
+  }, [hydrated, router, targetPath])
   return null
 }

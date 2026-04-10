@@ -39,7 +39,7 @@ export const metadata: Metadata = {
 export default function Home() {
   return (
     <>
-      <AutoRedirect />
+      <AutoRedirect targetPath="/home" />
       <MapleRidesLandingPage />
     </>
   )

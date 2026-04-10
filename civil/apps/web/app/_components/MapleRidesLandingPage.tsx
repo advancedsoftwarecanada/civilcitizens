@@ -223,11 +223,7 @@ function HeroActions({ final = false, lightTheme = false }: { final?: boolean; l
   return (
     <div className="flex flex-col gap-3 sm:flex-row">
       <AuthAwareCtaButton
-        className={`inline-flex items-center justify-center gap-2 rounded-full px-6 py-3 text-sm font-semibold transition ${
-          lightTheme
-            ? 'bg-[var(--cc-primary)] text-white shadow-[0_18px_38px_rgba(220,38,38,0.22)] hover:bg-red-700'
-            : 'bg-[var(--cc-primary)] text-white shadow-[0_18px_38px_rgba(220,38,38,0.24)] hover:bg-red-700'
-        }`}
+        className="inline-flex items-center justify-center gap-2 rounded-full bg-white px-6 py-3 text-sm font-semibold text-[var(--cc-primary)] shadow-[0_18px_38px_rgba(255,255,255,0.16)] transition hover:bg-red-50"
       >
         <FaCarSide className="h-3.5 w-3.5" />
         Book a Ride
@@ -401,24 +397,24 @@ export default function MapleRidesLandingPage() {
           <div className="mt-8">
             <HeroActions final />
           </div>
-          <div className="mt-10 flex flex-wrap gap-3 border-t border-white/15 pt-6 text-sm font-semibold text-red-50/90">
-            <a
-              href="https://x.com/MapleRidesCa"
-              target="_blank"
-              rel="noreferrer"
-              className="inline-flex items-center rounded-full border border-white/20 px-4 py-2 transition hover:bg-white/10 hover:text-white"
-            >
-              X
-            </a>
-            <a
-              href="https://docs.google.com/presentation/d/1_bHqSikn-hGGL07yb6MI4BAgUN9Bf0MCJLn8Cvq-ANA/edit?usp=sharing"
-              target="_blank"
-              rel="noreferrer"
-              className="inline-flex items-center rounded-full border border-white/20 px-4 py-2 transition hover:bg-white/10 hover:text-white"
-            >
-              SAFE Investors
-            </a>
-          </div>
+        </div>
+        <div className="mt-6 flex flex-wrap gap-3">
+          <a
+            href="https://x.com/MapleRidesCa"
+            target="_blank"
+            rel="noreferrer"
+            className="inline-flex items-center rounded-full bg-[var(--cc-primary)] px-4 py-2 text-sm font-semibold text-white shadow-[0_14px_30px_rgba(220,38,38,0.18)] transition hover:bg-red-700"
+          >
+            X
+          </a>
+          <a
+            href="https://docs.google.com/presentation/d/1_bHqSikn-hGGL07yb6MI4BAgUN9Bf0MCJLn8Cvq-ANA/edit?usp=sharing"
+            target="_blank"
+            rel="noreferrer"
+            className="inline-flex items-center rounded-full bg-[var(--cc-primary)] px-4 py-2 text-sm font-semibold text-white shadow-[0_14px_30px_rgba(220,38,38,0.18)] transition hover:bg-red-700"
+          >
+            SAFE Investors
+          </a>
         </div>
       </SectionShell>
     </div>

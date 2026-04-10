@@ -3,6 +3,7 @@ import { useMemo, useState } from 'react'
 import type { FormEvent } from 'react'
 import Link from 'next/link'
 import { useRouter, useSearchParams } from 'next/navigation'
+import AutoRedirect from '../_components/AutoRedirect'
 import { pushToast } from '../_components/useToasts'
 import { buildHandleBase } from '@civil/shared'
 import { buildApiUrl, parseApiResponse } from '../_lib/api'
@@ -63,9 +64,8 @@ export default function RegisterPage() {
   const [formError, setFormError] = useState<string | null>(null)
   const [fieldErrors, setFieldErrors] = useState<FieldErrors>({})
   const [isSubmitting, setIsSubmitting] = useState(false)
-  const [previewHandleSuffix] = useState(() => Math.floor(100000 + Math.random() * 900000).toString())
 
-  const previewHandle = useMemo(() => `${buildPreviewHandleBase(firstName, lastName)}${previewHandleSuffix}`, [firstName, lastName, previewHandleSuffix])
+  const previewHandle = useMemo(() => buildPreviewHandleBase(firstName, lastName), [firstName, lastName])
   const activeLegalDocument = legalDocument ? LEGAL_DOCUMENTS[legalDocument] : null
 
   const hasFieldError = (key: string) => Array.isArray(fieldErrors[key]) && fieldErrors[key].length > 0
@@ -226,6 +226,7 @@ export default function RegisterPage() {
 
   return (
     <>
+      <AutoRedirect targetPath="/home" />
       <AppleInstallRedirect source="register" />
       <AuthScreen
         title="Create your MapleRides account"
