@@ -777,8 +777,6 @@ export default function UserPostsPage({ params }: PageProps) {
     return items
   }, [profile?.experiences])
   const experienceCount = sortedExperiences.length
-  const coverDisplayUrl = profile?.coverUrl ?? null
-  const editCoverHref = '/profile/edit?photo=cover'
   const editAvatarHref = '/profile/edit?photo=avatar'
   const ownerDisplayName = formatUserDisplayName(resolvedViewer?.name, resolvedViewer?.handle) || resolvedViewer?.handle || 'Citizen'
   const ownerFirstName = ownerDisplayName.split(' ')[0] ?? 'Citizen'
@@ -2631,7 +2629,6 @@ export default function UserPostsPage({ params }: PageProps) {
           avatarAlt={profileDisplayName}
           avatarInitials={profileDisplayName}
           avatarSrc={profile.avatarUrl}
-          coverUrl={coverDisplayUrl}
           isVerified={Boolean(profile.isVerified)}
           isBusiness={Boolean(profile.isPremium)}
           interactive={false}
@@ -2689,7 +2686,6 @@ export default function UserPostsPage({ params }: PageProps) {
           avatarAlt={profileDisplayName}
           avatarInitials={profileDisplayName}
           avatarSrc={profile.avatarUrl}
-          coverUrl={coverDisplayUrl}
           isVerified={Boolean(profile.isVerified)}
           isBusiness={Boolean(profile.isPremium)}
           interactive={false}
@@ -2741,22 +2737,6 @@ export default function UserPostsPage({ params }: PageProps) {
         mainClassName="space-y-8 pb-12"
       >
         <div className={profile ? 'space-y-6' : undefined}>
-          {profile ? (
-            <section className="overflow-hidden rounded-[26px] shadow-[0_28px_90px_rgba(15,23,42,0.16)]">
-              <div className="relative h-[180px] w-full bg-slate-100 sm:h-[220px] xl:h-[320px]">
-                {coverDisplayUrl ? (
-                  <img
-                    src={coverDisplayUrl}
-                    alt=""
-                    className="h-full w-full object-cover object-center"
-                  />
-                ) : (
-                  <div className="h-full w-full bg-[linear-gradient(135deg,#e2e8f0_0%,#f8fafc_48%,#dbeafe_100%)]" aria-hidden="true" />
-                )}
-              </div>
-            </section>
-          ) : null}
-
           {profile ? renderRelationshipRequestCards() : null}
 
           {profile && !isOwner ? (
@@ -2789,19 +2769,12 @@ export default function UserPostsPage({ params }: PageProps) {
                 <HiOutlineCamera className="mr-2 h-4 w-4" aria-hidden="true" />
                 Profile photo
               </Link>
-              <Link
-                href={editCoverHref}
-                className="inline-flex items-center justify-center rounded-full border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-600 shadow-sm transition hover:border-slate-300 hover:text-slate-900"
-              >
-                <HiOutlinePhoto className="mr-2 h-4 w-4" aria-hidden="true" />
-                Cover photo
-              </Link>
               <a
                 href="/profile/edit"
                 className="inline-flex items-center justify-center rounded-full border border-slate-200 bg-white px-5 py-2 text-sm font-semibold text-slate-600 shadow-subtle transition hover:border-[var(--cc-primary)] hover:text-[var(--cc-primary)]"
               >
                 <HiOutlinePencilSquare className="mr-2 h-4 w-4" aria-hidden="true" />
-                Edit profile
+                Account settings
               </a>
             </div>
           ) : null}

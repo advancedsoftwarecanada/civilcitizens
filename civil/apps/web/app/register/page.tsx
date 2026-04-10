@@ -30,16 +30,26 @@ type RegisterErrorResponse = {
   message?: string
 }
 
-type LegalDocumentKey = 'terms' | 'privacy' | 'safety'
+type LegalDocumentKey = 'terms' | 'privacy'
 
 const LEGAL_DOCUMENTS: Record<LegalDocumentKey, { title: string; href: string }> = {
   terms: { title: 'Terms of Service', href: '/terms' },
   privacy: { title: 'Privacy Policy', href: '/privacy' },
-  safety: { title: 'Child Safety & Protection Standards', href: '/safety' },
 }
 
 const isValidEmail = (value: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value)
 const ORG_INVITE_TOKEN_KEY = 'civil.orgInviteToken'
+
+function buildPreviewHandleBase(firstName: string, lastName: string) {
+  const trimmedFirstName = firstName.trim()
+  const trimmedLastName = lastName.trim()
+
+  if (trimmedFirstName || trimmedLastName) {
+    return buildHandleBase(trimmedFirstName, trimmedLastName)
+  }
+
+  return buildHandleBase('first', 'last')
+}
 
 export default function RegisterPage() {
   const router = useRouter()
@@ -53,8 +63,9 @@ export default function RegisterPage() {
   const [formError, setFormError] = useState<string | null>(null)
   const [fieldErrors, setFieldErrors] = useState<FieldErrors>({})
   const [isSubmitting, setIsSubmitting] = useState(false)
+  const [previewHandleSuffix] = useState(() => Math.floor(100000 + Math.random() * 900000).toString())
 
-  const previewHandle = useMemo(() => buildHandleBase(firstName, lastName), [firstName, lastName])
+  const previewHandle = useMemo(() => `${buildPreviewHandleBase(firstName, lastName)}${previewHandleSuffix}`, [firstName, lastName, previewHandleSuffix])
   const activeLegalDocument = legalDocument ? LEGAL_DOCUMENTS[legalDocument] : null
 
   const hasFieldError = (key: string) => Array.isArray(fieldErrors[key]) && fieldErrors[key].length > 0
@@ -266,10 +277,6 @@ export default function RegisterPage() {
               and{' '}
               <button type="button" className="underline underline-offset-2" onClick={() => setLegalDocument('privacy')}>
                 Privacy Policy
-              </button>{' '}
-              and{' '}
-              <button type="button" className="underline underline-offset-2" onClick={() => setLegalDocument('safety')}>
-                Child Safety &amp; Protection Standards
               </button>
             </div>
           </div>

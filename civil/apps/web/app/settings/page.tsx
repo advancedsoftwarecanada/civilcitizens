@@ -551,7 +551,7 @@ export default function SettingsPage() {
       {
         key: 'profile',
         label: 'Profile',
-        description: 'Edit your bio, cover photo, profile photo, and civic identity.',
+        description: 'Edit your bio, profile photo, and civic identity.',
         href: '/profile/edit',
         icon: HiOutlineUserCircle,
       },

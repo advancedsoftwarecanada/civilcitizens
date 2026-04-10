@@ -7,6 +7,7 @@ import { usePathname } from 'next/navigation'
 import { FaCarSide, FaWallet } from 'react-icons/fa'
 import {
   HiOutlineHome,
+  HiOutlineMap,
   HiOutlineUserCircle,
 } from 'react-icons/hi2'
 import type { IconType } from 'react-icons'
@@ -45,6 +46,7 @@ export type SidebarNavItem = {
 
 export const PRIMARY_NAV: SidebarNavItem[] = [
   { key: 'home', label: 'Home', href: '/home', icon: HiOutlineHome },
+  { key: 'ride', label: 'Ride', href: '/ride', icon: HiOutlineMap },
   { key: 'drive', label: 'Drive', href: '/drive', icon: FaCarSide },
   { key: 'wallet', label: 'Wallet', href: '/wallet', icon: FaWallet },
   { key: 'account', label: 'Account', href: '/settings', icon: HiOutlineUserCircle },
@@ -73,6 +75,18 @@ function navItemClasses(active: boolean) {
       ? 'bg-[var(--cc-primary)] text-white shadow-lg shadow-[var(--cc-primary)]/20'
       : 'text-slate-700 hover:bg-slate-100 hover:text-slate-900',
   )
+}
+
+function matchesSidebarPath(item: SidebarNavItem, pathname: string | null) {
+  if (!pathname) return false
+  if (pathname === item.href || pathname.startsWith(`${item.href}/`)) return true
+  if (item.key === 'ride') {
+    return pathname === '/delivery/my' || pathname.startsWith('/delivery/my/') || pathname.startsWith('/drive/ride/request')
+  }
+  if (item.key === 'drive') {
+    return pathname.startsWith('/drive/') || pathname.startsWith('/delivery/')
+  }
+  return false
 }
 
 function SidebarProfileCardSkeleton() {
@@ -135,7 +149,7 @@ export default function Sidebar({ me, active }: SidebarProps) {
   }
   const derivedActiveKey = useMemo(() => {
     if (normalizedActive) return normalizedActive
-    return navItems.find((item) => (pathname ? pathname.startsWith(item.href) : false))?.key ?? null
+    return navItems.find((item) => matchesSidebarPath(item, pathname))?.key ?? null
   }, [navItems, normalizedActive, pathname])
   const showProfileCardSkeleton = !familyView && !effectiveMe && (!hydrated || hasStoredSession)
 
@@ -156,9 +170,7 @@ export default function Sidebar({ me, active }: SidebarProps) {
             <Icon className="h-[var(--nav-icon-size)] w-[var(--nav-icon-size)]" />
           </span>
           <div className="flex-1">
-            <span className="block leading-tight">
-              {item.label}
-            </span>
+            <span className="block leading-tight">{item.label}</span>
           </div>
           {item.badge ? (
             <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide text-slate-500">{item.badge}</span>

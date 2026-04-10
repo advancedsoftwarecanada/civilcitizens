@@ -516,7 +516,7 @@ export default function DriveContractPageClient({ rideId }: { rideId: string }) 
 
   const handleExitDriverMode = () => {
     exitDriverMode()
-    router.push('/drive')
+    router.push('/ride')
   }
 
   const handleStartGps = () => {
@@ -688,10 +688,10 @@ export default function DriveContractPageClient({ rideId }: { rideId: string }) 
             console.warn('drive_contract_money_sound_failed', soundError)
           })
           window.setTimeout(() => {
-            router.push('/drive')
+            router.push('/ride')
           }, 300)
         } else {
-          router.push('/drive')
+          router.push('/ride')
         }
         return
       }

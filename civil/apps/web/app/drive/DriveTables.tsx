@@ -681,7 +681,7 @@ export function DriveDriverAccessGate({ title, description }: { title: string; d
           <Link href="/drive/onboarding" className="inline-flex rounded-full bg-[var(--cc-primary)] px-5 py-2.5 text-sm font-semibold text-white transition hover:brightness-95">
             Drive and deliver for Civil
           </Link>
-          <Link href="/drive" className="inline-flex rounded-full border border-slate-200 bg-white px-5 py-2.5 text-sm font-semibold text-slate-700 transition hover:border-slate-300 hover:text-slate-900">
+          <Link href="/ride" className="inline-flex rounded-full border border-slate-200 bg-white px-5 py-2.5 text-sm font-semibold text-slate-700 transition hover:border-slate-300 hover:text-slate-900">
             Back to My Rides
           </Link>
         </div>

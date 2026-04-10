@@ -99,8 +99,8 @@ export default function DeliveryOnboardingPageClient() {
     if (requirements.isCanadianCitizen !== true) {
       items.push({ href: '/verify', label: 'Confirm citizenship' })
     }
-    if (requirements.hasProfilePhoto !== true || requirements.hasCoverPhoto !== true) {
-      items.push({ href: '/profile', label: 'Update profile photos' })
+    if (requirements.hasProfilePhoto !== true) {
+      items.push({ href: '/profile/edit?photo=avatar', label: 'Open account settings' })
     }
     if (requirements.hasHomeAddress !== true) {
       items.push({ href: '/addresses', label: 'Open addresses' })
@@ -115,7 +115,7 @@ export default function DeliveryOnboardingPageClient() {
         <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
           <p className="text-xs font-semibold uppercase tracking-[0.22em] text-slate-400">Drive</p>
           <h1 className="mt-3 text-3xl font-semibold text-slate-900">Driver Onboarding</h1>
-          <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-600">Civil only activates Drive drivers who have a funded wallet, verified Canadian citizenship status, real profile photos, and a home address.</p>
+          <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-600">Civil only activates Drive drivers who have a funded wallet, verified Canadian citizenship status, a real profile photo, and a home address.</p>
         </section>
 
         {error ? <div className="rounded-3xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">{error}</div> : null}

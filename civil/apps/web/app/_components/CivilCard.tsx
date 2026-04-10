@@ -1,4 +1,5 @@
 import type { CSSProperties, ReactNode } from 'react'
+import { useEffect, useState } from 'react'
 import Link from 'next/link'
 import clsx from 'clsx'
 import VerifiedAvatar from './VerifiedAvatar'
@@ -241,9 +242,17 @@ export default function CivilCard({
   const overlayAvatarInitials = deriveCardInitials(avatarInitials ?? avatarAlt)
   const overlayAvatarFallbackSize = Math.max(16, Math.round((avatarSize ?? sizeStyles.avatar) / 1.3))
   const overlayMediaWidth = typeof overlayAvatarWidth === 'number' ? `${overlayAvatarWidth}px` : overlayAvatarWidth
+  const normalizedAvatarSrc = typeof avatarSrc === 'string' && avatarSrc.trim() ? avatarSrc.trim() : null
+  const [overlayAvatarFailed, setOverlayAvatarFailed] = useState(false)
+  const overlayAvatarSrc = overlayAvatarFailed ? null : (normalizedAvatarSrc ?? '/guest.png')
+  const usesGuestOverlayAvatar = !normalizedAvatarSrc
   const resolvedName = normalizeCardName(name)
   const centeredTitlePillClassName =
     'inline-flex max-w-full min-w-0 flex-col items-center justify-center rounded-[1.2rem] border border-white/18 bg-slate-950/20 px-5 py-3 text-center backdrop-blur-md shadow-[0_16px_36px_rgba(15,23,42,0.16)]'
+
+  useEffect(() => {
+    setOverlayAvatarFailed(false)
+  }, [normalizedAvatarSrc])
 
   const rootClassName = clsx(
     'group relative block overflow-hidden border border-slate-200 bg-slate-800 text-white shadow-sm',
@@ -319,21 +328,10 @@ export default function CivilCard({
 
   const content = (
     <>
-      {coverUrl ? (
-        <img
-          src={coverUrl}
-          alt=""
-          className={clsx(
-            'absolute inset-0 h-full w-full object-cover transition-transform duration-300',
-            isInteractive && 'group-hover:scale-105',
-          )}
-          loading="lazy"
-        />
-      ) : null}
       <span
         className={clsx(
           'absolute inset-0',
-          coverUrl ? 'bg-transparent' : 'bg-[linear-gradient(120deg,#1e293b_0%,#0f172a_58%,#020617_100%)]',
+          'bg-[linear-gradient(120deg,#1e293b_0%,#0f172a_58%,#020617_100%)]',
         )}
         aria-hidden="true"
       />
@@ -355,12 +353,18 @@ export default function CivilCard({
             aria-label={avatarAlt}
             className={clsx(
               'absolute inset-y-0 left-0 z-[2] flex items-center justify-center overflow-hidden text-slate-600',
-              !avatarSrc && 'bg-slate-200',
+              !normalizedAvatarSrc && 'bg-slate-200',
             )}
             style={{ width: overlayMediaWidth }}
           >
-            {avatarSrc ? (
-              <img src={avatarSrc} alt={avatarAlt} className="h-full w-full object-cover" loading="lazy" />
+            {overlayAvatarSrc ? (
+              <img
+                src={overlayAvatarSrc}
+                alt={avatarAlt}
+                className={clsx('h-full w-full', usesGuestOverlayAvatar ? 'object-contain p-3' : 'object-cover')}
+                loading="lazy"
+                onError={() => setOverlayAvatarFailed(true)}
+              />
             ) : (
               <span className="select-none font-semibold" style={{ fontSize: `${overlayAvatarFallbackSize}px` }}>
                 {overlayAvatarInitials}
@@ -371,12 +375,18 @@ export default function CivilCard({
           <div
             className={clsx(
               'absolute inset-y-0 left-0 z-[2] flex items-center justify-center overflow-hidden text-slate-600',
-              !avatarSrc && 'bg-slate-200',
+              !normalizedAvatarSrc && 'bg-slate-200',
             )}
             style={{ width: overlayMediaWidth }}
           >
-            {avatarSrc ? (
-              <img src={avatarSrc} alt={avatarAlt} className="h-full w-full object-cover" loading="lazy" />
+            {overlayAvatarSrc ? (
+              <img
+                src={overlayAvatarSrc}
+                alt={avatarAlt}
+                className={clsx('h-full w-full', usesGuestOverlayAvatar ? 'object-contain p-3' : 'object-cover')}
+                loading="lazy"
+                onError={() => setOverlayAvatarFailed(true)}
+              />
             ) : (
               <span className="select-none font-semibold" style={{ fontSize: `${overlayAvatarFallbackSize}px` }}>
                 {overlayAvatarInitials}

@@ -6,7 +6,6 @@ export type DeliveryRequirementMap = {
   walletReady: boolean
   isCanadianCitizen: boolean
   hasProfilePhoto: boolean
-  hasCoverPhoto: boolean
   hasHomeAddress: boolean
 }
 
@@ -163,7 +162,6 @@ export function getDeliveryRequirementItems(requirements: Partial<DeliveryRequir
     { key: 'walletReady', label: 'Civil Wallet with Stripe payouts enabled', met: requirements?.walletReady === true },
     { key: 'isCanadianCitizen', label: 'Canadian citizenship confirmed', met: requirements?.isCanadianCitizen === true },
     { key: 'hasProfilePhoto', label: 'Profile photo added', met: requirements?.hasProfilePhoto === true },
-    { key: 'hasCoverPhoto', label: 'Cover photo added', met: requirements?.hasCoverPhoto === true },
     { key: 'hasHomeAddress', label: 'Home address saved', met: requirements?.hasHomeAddress === true },
   ]
 }

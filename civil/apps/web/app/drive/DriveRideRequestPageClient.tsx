@@ -738,7 +738,7 @@ export default function DriveRideRequestPageClient({ mode = 'create', rideId }: 
       }
 
       pushToast(isEditMode ? 'Ride request updated.' : 'Ride request posted to Drive.', 'success')
-      router.push('/drive')
+      router.push('/ride')
     } catch (submitError) {
       console.error(`Failed to ${isEditMode ? 'update' : 'post'} ride request`, submitError)
       pushToast(isEditMode ? 'Unable to save that ride request right now.' : 'Unable to post that ride request right now.', 'error')
