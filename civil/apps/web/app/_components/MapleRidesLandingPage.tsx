@@ -401,6 +401,24 @@ export default function MapleRidesLandingPage() {
           <div className="mt-8">
             <HeroActions final />
           </div>
+          <div className="mt-10 flex flex-wrap gap-3 border-t border-white/15 pt-6 text-sm font-semibold text-red-50/90">
+            <a
+              href="https://x.com/MapleRidesCa"
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex items-center rounded-full border border-white/20 px-4 py-2 transition hover:bg-white/10 hover:text-white"
+            >
+              X
+            </a>
+            <a
+              href="https://docs.google.com/presentation/d/1_bHqSikn-hGGL07yb6MI4BAgUN9Bf0MCJLn8Cvq-ANA/edit?usp=sharing"
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex items-center rounded-full border border-white/20 px-4 py-2 transition hover:bg-white/10 hover:text-white"
+            >
+              SAFE Investors
+            </a>
+          </div>
         </div>
       </SectionShell>
     </div>

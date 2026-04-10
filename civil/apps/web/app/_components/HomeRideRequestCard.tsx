@@ -655,7 +655,18 @@ export default function HomeRideRequestCard({
         return
       }
 
-      const nextAddress = buildCanadianAddressFromSearchResult(resolved)
+      const reverseGeocodedAddress = buildCanadianAddressFromSearchResult(resolved)
+      const nextAddress = {
+        ...reverseGeocodedAddress,
+        latitude:
+          typeof reverseGeocodedAddress.latitude === 'number' && Number.isFinite(reverseGeocodedAddress.latitude)
+            ? reverseGeocodedAddress.latitude
+            : locationResult.location.latitude,
+        longitude:
+          typeof reverseGeocodedAddress.longitude === 'number' && Number.isFinite(reverseGeocodedAddress.longitude)
+            ? reverseGeocodedAddress.longitude
+            : locationResult.location.longitude,
+      }
       setCurrentLocationPoint({
         latitude: nextAddress.latitude,
         longitude: nextAddress.longitude,
