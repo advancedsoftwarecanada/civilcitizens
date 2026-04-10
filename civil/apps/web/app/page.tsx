@@ -3,7 +3,9 @@ import AutoRedirect from './_components/AutoRedirect'
 import MapleRidesLandingPage from './_components/MapleRidesLandingPage'
 
 const homepageDescription =
-  'Canada’s Fair Ride Network. Fair pay for drivers. Fair pricing for riders. No surge pricing. Ever.'
+  'A Canadian app for booking rides and driving for hire. A Canadian alternative to Uber and Lyft with no surge pricing.'
+
+const homepageSocialTitle = 'MapleRides | A Canadian app for booking rides and driving for hire'
 
 export const metadata: Metadata = {
   title: {
@@ -16,23 +18,21 @@ export const metadata: Metadata = {
     apple: '/Maple-Rides-Favicon.png',
   },
   openGraph: {
-    title: 'MapleRides',
+    title: homepageSocialTitle,
     description: homepageDescription,
     siteName: 'MapleRides',
     images: [
       {
-        url: '/Maple-Rides.png',
-        width: 772,
-        height: 441,
-        alt: 'MapleRides logo',
+        url: '/Maple-Rides-ca-opengraph.jpg',
+        alt: 'MapleRides Canada share image',
       },
     ],
   },
   twitter: {
     card: 'summary_large_image',
-    title: 'MapleRides',
+    title: homepageSocialTitle,
     description: homepageDescription,
-    images: ['/Maple-Rides.png'],
+    images: ['/Maple-Rides-ca-opengraph.jpg'],
   },
 }
 

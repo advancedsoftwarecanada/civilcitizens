@@ -21,17 +21,13 @@ const heroHighlights = [
   {
     icon: FaDollarSign,
     title: 'Drivers set their own prices',
-    description: 'A marketplace model that gives drivers more control over every trip.',
+    description: 'Book rides with transparent fares. Drive with more control. No surge pricing. Small flat platform fee.',
   },
   {
-    icon: FaReceipt,
-    title: 'Simple flat fee',
-    description: 'MapleRides keeps pricing straightforward with a small flat fee per ride.',
-  },
-  {
-    icon: FaCreditCard,
-    title: 'Secure Stripe payments',
-    description: 'Payments are processed securely through Stripe for drivers and riders.',
+    icon: FaLeaf,
+    title: 'A simpler, fairer model',
+    description:
+      'MapleRides is a Canadian rideshare platform built around a simpler, fairer model. Riders can book trips with clear pricing, while drivers keep more control by setting their own rates. MapleRides earns a small flat fee per ride, with payments handled through a secure online checkout flow.',
   },
 ]
 
@@ -40,7 +36,7 @@ const driverFeatures = [
   'Set your own prices',
   'No forced surge pricing',
   'No MapleRides withdrawal fee',
-  'Secure payouts with Stripe',
+  'Secure payouts',
 ]
 
 const riderFeatures = [
@@ -54,8 +50,8 @@ const riderFeatures = [
 const trustFeatures = [
   {
     icon: FaCreditCard,
-    title: 'Secure payments powered by Stripe',
-    description: 'A familiar checkout layer built for secure online payments.',
+    title: 'Secure online payments',
+    description: 'A dependable checkout experience built for secure online payments.',
   },
   {
     icon: FaUsers,
@@ -145,11 +141,8 @@ const landingMapRouteCoordinates: Array<[number, number]> = [
   [-63.5752, 44.6488],
 ]
 
-const landingMapHighlights = [
-  'A coast-to-coast network starting with the communities that need better ride coverage.',
-  'Flexible local supply means the service can work in major cities, small towns, and regional corridors.',
-  'The map shows the kind of footprint MapleRides is built for, not a fixed or closed launch list.',
-]
+const landingMapHighlight =
+  'Get a ride in populated urban area, and even in small rural communities. We charge a small flat rate fee, allowing drivers to keep way more profit, and operate in every city in Canada.'
 
 function SectionShell({
   children,
@@ -224,20 +217,29 @@ function Checklist({ items, light = false }: { items: string[]; light?: boolean 
   )
 }
 
-function HeroActions({ final = false }: { final?: boolean }) {
+function HeroActions({ final = false, lightTheme = false }: { final?: boolean; lightTheme?: boolean }) {
   const secondaryLabel = final ? 'Become a Driver' : 'Drive with MapleRides'
 
   return (
     <div className="flex flex-col gap-3 sm:flex-row">
       <AuthAwareCtaButton
-        className="inline-flex items-center justify-center gap-2 rounded-full bg-white px-6 py-3 text-sm font-semibold text-red-600 transition hover:bg-red-50"
+        className={`inline-flex items-center justify-center gap-2 rounded-full px-6 py-3 text-sm font-semibold transition ${
+          lightTheme
+            ? 'bg-[var(--cc-primary)] text-white shadow-[0_18px_38px_rgba(220,38,38,0.22)] hover:bg-red-700'
+            : 'bg-[var(--cc-primary)] text-white shadow-[0_18px_38px_rgba(220,38,38,0.24)] hover:bg-red-700'
+        }`}
       >
+        <FaCarSide className="h-3.5 w-3.5" />
         Book a Ride
-        <FaArrowRight className="h-3.5 w-3.5" />
       </AuthAwareCtaButton>
       <AuthAwareCtaButton
-        className="inline-flex items-center justify-center gap-2 rounded-full border border-white/35 px-6 py-3 text-sm font-semibold text-white transition hover:bg-white/10"
+        className={`inline-flex items-center justify-center gap-2 rounded-full border px-6 py-3 text-sm font-semibold transition ${
+          lightTheme
+            ? 'border-emerald-600 bg-emerald-600 text-white shadow-[0_18px_38px_rgba(5,150,105,0.22)] hover:bg-emerald-700 hover:border-emerald-700'
+            : 'border-emerald-500 bg-emerald-500 text-white shadow-[0_18px_38px_rgba(5,150,105,0.24)] hover:bg-emerald-600 hover:border-emerald-600'
+        }`}
       >
+        <FaDollarSign className="h-3.5 w-3.5" />
         {secondaryLabel}
       </AuthAwareCtaButton>
     </div>
@@ -247,32 +249,34 @@ function HeroActions({ final = false }: { final?: boolean }) {
 export default function MapleRidesLandingPage() {
   return (
     <div className="min-h-screen bg-[linear-gradient(180deg,#f8fafc_0%,#fff6f3_30%,#ffffff_100%)] text-slate-950">
-      <SectionShell className="relative overflow-hidden bg-[radial-gradient(circle_at_top_left,#ff7b66_0%,#e1271c_45%,#7a140f_100%)] py-8 text-white sm:py-10">
-        <div className="absolute inset-0 bg-[linear-gradient(135deg,rgba(255,255,255,0.08),transparent_48%,rgba(255,255,255,0.03)_70%,transparent_100%)]" />
+      <SectionShell className="relative overflow-hidden py-6 sm:py-8">
+        <div className="absolute inset-0 bg-[url('/Toronto-Wallpaper.jpg')] bg-cover bg-center bg-fixed" />
+        <div className="absolute inset-0 bg-[linear-gradient(135deg,rgba(15,23,42,0.72)_0%,rgba(15,23,42,0.42)_42%,rgba(225,39,28,0.22)_100%)]" />
+        <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(248,113,113,0.26),transparent_30%)]" />
+        <div className="absolute inset-0 bg-[linear-gradient(180deg,rgba(15,23,42,0.16)_0%,rgba(15,23,42,0.34)_100%)]" />
         <div className="relative">
-          <div className="flex items-center justify-between gap-4">
-            <Link href="/" className="inline-flex items-center gap-3" aria-label="MapleRides home">
-              <Image src="/Maple-Rides.png" alt="MapleRides logo" width={164} height={52} className="h-auto w-[132px] sm:w-[164px]" priority />
-            </Link>
-            <div className="hidden items-center gap-5 text-sm font-medium text-red-50/85 md:flex">
-              <a href="#coverage-map" className="transition hover:text-white">Coverage Map</a>
-              <a href="#drivers" className="transition hover:text-white">Drivers</a>
-              <a href="#riders" className="transition hover:text-white">Riders</a>
-              <a href="#trust" className="transition hover:text-white">Trust</a>
+          <div className="rounded-[1.8rem] border border-slate-200 bg-white px-4 py-3 shadow-[0_16px_36px_rgba(15,23,42,0.12)] sm:px-6">
+            <div className="flex items-center justify-between gap-4">
+              <Link href="/" className="inline-flex items-center gap-3" aria-label="MapleRides home">
+                <Image src="/Maple-Rides.png" alt="MapleRides logo" width={164} height={52} className="h-auto w-[132px] sm:w-[164px]" priority />
+              </Link>
+              <div className="hidden items-center gap-6 text-sm font-semibold text-slate-700 md:flex">
+                <a href="#coverage-map" className="transition hover:text-[var(--cc-primary)]">Coverage Map</a>
+                <a href="#drivers" className="transition hover:text-[var(--cc-primary)]">Drivers</a>
+                <a href="#riders" className="transition hover:text-[var(--cc-primary)]">Riders</a>
+                <a href="#trust" className="transition hover:text-[var(--cc-primary)]">Trust</a>
+              </div>
             </div>
           </div>
 
-          <div className="mt-16 grid gap-12 lg:grid-cols-[minmax(0,1.08fr)_minmax(280px,0.92fr)] lg:items-center">
+          <div className="mt-8 grid gap-12 lg:grid-cols-[minmax(0,1.08fr)_minmax(280px,0.92fr)] lg:items-start lg:gap-10">
             <div>
-              <p className="text-sm font-semibold uppercase tracking-[0.32em] text-red-100/80">Canadian owned rides platform</p>
-              <h1 className="mt-5 max-w-4xl text-4xl font-black tracking-[-0.05em] sm:text-6xl lg:text-7xl">
-                Canada&rsquo;s Fair Ride Network
+              <p className="text-sm font-semibold uppercase tracking-[0.32em] text-red-200">Canadian owned rides platform</p>
+              <h1 className="mt-5 max-w-4xl text-4xl font-black tracking-[-0.05em] text-white sm:text-6xl lg:text-7xl">
+                A Canadian app for booking rides and driving for hire
               </h1>
-              <p className="mt-5 max-w-2xl text-lg leading-8 text-red-50/88 sm:text-xl">
-                Fair pay for drivers. Fair pricing for riders. No surge pricing. Ever.
-              </p>
-              <p className="mt-5 max-w-2xl text-base leading-7 text-red-50/78">
-                MapleRides is a Canadian rides platform built to give drivers more control and give riders a more transparent experience. Drivers set their own prices. MapleRides takes a small flat fee. Payments are processed securely through Stripe.
+              <p className="mt-4 max-w-2xl text-lg font-semibold leading-8 text-red-200 sm:text-[1.35rem]">
+                🍁 A Canadian alternative to Uber and Lyft with no surge pricing.
               </p>
               <div className="mt-8">
                 <HeroActions />
@@ -280,20 +284,10 @@ export default function MapleRidesLandingPage() {
             </div>
 
             <div className="relative">
-              <div className="rounded-[2.4rem] border border-white/15 bg-slate-950/35 p-5 shadow-[0_28px_80px_rgba(122,20,15,0.32)] backdrop-blur">
-                <div className="grid gap-4 sm:grid-cols-2">
-                  <div className="rounded-[1.8rem] border border-white/10 bg-white/10 p-5">
-                    <p className="text-xs font-semibold uppercase tracking-[0.28em] text-white/60">Driver first</p>
-                    <p className="mt-2 text-sm text-white">Drivers keep more and control pricing.</p>
-                  </div>
-                  <div className="rounded-[1.8rem] border border-white/10 bg-white/10 p-5">
-                    <p className="text-xs font-semibold uppercase tracking-[0.28em] text-white/60">Rider friendly</p>
-                    <p className="mt-2 text-sm text-white">Transparent fares without surge spikes.</p>
-                  </div>
-                </div>
-                <div className="mt-4 grid gap-4">
+              <div className="rounded-[2.4rem] border border-white/70 bg-white/72 p-5 shadow-[0_28px_80px_rgba(225,39,28,0.18)] backdrop-blur">
+                <div className="grid gap-4">
                   {heroHighlights.map((item) => (
-                    <FeatureCard key={item.title} {...item} light />
+                    <FeatureCard key={item.title} {...item} />
                   ))}
                 </div>
               </div>
@@ -307,15 +301,13 @@ export default function MapleRidesLandingPage() {
           <div>
             <SectionHeading
               eyebrow="Coverage Map"
-              title="A Better View Than Another Marketing Block"
-              description="MapleRides is meant to work across real Canadian travel patterns, from dense urban trips to long regional corridors. The map gives a clearer picture than another card grid."
+              title="Ride Everywhere In Canada"
+              description="Peer to Peer ride connections lets you get a ride anywhere in Canada"
             />
-            <div className="mt-8 space-y-3">
-              {landingMapHighlights.map((item) => (
-                <div key={item} className="rounded-[1.6rem] border border-slate-200 bg-white px-5 py-4 text-sm leading-6 text-slate-700 shadow-[0_18px_40px_rgba(15,23,42,0.05)]">
-                  {item}
-                </div>
-              ))}
+            <div className="mt-8">
+              <div className="rounded-[1.6rem] border border-slate-200 bg-white px-5 py-4 text-sm leading-6 text-slate-700 shadow-[0_18px_40px_rgba(15,23,42,0.05)]">
+                {landingMapHighlight}
+              </div>
             </div>
           </div>
           <div className="rounded-[2rem] border border-slate-200 bg-white p-3 shadow-[0_24px_70px_rgba(15,23,42,0.08)] sm:p-4">
