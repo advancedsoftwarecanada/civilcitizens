@@ -3,19 +3,12 @@
 import Link from 'next/link'
 import { usePathname, useRouter } from 'next/navigation'
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
-import { normalizeProvinceCode } from '@civil/shared'
 import {
   HiOutlineArrowLeftCircle,
-  HiOutlineBell,
-  HiOutlineChatBubbleOvalLeft,
   HiOutlineComputerDesktop,
   HiOutlineMagnifyingGlass,
-  HiOutlineShoppingCart,
-  HiOutlineUsers,
   HiOutlineXMark,
 } from 'react-icons/hi2'
-import { AiOutlineHome } from 'react-icons/ai'
-import { MdOutlineReadMore } from 'react-icons/md'
 import type { IconType } from 'react-icons'
 import clsx from 'clsx'
 import CivilCard from './CivilCard'
@@ -23,121 +16,22 @@ import { PRIMARY_NAV, getSidebarNavItems } from './Sidebar'
 import { getFamilyLockedCardIdentity } from '../_lib/familyIdentity'
 import type { MeResponse } from '../_lib/me'
 import { buildApiUrl } from '../_lib/api'
-import { RightRail } from './RightRail'
-import CommunityRightRailClient from './CommunityRightRailClient'
-import { useRightRailRegistry } from './RightRailRegistry'
 import { getStoredToken } from '../_lib/tokenStorage'
-import { readMarketCart } from '../market/_lib/cart'
-import { restoreParentAuthSession } from '../_lib/authSession'
 import { useViewerStore } from '../_lib/viewerStore'
 import { ensureViewerMe } from '../_lib/viewerMe'
 import { SearchResults, type SearchResultsLoadingState } from './search/SearchResults'
-import MessagesNavBlock from './MessagesNavBlock'
-import { hasFamilyProfilesAvailable } from '../_lib/me'
-import OrganizationRailCard from '../com/_components/OrganizationRailCard'
-import { clearFamilyView } from '../_lib/familyView'
 import { useMobileKeyboardState } from '../_lib/mobileKeyboard'
 import { PUSH_UI_RESET_EVENT } from '../_lib/pushNavigation'
 
-const DEFAULT_NAV_BUTTONS: Array<{
-  key: 'home' | 'cart' | 'messages' | 'notifications' | 'ai' | 'more' | 'friends'
+type MobileDockButton = {
+  key: string
   label: string
-  icon?: IconType
-  imageSrc?: string
-  text?: string
-}> = [
-  { key: 'home', label: 'Menu', icon: AiOutlineHome },
-  { key: 'cart', label: 'Cart', icon: HiOutlineShoppingCart },
-  { key: 'messages', label: 'Messages', icon: HiOutlineChatBubbleOvalLeft },
-  { key: 'notifications', label: 'Notifications', icon: HiOutlineBell },
-  { key: 'ai', label: 'Civil AI', text: 'AI' },
-  { key: 'more', label: 'More', icon: MdOutlineReadMore },
-] as const
-
-const FAMILY_NAV_BUTTONS: Array<{
-  key: 'home' | 'cart' | 'messages' | 'notifications' | 'ai' | 'more' | 'friends'
-  label: string
-  icon?: IconType
-  imageSrc?: string
-  text?: string
-}> = [
-  { key: 'home', label: 'Menu', icon: AiOutlineHome },
-  { key: 'friends', label: 'Friends', icon: HiOutlineUsers },
-  { key: 'messages', label: 'Messages', icon: HiOutlineChatBubbleOvalLeft },
-  { key: 'notifications', label: 'Notifications', icon: HiOutlineBell },
-  { key: 'more', label: 'More', icon: MdOutlineReadMore },
-] as const
+  href: string
+  icon: IconType
+}
 
 const DRAWER_TRANSITION_MS = 320
-const MOBILE_MORE_DRAWER_CLOSE_EVENT = 'civil:mobile-more-close'
 const MOBILE_DRAWER_STATE_EVENT = 'civil:mobile-drawer-state'
-
-type NavButtonKey = (typeof DEFAULT_NAV_BUTTONS)[number]['key']
-
-type UserRelationshipRoute = {
-  handle: string
-  kind: 'friends' | 'contacts' | 'connections' | 'communities' | 'organizations'
-}
-
-function toPathLabel(slug: string) {
-  return slug
-    .split('-')
-    .filter(Boolean)
-    .map((segment) => segment.charAt(0).toUpperCase() + segment.slice(1))
-    .join(' ')
-}
-
-function getOrgRouteFromPathname(pathname: string | null | undefined):
-  | { basePath: string; activePath: string; province: string; municipality: string; organization: string }
-  | null {
-  if (!pathname) return null
-  const parts = pathname.split('?')[0]?.split('#')[0]?.split('/').filter(Boolean) ?? []
-  if (parts.length < 5) return null
-  if (parts[0] !== 'com') return null
-  if (parts[3] !== 'orgs') return null
-  const province = parts[1]
-  const municipality = parts[2]
-  const organization = parts[4]
-  if (!province || !municipality || !organization) return null
-  const basePath = `/com/${province}/${municipality}/orgs/${organization}`
-  return { basePath, activePath: pathname, province, municipality, organization }
-}
-
-function getCommunityRouteFromPathname(pathname: string | null | undefined):
-  | { province: string; municipality: string }
-  | null {
-  if (!pathname) return null
-  const parts = pathname.split('?')[0]?.split('#')[0]?.split('/').filter(Boolean) ?? []
-  if (!parts.length) return null
-
-  if (parts[0] === 'com') {
-    if (parts.length < 3) return null
-    const province = parts[1]
-    const municipality = parts[2]
-    if (!province || !municipality) return null
-    return { province, municipality }
-  }
-
-  if (parts.length < 2) return null
-  const province = parts[0]
-  const municipality = parts[1]
-  if (!province || !municipality) return null
-  if (!normalizeProvinceCode(province)) return null
-  return { province, municipality }
-}
-
-function getUserRelationshipRouteFromPathname(pathname: string | null | undefined): UserRelationshipRoute | null {
-  if (!pathname) return null
-  const parts = pathname.split('?')[0]?.split('#')[0]?.split('/').filter(Boolean) ?? []
-  if (parts.length !== 3 || parts[0] !== 'u') return null
-  const handle = parts[1]
-  const kind = parts[2]
-  if (!handle) return null
-  if (kind === 'friends' || kind === 'contacts' || kind === 'connections' || kind === 'communities' || kind === 'organizations') {
-    return { handle, kind }
-  }
-  return null
-}
 
 function MobileDrawerProfileCardSkeleton() {
   return (
@@ -156,7 +50,6 @@ function MobileDrawerProfileCardSkeleton() {
 }
 
 export default function MobileDock() {
-  const { activeRightRail } = useRightRailRegistry()
   const pathname = usePathname()
   const router = useRouter()
   const keyboardState = useMobileKeyboardState()
@@ -165,12 +58,9 @@ export default function MobileDock() {
   const [resolvedViewer, setResolvedViewer] = useState<MeResponse | null>(null)
   const effectiveViewer = resolvedViewer ?? cachedViewer
   const sidebarNavItems = useMemo(() => getSidebarNavItems(familyView, effectiveViewer), [effectiveViewer, familyView])
-  const navButtons = useMemo(() => (familyView ? FAMILY_NAV_BUTTONS : DEFAULT_NAV_BUTTONS), [familyView])
+  const navButtons = useMemo<MobileDockButton[]>(() => sidebarNavItems.slice(0, 5), [sidebarNavItems])
   const [menuOpen, setMenuOpen] = useState(false)
   const [menuMounted, setMenuMounted] = useState(false)
-  const [moreOpen, setMoreOpen] = useState(false)
-  const [moreMounted, setMoreMounted] = useState(false)
-  const isOrganizationsDirectory = pathname === '/organizations/directory'
   const isFamilyLockedSession = Boolean(familyView) || effectiveViewer?.accountType === 'family_member'
   const familyCardIdentity = getFamilyLockedCardIdentity(effectiveViewer, familyView)
   const [hydrated, setHydrated] = useState(false)
@@ -179,17 +69,13 @@ export default function MobileDock() {
   const [messageUnreadCount, setMessageUnreadCount] = useState(0)
   const [orgChannelUnreadCount, setOrgChannelUnreadCount] = useState(0)
   const [marketChatUnreadCount, setMarketChatUnreadCount] = useState(0)
-  const [marketCartCount, setMarketCartCount] = useState(0)
   const unifiedMessageUnreadCount = Math.max(messageUnreadCount, orgChannelUnreadCount) + marketChatUnreadCount
   const [menuSearchQuery, setMenuSearchQuery] = useState('')
   const [menuSearchFocused, setMenuSearchFocused] = useState(false)
-  const [menuSearchLoadingState, setMenuSearchLoadingState] = useState<SearchResultsLoadingState>({ active: false, label: 'Searching Civil' })
-  const [civilAiOpen, setCivilAiOpen] = useState(false)
+  const [menuSearchLoadingState, setMenuSearchLoadingState] = useState<SearchResultsLoadingState>({ active: false, label: 'Searching MapleRides' })
   const menuSearchBlurTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const closeTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const moreCloseTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const menuMountedRef = useRef(false)
-  const moreMountedRef = useRef(false)
 
   useEffect(() => {
     setHydrated(true)
@@ -293,47 +179,18 @@ export default function MobileDock() {
   }, [hasSession, isFamilyLockedSession])
 
   useEffect(() => {
-    if (!hasSession || typeof window === 'undefined') return undefined
-
-    const refreshCount = () => {
-      const total = readMarketCart().reduce((sum, item) => sum + item.quantity, 0)
-      setMarketCartCount(total)
-    }
-
-    refreshCount()
-
-    const handleStorage = (event: StorageEvent) => {
-      if (event.key && event.key !== 'civil_market_cart') return
-      refreshCount()
-    }
-
-    const handleLocalCartChanged = () => {
-      refreshCount()
-    }
-
-    window.addEventListener('storage', handleStorage)
-    window.addEventListener('civil:market-cart-changed', handleLocalCartChanged)
-
-    return () => {
-      window.removeEventListener('storage', handleStorage)
-      window.removeEventListener('civil:market-cart-changed', handleLocalCartChanged)
-    }
-  }, [hasSession])
-
-  useEffect(() => {
-    if (!menuMounted && !moreMounted) return undefined
+    if (!menuMounted) return undefined
     const original = document.body.style.overflow
     document.body.style.overflow = 'hidden'
     return () => {
       document.body.style.overflow = original
     }
-  }, [menuMounted, moreMounted])
+  }, [menuMounted])
 
   useEffect(() => {
     if (typeof window === 'undefined') return
-    const open = menuMounted || moreMounted
-    window.dispatchEvent(new CustomEvent(MOBILE_DRAWER_STATE_EVENT, { detail: { open } }))
-  }, [menuMounted, moreMounted])
+    window.dispatchEvent(new CustomEvent(MOBILE_DRAWER_STATE_EVENT, { detail: { open: menuMounted } }))
+  }, [menuMounted])
 
   useEffect(
     () => () => {
@@ -364,43 +221,14 @@ export default function MobileDock() {
     requestAnimationFrame(() => setMenuOpen(true))
   }, [])
 
-  const handleCloseMore = useCallback(() => {
-    setMoreOpen(false)
-    if (moreCloseTimeoutRef.current) {
-      clearTimeout(moreCloseTimeoutRef.current)
-    }
-    moreCloseTimeoutRef.current = setTimeout(() => {
-      setMoreMounted(false)
-      moreCloseTimeoutRef.current = null
-    }, DRAWER_TRANSITION_MS)
-  }, [])
-
-  const handleOpenMore = useCallback(() => {
-    if (moreCloseTimeoutRef.current) {
-      clearTimeout(moreCloseTimeoutRef.current)
-      moreCloseTimeoutRef.current = null
-    }
-    setMoreMounted(true)
-    requestAnimationFrame(() => setMoreOpen(true))
-  }, [])
-
   useEffect(() => {
     menuMountedRef.current = menuMounted
   }, [menuMounted])
 
   useEffect(() => {
-    moreMountedRef.current = moreMounted
-  }, [moreMounted])
-
-  useEffect(() => {
     if (!menuMountedRef.current) return
     handleCloseMenu()
   }, [pathname, handleCloseMenu])
-
-  useEffect(() => {
-    if (!moreMountedRef.current) return
-    handleCloseMore()
-  }, [pathname, handleCloseMore])
 
   useEffect(() => {
     setMenuSearchFocused(false)
@@ -411,9 +239,6 @@ export default function MobileDock() {
       if (closeTimeoutRef.current) {
         clearTimeout(closeTimeoutRef.current)
       }
-      if (moreCloseTimeoutRef.current) {
-        clearTimeout(moreCloseTimeoutRef.current)
-      }
       if (menuSearchBlurTimeoutRef.current) {
         clearTimeout(menuSearchBlurTimeoutRef.current)
       }
@@ -422,35 +247,14 @@ export default function MobileDock() {
   )
 
   useEffect(() => {
-    const handleCivilAiState = (event: Event) => {
-      const nextOpen = Boolean((event as CustomEvent<{ open?: boolean }>).detail?.open)
-      setCivilAiOpen(nextOpen)
-    }
-
-    window.addEventListener('civil-ai:state', handleCivilAiState)
-    return () => window.removeEventListener('civil-ai:state', handleCivilAiState)
-  }, [])
-
-  useEffect(() => {
-    const handleCloseMoreEvent = () => {
-      if (!moreMountedRef.current) return
-      handleCloseMore()
-    }
-
-    window.addEventListener(MOBILE_MORE_DRAWER_CLOSE_EVENT, handleCloseMoreEvent)
-    return () => window.removeEventListener(MOBILE_MORE_DRAWER_CLOSE_EVENT, handleCloseMoreEvent)
-  }, [handleCloseMore])
-
-  useEffect(() => {
     const handlePushUiReset = () => {
       setMenuSearchFocused(false)
       if (menuMountedRef.current) handleCloseMenu()
-      if (moreMountedRef.current) handleCloseMore()
     }
 
     window.addEventListener(PUSH_UI_RESET_EVENT, handlePushUiReset)
     return () => window.removeEventListener(PUSH_UI_RESET_EVENT, handlePushUiReset)
-  }, [handleCloseMenu, handleCloseMore])
+  }, [handleCloseMenu])
 
   const handleMenuSearchFocus = useCallback(() => {
     if (menuSearchBlurTimeoutRef.current) {
@@ -467,10 +271,6 @@ export default function MobileDock() {
     }, 120)
   }, [])
 
-  const handleClearMenuSearch = useCallback(() => {
-    setMenuSearchQuery('')
-  }, [])
-
   const handleDrawerSearchResultSelect = useCallback(() => {
     setMenuSearchFocused(false)
     handleCloseMenu()
@@ -479,40 +279,6 @@ export default function MobileDock() {
   const handleMenuSearchLoadingStateChange = useCallback((state: SearchResultsLoadingState) => {
     setMenuSearchLoadingState(state)
   }, [])
-
-  const handleButtonPress = useCallback(
-    (key: NavButtonKey) => {
-      if (key === 'home') {
-        handleOpenMenu()
-        return
-      }
-      if (key === 'cart') {
-        router.push('/market/cart')
-        return
-      }
-      if (key === 'friends') {
-        router.push('/friends')
-        return
-      }
-      if (key === 'notifications') {
-        router.push('/notifications')
-        return
-      }
-      if (key === 'ai') {
-        window.dispatchEvent(new CustomEvent('civil-ai:open'))
-        return
-      }
-      if (key === 'messages') {
-        router.push('/messages')
-        return
-      }
-      if (key === 'more') {
-        handleOpenMore()
-        return
-      }
-    },
-    [handleOpenMenu, handleOpenMore, router],
-  )
 
   const navGroups = useMemo(() => [{ title: '', items: sidebarNavItems.length ? sidebarNavItems : PRIMARY_NAV }], [sidebarNavItems])
 
@@ -535,103 +301,8 @@ export default function MobileDock() {
     gridTemplateColumns: `repeat(${navButtons.length}, minmax(0, 1fr))`,
   }), [navButtons.length])
 
-  const orgRoute = useMemo(() => getOrgRouteFromPathname(pathname), [pathname])
-  const communityRoute = useMemo(() => getCommunityRouteFromPathname(pathname), [pathname])
-  const userRelationshipRoute = useMemo(() => getUserRelationshipRouteFromPathname(pathname), [pathname])
   const profileHref = familyCardIdentity?.href ?? (effectiveViewer?.handle ? `/u/${effectiveViewer.handle}` : undefined)
   const showProfileCardSkeleton = hasSession && !effectiveViewer && !familyView
-
-  const morePanelContent = useMemo(() => {
-    if (activeRightRail?.content) {
-      return activeRightRail.content
-    }
-
-    if (pathname === '/home') {
-      return <RightRail mode="home" showOrganizations showRsvps />
-    }
-    const isFriendsDirectoryRoute =
-      pathname?.startsWith('/friends') || Boolean(pathname?.match(/^\/u\/[^/]+\/friends(?:\/|$)/))
-
-    if (isFriendsDirectoryRoute) {
-      return (
-        <div className="space-y-4">
-          <MessagesNavBlock
-            active="friends"
-            visibleItems={hasFamilyProfilesAvailable(effectiveViewer) ? ['family', 'friends', 'groups', 'network', 'market', 'drivers'] : ['friends', 'groups', 'network', 'market', 'drivers']}
-          />
-          <RightRail hideCommunities showPendingFriendRequests />
-        </div>
-      )
-    }
-    if (pathname?.startsWith('/network')) {
-      return pathname === '/network'
-        ? <RightRail mode="network" showRsvps />
-        : <RightRail mode="network" />
-    }
-    if (pathname?.startsWith('/events')) {
-      return <RightRail mode="events" showOrganizations />
-    }
-    if (pathname?.startsWith('/work')) {
-      return <RightRail mode="work" organizationLinkTarget="chat" />
-    }
-    if (pathname?.startsWith('/drive') || pathname?.startsWith('/delivery')) {
-      return <RightRail mode="drive" organizationLinkTarget="chat" />
-    }
-    if (pathname?.startsWith('/market')) {
-      return <RightRail mode="default" hideContacts hideCommunities />
-    }
-    if (pathname?.startsWith('/channels')) {
-      return <RightRail mode="organizations" organizationLinkTarget="chat" />
-    }
-    if (pathname === '/organizations') {
-      return <RightRail showOrganizations organizationBlockVariant="followed" hideContacts hideCommunities hideFamilyBlock />
-    }
-    if (pathname?.startsWith('/organizations')) {
-      return isOrganizationsDirectory ? (
-        <RightRail mode="organizationsDirectory" />
-      ) : (
-        <RightRail mode="organizations" />
-      )
-    }
-    if (userRelationshipRoute) {
-      if (userRelationshipRoute.kind === 'friends' || userRelationshipRoute.kind === 'contacts' || userRelationshipRoute.kind === 'connections') {
-        return (
-          <div className="space-y-4">
-            <MessagesNavBlock
-              active={userRelationshipRoute.kind === 'connections' ? 'network' : 'friends'}
-              visibleItems={hasFamilyProfilesAvailable(effectiveViewer) ? ['family', 'friends', 'groups', 'network', 'market', 'drivers'] : ['friends', 'groups', 'network', 'market', 'drivers']}
-              footerAction={effectiveViewer?.handle ? { label: 'My Contacts', href: `/u/${effectiveViewer.handle}/contacts` } : undefined}
-            />
-            <RightRail
-              hideContacts
-              hideCommunities={userRelationshipRoute.kind === 'friends' || userRelationshipRoute.kind === 'contacts'}
-            />
-          </div>
-        )
-      }
-      return <RightRail hideContacts />
-    }
-    if (orgRoute) {
-      return (
-        <OrganizationRailCard
-          pathname={pathname}
-          basePath={orgRoute.basePath}
-          province={orgRoute.province}
-          municipality={orgRoute.municipality}
-          organizationSlug={orgRoute.organization}
-          organizationName={toPathLabel(orgRoute.organization)}
-          onNavigate={handleCloseMore}
-        />
-      )
-    }
-    if (pathname?.startsWith('/communities') || pathname?.startsWith('/chambers')) {
-      return <RightRail mode="communitiesFeed" />
-    }
-    if (communityRoute) {
-      return <CommunityRightRailClient province={communityRoute.province} municipality={communityRoute.municipality} />
-    }
-    return <RightRail />
-  }, [activeRightRail, pathname, handleCloseMore, isOrganizationsDirectory, orgRoute, communityRoute, userRelationshipRoute])
 
   if (!hydrated || !hasSession) {
     return null
@@ -657,29 +328,13 @@ export default function MobileDock() {
         <div className="grid gap-0.5" style={navGridStyle}>
           {navButtons.map((item) => {
             const Icon = item.icon
-            const isActive =
-              (item.key === 'home' && menuOpen) ||
-              (item.key === 'friends' && pathname?.startsWith('/friends')) ||
-              (item.key === 'cart' && (pathname?.startsWith('/market/cart') || pathname?.startsWith('/market/checkout'))) ||
-              (item.key === 'notifications' && pathname?.startsWith('/notifications')) ||
-              (item.key === 'messages' && (pathname?.startsWith('/messages') || pathname?.startsWith('/channels'))) ||
-              (item.key === 'ai' && civilAiOpen) ||
-              (item.key === 'more' && moreOpen)
-
-            const count =
-              item.key === 'cart'
-                ? marketCartCount
-                : item.key === 'notifications'
-                ? unreadCount
-                : item.key === 'messages'
-                  ? unifiedMessageUnreadCount
-                    : 0
+            const isActive = pathname ? pathname === item.href || pathname.startsWith(`${item.href}/`) || (item.key === 'ride' && pathname.startsWith('/drive/ride/request')) : false
 
             return (
               <button
                 key={item.key}
                 type="button"
-                onClick={() => handleButtonPress(item.key)}
+                onClick={() => router.push(item.href)}
                 className={clsx(
                   'flex h-11 w-full items-center justify-center rounded-2xl px-3 transition-colors',
                   isActive
@@ -688,19 +343,9 @@ export default function MobileDock() {
                 )}
                 aria-label={item.label}
               >
-                <div className="relative">
-                  {item.text ? (
-                    <span className="text-sm font-semibold leading-none tracking-[0.08em]">{item.text}</span>
-                  ) : item.imageSrc ? (
-                    <img src={item.imageSrc} alt="" className="h-6 w-6 rounded-lg" />
-                  ) : Icon ? (
-                    <Icon className="text-xl leading-none" />
-                  ) : null}
-                  {count > 0 ? (
-                    <span className="absolute -right-2 -top-2 flex h-4 w-4 items-center justify-center rounded-full bg-rose-500 text-[9px] font-bold text-white ring-2 ring-white">
-                      {count > 99 ? '99+' : count}
-                    </span>
-                  ) : null}
+                <div className="relative flex flex-col items-center justify-center gap-1">
+                  <Icon className="text-[18px] leading-none" />
+                  <span className="text-[10px] font-semibold leading-none">{item.label}</span>
                 </div>
               </button>
             )
@@ -853,45 +498,6 @@ export default function MobileDock() {
                   </div>
                 </div>
               ))}
-            </div>
-          </div>
-        </div>
-      ) : null}
-
-      {moreMounted ? (
-        <div className="fixed inset-0 z-[95] xl:hidden" aria-modal="true" role="dialog">
-          <button
-            type="button"
-            aria-label="Close more panel"
-            className={clsx(
-              'absolute inset-0 bg-slate-900/60 backdrop-blur transition-opacity duration-300',
-              moreOpen ? 'opacity-100' : 'opacity-0',
-            )}
-            onClick={handleCloseMore}
-          />
-          <div
-            className={clsx(
-              'absolute inset-y-0 right-0 flex h-full w-[min(24rem,90vw)] max-w-full flex-col bg-white px-5 pb-[calc(env(safe-area-inset-bottom)+1.5rem)] pt-[var(--drawer-top-safe-pad)] shadow-2xl transition-transform duration-300',
-              moreOpen ? 'translate-x-0' : 'translate-x-full',
-            )}
-            style={drawerSpacingVars}
-          >
-            <div className="flex items-center justify-between gap-3">
-              <div>
-                <p className="text-xs font-semibold uppercase tracking-[0.3em] text-slate-400">More</p>
-                <p className="text-sm font-semibold text-slate-900">Chambers of Citizens & shortcuts</p>
-              </div>
-              <button
-                type="button"
-                className="rounded-full border border-slate-200 p-2 text-slate-500"
-                onClick={handleCloseMore}
-                aria-label="Close more panel"
-              >
-                <HiOutlineXMark className="text-lg" />
-              </button>
-            </div>
-            <div className="mt-[calc(var(--drawer-top-gap)*1.6)] flex-1 overflow-y-auto pb-12">
-              {morePanelContent}
             </div>
           </div>
         </div>

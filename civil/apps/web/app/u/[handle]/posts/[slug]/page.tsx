@@ -3,12 +3,10 @@
 import Link from 'next/link'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import clsx from 'clsx'
 import { LuMessageCircle, LuRepeat2, LuShare } from 'react-icons/lu'
 import { HiPencil, HiTrash } from 'react-icons/hi2'
 import type { ReactionType } from '@civil/shared'
 import Sidebar from '../../../../_components/Sidebar'
-import { RightRail } from '../../../../_components/RightRail'
 import { JURISDICTION_LABELS, type ApiPost } from '../../../../_components/PostComposer'
 import RichTextEditor from '../../../../_components/RichTextEditor'
 import CommentComposer from '../../../../_components/CommentComposer'
@@ -517,7 +515,7 @@ export default function UserPostPage({ params }: PageProps) {
       </div>
 
       <div className="mx-auto w-full max-w-screen-2xl px-4 sm:px-8 xl:pl-[18rem] xl:pr-0 2xl:pl-[20rem] 2xl:pr-0">
-        <div className="grid grid-cols-1 gap-8 xl:grid-cols-[minmax(0,1fr)_320px] 2xl:grid-cols-[minmax(0,1fr)_360px]">
+        <div className="grid grid-cols-1 gap-8">
 
           <main className="space-y-8 py-8">
             {status === 'loading' ? (
@@ -798,9 +796,6 @@ export default function UserPostPage({ params }: PageProps) {
             ) : null}
           </main>
 
-          <aside className="hidden xl:block">
-            <RightRail />
-          </aside>
         </div>
       </div>
       {viewer && !mobileReplyComposerActive ? <ThreadBottomCommentComposer onSubmit={(body) => handleReply(null, body)} /> : null}

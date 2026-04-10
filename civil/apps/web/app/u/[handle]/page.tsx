@@ -15,7 +15,6 @@ import {
   HiOutlineDocumentText,
   HiOutlinePencilSquare,
   HiOutlinePhone,
-  HiOutlinePhoto,
   HiOutlineUserPlus,
   HiOutlineUsers,
   HiOutlineVideoCamera,
@@ -29,7 +28,6 @@ import FamilyFeedClient from '../../_components/FamilyFeedClient'
 import Sidebar from '../../_components/Sidebar'
 import PostComposer, { ApiPost, type PostType } from '../../_components/PostComposer'
 import PostFeedItem from '../../_components/PostFeedItem'
-import { RightRail } from '../../_components/RightRail'
 import { buildApiUrl } from '../../_lib/api'
 import { buildPostPath } from '../../_lib/shareTarget'
 import { buildAddressesHrefFromAddress } from '../../_lib/addressSearch'
@@ -1612,8 +1610,6 @@ export default function UserPostsPage({ params }: PageProps) {
     return <section className={clsx('grid gap-4', cards.length > 1 && 'xl:grid-cols-2')}>{cards}</section>
   }
 
-  const rightRailContent = <RightRail />
-
   const openComposer = (type: PostType = 'post') => {
     setComposerDefaultType(type)
     setComposerOpen(true)
@@ -2534,19 +2530,12 @@ export default function UserPostsPage({ params }: PageProps) {
     [combinedPostsForMedia, profile?.avatarUrl],
   )
 
-  const coverPost = useMemo(
-    () => combinedPostsForMedia.find((post) => profile?.coverUrl && post.mediaUrl === profile.coverUrl) ?? null,
-    [combinedPostsForMedia, profile?.coverUrl],
-  )
-
   const avatarPostUrl = avatarPost ? buildPostUrl(avatarPost) : null
-  const coverPostUrl = coverPost ? buildPostUrl(coverPost) : null
   const buildFallbackThreadUrl = (postId?: string | null) => {
     if (!postId) return null
     return `/u/${handleParam}/posts/${postId}`
   }
   const avatarThreadUrl = avatarPostUrl ?? buildFallbackThreadUrl(profile?.avatarPostId)
-  const coverThreadUrl = coverPostUrl ?? buildFallbackThreadUrl(profile?.coverPostId)
 
   const renderFamilyProfileActions = () => (
     <div className="flex flex-wrap gap-2">
@@ -2732,7 +2721,6 @@ export default function UserPostsPage({ params }: PageProps) {
 
       <DashboardShell
         className="bg-gradient-to-br from-[#fef5f3] via-[#f3f8ff] to-white"
-        rightRail={rightRailContent}
         rightRailClassName="pt-8"
         mainClassName="space-y-8 pb-12"
       >
@@ -3134,10 +3122,6 @@ export default function UserPostsPage({ params }: PageProps) {
               />
             ))
           )}
-        </div>
-
-        <div className="xl:hidden">
-          <RightRail />
         </div>
 
         <Modal

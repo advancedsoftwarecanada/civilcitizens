@@ -1,9 +1,8 @@
 'use client'
 
-import FeedPageClient from './FeedPageClient'
 import FamilyFeedClient from './FamilyFeedClient'
+import HomeTripsDashboard from './HomeTripsDashboard'
 import HomePushPromptGate from './HomePushPromptGate'
-import { RightRail } from './RightRail'
 import { useViewerStore } from '../_lib/viewerStore'
 
 export default function HomePageClient() {
@@ -24,27 +23,7 @@ export default function HomePageClient() {
   return (
     <>
       <HomePushPromptGate />
-      <FeedPageClient
-        scope="all"
-        sidebarActive="home"
-        title=""
-        emptyState="Your home feed is quiet right now. Follow more chambers of citizens, people, and organizations to fill it out."
-        emptyStateCta={{ label: 'Explore Chambers of Citizens', href: '/chambers' }}
-        defaultSort="hot"
-        showFeedSummary={false}
-        showSupplementalFeedItems={false}
-        sortOptions={[
-          {
-            value: 'hot',
-            label: 'Smart',
-          },
-          {
-            value: 'new',
-            label: 'Latest',
-          },
-        ]}
-        rightRail={<RightRail mode="home" showOrganizations showRsvps />}
-      />
+      <HomeTripsDashboard />
     </>
   )
 }

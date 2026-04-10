@@ -1,4 +1,3 @@
-import { buildApiUrl } from './api'
 import {
   CANADIAN_PROVINCE_OPTIONS,
   formatCanadianPhysicalAddressInline,
@@ -8,6 +7,21 @@ import {
   normalizeCanadianProvince,
   type CanadianAddress,
 } from './canadianAddresses'
+import { buildApiUrl } from './api'
+
+const RAW_NOMINATIM_BASE_URL = process.env.NEXT_PUBLIC_NOMINATIM_BASE_URL ?? 'https://maplerides.ca'
+const RAW_PLACE_SEARCH_API_BASE_URL = process.env.NEXT_PUBLIC_PLACE_SEARCH_API_BASE_URL ?? 'https://maplerides.ca/api'
+const RAW_ROUTING_BASE_URL = process.env.NEXT_PUBLIC_ROUTING_BASE_URL ?? 'https://maplerides.ca'
+
+const sanitizeBase = (base: string) => {
+  if (!base) return ''
+  if (base === '/') return ''
+  return base.replace(/\/+$/, '')
+}
+
+const NOMINATIM_BASE_URL = sanitizeBase(RAW_NOMINATIM_BASE_URL)
+const PLACE_SEARCH_API_BASE_URL = sanitizeBase(RAW_PLACE_SEARCH_API_BASE_URL)
+const ROUTING_BASE_URL = sanitizeBase(RAW_ROUTING_BASE_URL)
 
 export type NominatimAddress = {
   placeId: number | null
@@ -556,7 +570,7 @@ export function buildNominatimSearchUrl(query: string, limit = 5, options?: Pick
     params.set('bounded', '1')
   }
 
-  return `/nominatim/search?${params.toString()}`
+  return `${NOMINATIM_BASE_URL}/nominatim/search?${params.toString()}`
 }
 
 export function buildNominatimReverseUrl(latitude: number, longitude: number) {
@@ -567,7 +581,7 @@ export function buildNominatimReverseUrl(latitude: number, longitude: number) {
     lon: String(longitude),
     zoom: '18',
   })
-  return `/nominatim/reverse?${params.toString()}`
+  return `${NOMINATIM_BASE_URL}/nominatim/reverse?${params.toString()}`
 }
 
 function mapNominatimRecord(record: Record<string, unknown>): NominatimAddress | null {
@@ -714,7 +728,7 @@ export async function fetchPlaceSearchResults(
     }
   }
 
-  const response = await fetch(buildApiUrl(`/search/places?${params.toString()}`), {
+  const response = await fetch(`${PLACE_SEARCH_API_BASE_URL}/search/places?${params.toString()}`, {
     method: 'GET',
     headers: { accept: 'application/json' },
     signal,
@@ -953,7 +967,7 @@ export async function fetchDrivingRoute(origin: RoutePoint, destination: RoutePo
     steps: 'true',
   })
 
-  const response = await fetch(`/osrm/route/v1/driving/${coordinates}?${params.toString()}`, {
+  const response = await fetch(`${ROUTING_BASE_URL}/osrm/route/v1/driving/${coordinates}?${params.toString()}`, {
     method: 'GET',
     headers: { accept: 'application/json' },
     cache: 'no-store',

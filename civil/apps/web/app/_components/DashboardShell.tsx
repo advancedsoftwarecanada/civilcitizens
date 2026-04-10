@@ -1,8 +1,7 @@
 "use client"
 
-import { useEffect, useId, type ReactNode } from 'react'
+import type { ReactNode } from 'react'
 import clsx from 'clsx'
-import { useRightRailRegistry } from './RightRailRegistry'
 
 export type DashboardShellProps = {
   children: ReactNode
@@ -20,51 +19,19 @@ export type DashboardShellProps = {
 
 export default function DashboardShell({
   children,
-  rightRail,
-  showMobileRightRail = false,
-  registerRightRail: shouldRegisterRightRail = true,
   className,
   containerClassName,
   gridClassName,
   mainClassName,
   mainTopClassName = 'pt-4 md:pt-8',
-  rightRailClassName,
-  rightRailTopClassName = 'pt-4 md:pt-8',
 }: DashboardShellProps) {
-  const registryId = useId()
-  const { registerRightRail: registerRailEntry, unregisterRightRail } = useRightRailRegistry()
-
-  useEffect(() => {
-    if (!rightRail || !shouldRegisterRightRail) {
-      unregisterRightRail(registryId)
-      return
-    }
-
-    registerRailEntry({
-      id: registryId,
-      content: rightRail,
-      showMobileInline: showMobileRightRail,
-    })
-
-    return () => {
-      unregisterRightRail(registryId)
-    }
-  }, [registerRailEntry, registryId, rightRail, shouldRegisterRightRail, showMobileRightRail, unregisterRightRail])
-
-  const gridTemplate = rightRail
-    ? 'grid grid-cols-1 gap-5 xl:grid-cols-[minmax(0,1fr)_320px] 2xl:grid-cols-[minmax(0,1fr)_360px] 2xl:gap-10'
-    : 'grid gap-5 grid-cols-1'
-
   return (
     <div data-dashboard-shell="true" className={clsx('min-h-0', className)}>
-      <div className={clsx('mx-auto w-full max-w-screen-2xl px-4 sm:px-8 xl:pl-[18rem] xl:pr-0 2xl:pl-[20rem] 2xl:pr-0', containerClassName)}>
-        <div className={clsx('min-h-0 min-w-0', gridTemplate, gridClassName)}>
+      <div className={clsx('mx-auto w-full max-w-screen-2xl px-4 sm:px-8 xl:pl-[18rem] xl:pr-8 2xl:pl-[20rem] 2xl:pr-10', containerClassName)}>
+        <div className={clsx('grid min-h-0 min-w-0 grid-cols-1 gap-5', gridClassName)}>
           <main className={clsx('min-h-0 min-w-0', mainTopClassName, mainClassName)}>
             {children}
           </main>
-          {rightRail ? (
-            <aside className={clsx('min-h-0 min-w-0 hidden xl:block', rightRailTopClassName, rightRailClassName)}>{rightRail}</aside>
-          ) : null}
         </div>
       </div>
     </div>

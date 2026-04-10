@@ -3,6 +3,7 @@ import type { IconType } from 'react-icons'
 import Image from 'next/image'
 import Link from 'next/link'
 import AuthAwareCtaButton from './AuthAwareCtaButton'
+import { AddressDirectionsMap } from './map/AddressDirectionsMap'
 import {
   FaArrowRight,
   FaCarSide,
@@ -10,17 +11,11 @@ import {
   FaCreditCard,
   FaDollarSign,
   FaLeaf,
-  FaMapMarkedAlt,
   FaReceipt,
-  FaRoad,
   FaShieldAlt,
-  FaSlidersH,
   FaStore,
   FaUsers,
 } from 'react-icons/fa'
-
-const bookRideHref = '/ride'
-const driveWithMapleHref = '/drive/onboarding'
 
 const heroHighlights = [
   {
@@ -37,39 +32,6 @@ const heroHighlights = [
     icon: FaCreditCard,
     title: 'Secure Stripe payments',
     description: 'Payments are processed securely through Stripe for drivers and riders.',
-  },
-]
-
-const whyMapleRidesCards = [
-  {
-    icon: FaDollarSign,
-    title: 'Drivers keep more of every ride',
-    description: 'More of the fare stays with the person doing the work.',
-  },
-  {
-    icon: FaSlidersH,
-    title: 'Drivers set their own prices',
-    description: 'Drivers choose the price that fits the trip.',
-  },
-  {
-    icon: FaRoad,
-    title: 'No surge pricing',
-    description: 'Riders do not get hit with surprise spikes.',
-  },
-  {
-    icon: FaReceipt,
-    title: 'Simple flat fee model',
-    description: 'Pricing stays easy to understand on both sides of the ride.',
-  },
-  {
-    icon: FaCreditCard,
-    title: 'Secure payments powered by Stripe',
-    description: 'Modern checkout and payout flows with trusted payment processing.',
-  },
-  {
-    icon: FaMapMarkedAlt,
-    title: 'Built for cities, towns, and communities across Canada',
-    description: 'A ride network designed for how Canadians actually move.',
   },
 ]
 
@@ -128,6 +90,65 @@ const coverageCards = [
     title: 'A cleaner marketplace model',
     description: 'Big city or small town, if there is a driver, there can be a ride.',
   },
+]
+
+const landingMapOrigin = {
+  latitude: 49.2827,
+  longitude: -123.1207,
+  label: 'Vancouver',
+}
+
+const landingMapDestination = {
+  latitude: 44.6488,
+  longitude: -63.5752,
+  label: 'Halifax',
+}
+
+const landingMapWaypoints = [
+  {
+    latitude: 51.0447,
+    longitude: -114.0719,
+    label: 'Calgary',
+  },
+  {
+    latitude: 49.8951,
+    longitude: -97.1384,
+    label: 'Winnipeg',
+  },
+  {
+    latitude: 43.6532,
+    longitude: -79.3832,
+    label: 'Toronto',
+    kind: 'pickup' as const,
+  },
+  {
+    latitude: 45.5017,
+    longitude: -73.5673,
+    label: 'Montreal',
+  },
+]
+
+const landingMapRouteCoordinates: Array<[number, number]> = [
+  [-123.1207, 49.2827],
+  [-121.9, 50.4],
+  [-118.6, 51.0],
+  [-114.0719, 51.0447],
+  [-110.2, 50.9],
+  [-104.6189, 50.4452],
+  [-97.1384, 49.8951],
+  [-90.2, 48.4],
+  [-84.3, 46.5],
+  [-79.3832, 43.6532],
+  [-76.1, 44.1],
+  [-73.5673, 45.5017],
+  [-68.5, 46.2],
+  [-63.5752, 44.6488],
+]
+
+const landingMapHighlights = [
+  'A coast-to-coast network starting with the communities that need better ride coverage.',
+  'Flexible local supply means the service can work in major cities, small towns, and regional corridors.',
+  'The map shows the kind of footprint MapleRides is built for, not a fixed or closed launch list.',
 ]
 
 function SectionShell({
@@ -209,14 +230,12 @@ function HeroActions({ final = false }: { final?: boolean }) {
   return (
     <div className="flex flex-col gap-3 sm:flex-row">
       <AuthAwareCtaButton
-        href={bookRideHref}
         className="inline-flex items-center justify-center gap-2 rounded-full bg-white px-6 py-3 text-sm font-semibold text-red-600 transition hover:bg-red-50"
       >
         Book a Ride
         <FaArrowRight className="h-3.5 w-3.5" />
       </AuthAwareCtaButton>
       <AuthAwareCtaButton
-        href={driveWithMapleHref}
         className="inline-flex items-center justify-center gap-2 rounded-full border border-white/35 px-6 py-3 text-sm font-semibold text-white transition hover:bg-white/10"
       >
         {secondaryLabel}
@@ -236,7 +255,7 @@ export default function MapleRidesLandingPage() {
               <Image src="/Maple-Rides.png" alt="MapleRides logo" width={164} height={52} className="h-auto w-[132px] sm:w-[164px]" priority />
             </Link>
             <div className="hidden items-center gap-5 text-sm font-medium text-red-50/85 md:flex">
-              <a href="#why-maplerides" className="transition hover:text-white">Why MapleRides</a>
+              <a href="#coverage-map" className="transition hover:text-white">Coverage Map</a>
               <a href="#drivers" className="transition hover:text-white">Drivers</a>
               <a href="#riders" className="transition hover:text-white">Riders</a>
               <a href="#trust" className="transition hover:text-white">Trust</a>
@@ -283,16 +302,40 @@ export default function MapleRidesLandingPage() {
         </div>
       </SectionShell>
 
-      <SectionShell id="why-maplerides" className="relative py-20 sm:py-24">
-        <SectionHeading
-          eyebrow="Why MapleRides"
-          title="A Better Deal for Drivers and Riders"
-          description="Built for a cleaner, more practical ride marketplace with clear pricing, better driver economics, and secure payments."
-        />
-        <div className="mt-12 grid gap-5 md:grid-cols-2 xl:grid-cols-3">
-          {whyMapleRidesCards.map((item) => (
-            <FeatureCard key={item.title} {...item} />
-          ))}
+      <SectionShell id="coverage-map" className="relative py-20 sm:py-24">
+        <div className="grid gap-10 lg:grid-cols-[minmax(0,0.82fr)_minmax(0,1.18fr)] lg:items-center">
+          <div>
+            <SectionHeading
+              eyebrow="Coverage Map"
+              title="A Better View Than Another Marketing Block"
+              description="MapleRides is meant to work across real Canadian travel patterns, from dense urban trips to long regional corridors. The map gives a clearer picture than another card grid."
+            />
+            <div className="mt-8 space-y-3">
+              {landingMapHighlights.map((item) => (
+                <div key={item} className="rounded-[1.6rem] border border-slate-200 bg-white px-5 py-4 text-sm leading-6 text-slate-700 shadow-[0_18px_40px_rgba(15,23,42,0.05)]">
+                  {item}
+                </div>
+              ))}
+            </div>
+          </div>
+          <div className="rounded-[2rem] border border-slate-200 bg-white p-3 shadow-[0_24px_70px_rgba(15,23,42,0.08)] sm:p-4">
+            <AddressDirectionsMap
+              origin={landingMapOrigin}
+              destination={landingMapDestination}
+              waypoints={landingMapWaypoints}
+              routeCoordinates={landingMapRouteCoordinates}
+              pulseRouteLine
+              idleCameraMode="fit-once-per-key"
+              idleViewportKey="maplerides-canada-coverage"
+            />
+            <div className="mt-4 flex flex-wrap gap-2 px-1 pb-1">
+              {['Vancouver', 'Calgary', 'Winnipeg', 'Toronto', 'Montreal', 'Halifax'].map((city) => (
+                <span key={city} className="inline-flex items-center rounded-full bg-red-50 px-3 py-1.5 text-xs font-semibold uppercase tracking-[0.18em] text-red-700">
+                  {city}
+                </span>
+              ))}
+            </div>
+          </div>
         </div>
       </SectionShell>
 

@@ -27,13 +27,12 @@ import PlaceholderSanitizer from './_components/PlaceholderSanitizer'
 import AppScrollbar from './_components/AppScrollbar'
 import PushRedirectDebugModal from './_components/PushRedirectDebugModal'
 import WebPushDebugModal from './_components/WebPushDebugModal'
-import { RightRailRegistryProvider } from './_components/RightRailRegistry'
 
 const inter = Inter({ subsets: ['latin'], display: 'swap' })
 
 function resolveMetadataBaseUrl(): string {
   const raw = (process.env.NEXT_PUBLIC_BASE_URL || '').trim()
-  const hostFallback = (process.env.CIVIL_PUBLIC_HOST || 'dev.civilcitizens.ca').trim()
+  const hostFallback = (process.env.CIVIL_PUBLIC_HOST || 'dev.maplerides.ca').trim()
   const fallback = hostFallback.startsWith('http') ? hostFallback : `https://${hostFallback}`
 
   if (!raw) return fallback
@@ -49,39 +48,39 @@ const nativePlatformBootstrap = `(function(){try{var capacitor=window.Capacitor;
 export const metadata: Metadata = {
   metadataBase: new URL(baseUrl),
   title: {
-    default: 'Civil Citizens',
-    template: '%s | Civil Citizens',
+    default: 'MapleRides',
+    template: '%s | MapleRides',
   },
   description:
-    'Civil Citizens is completely free for Canadians to organize their cities, publish civic updates, and launch trusted organizations.',
-  applicationName: 'Civil Citizens',
+    'MapleRides is a Canadian-owned rides platform with fair pay for drivers, fair pricing for riders, and secure payments.',
+  applicationName: 'MapleRides',
   manifest: '/manifest.webmanifest',
   appleWebApp: {
     capable: true,
     statusBarStyle: 'default',
-    title: 'Civil Citizens',
+    title: 'MapleRides',
   },
   other: {
     'mobile-web-app-capable': 'yes',
   },
-  keywords: ['civic', 'canada', 'organizing', 'cities', 'civil citizens'],
+  keywords: ['rides', 'canada', 'drivers', 'riders', 'maplerides'],
   icons: {
-    icon: '/favicon.png',
-    shortcut: '/favicon.png',
-    apple: '/PWA-ICON.png?v=20260306',
+    icon: '/Maple-Rides-Favicon.png',
+    shortcut: '/Maple-Rides-Favicon.png',
+    apple: '/Maple-Rides-Favicon.png',
   },
   openGraph: {
-    title: 'Civil Citizens',
+    title: 'MapleRides',
     description:
-      'Civil Citizens is completely free for everyone to organize cities, publish updates, and build trusted organizations.',
+      'MapleRides is a Canadian-owned rides platform built for fair pay, fair pricing, and secure payments.',
     url: baseUrl,
-    siteName: 'Civil Citizens',
+    siteName: 'MapleRides',
     images: [
       {
-        url: '/logo-lg.png',
+        url: '/Maple-Rides.png',
         width: 1200,
         height: 630,
-        alt: 'Civil Citizens logo',
+        alt: 'MapleRides logo',
       },
     ],
     locale: 'en_CA',
@@ -89,9 +88,9 @@ export const metadata: Metadata = {
   },
   twitter: {
     card: 'summary_large_image',
-    title: 'Civil Citizens',
-    description: 'Civil Citizens is completely free for everyone to organize cities, share updates, and build trusted organizations.',
-    images: ['/logo-lg.png'],
+    title: 'MapleRides',
+    description: 'MapleRides is a Canadian-owned rides platform with fair pay for drivers and fair pricing for riders.',
+    images: ['/Maple-Rides.png'],
   },
 }
 
@@ -114,7 +113,7 @@ export default function RootLayout({ children, modal }: { children: ReactNode; m
         <div id="cc-launch-overlay" aria-hidden="true">
           <div className="cc-launch-overlay__glow" />
           <div className="cc-launch-overlay__content">
-            <img src="/favicon.png" alt="" className="cc-launch-overlay__logo" />
+            <img src="/Maple-Rides-Favicon.png" alt="" className="cc-launch-overlay__logo" />
             <span className="cc-launch-overlay__spinner" aria-hidden="true" />
           </div>
         </div>
@@ -146,13 +145,11 @@ export default function RootLayout({ children, modal }: { children: ReactNode; m
             <ScrollManager />
           </Suspense>
           <IosOpenInAppBanner />
-          <RightRailRegistryProvider>
-            <AppFrame modal={modal}>{children}</AppFrame>
-            <IncomingFamilyCallOverlay />
-            <IncomingMessageCallOverlay />
-            <AppScrollbar />
-            <MobileDockVisibility />
-          </RightRailRegistryProvider>
+          <AppFrame modal={modal}>{children}</AppFrame>
+          <IncomingFamilyCallOverlay />
+          <IncomingMessageCallOverlay />
+          <AppScrollbar />
+          <MobileDockVisibility />
           <Toasts />
         </div>
       </body>

@@ -160,7 +160,7 @@ function buildPublicOrigin(req: FastifyRequest, civilPublicHost: string) {
 function getNominatimBaseUrl(req: FastifyRequest, civilPublicHost: string) {
   const configured = normalizeText(process.env.NOMINATIM_SERVER)
   if (configured) return trimTrailingSlash(configured)
-  return `${buildPublicOrigin(req, civilPublicHost)}/nominatim`
+  return 'https://maplerides.ca/nominatim'
 }
 
 function buildBoundedViewbox(latitude: number, longitude: number, radiusKm: number) {
