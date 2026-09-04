@@ -7,7 +7,7 @@ import centroid from '@turf/centroid'
 import type { Feature, MultiPolygon, Polygon } from 'geojson'
 import { prisma, type Prisma } from '@civil/db'
 import { PROVINCE_LABELS, slugifyChamberName, type ProvinceCode } from '@civil/shared'
-import { ensureGeoCache, locateChamberFromPoint } from '../src/geodata.js'
+import { ensureGeoCache, locateCommunityFromPoint } from '../src/geodata.js'
 
 const DEFAULT_DATASET_BASE =
   'https://www12.statcan.gc.ca/census-recensement/2021/geo/bound-limit/files/ZIP'
@@ -336,10 +336,10 @@ async function iterateFeaturesFromArchive(
 async function assignDefaultChamberForRecords<T extends ChamberAssignable>(records: T[]) {
   for (const record of records) {
     if (record.centroidLat == null || record.centroidLng == null) continue
-    const match = await locateChamberFromPoint(record.centroidLat, record.centroidLng, { limit: 1 })
+    const match = await locateCommunityFromPoint(record.centroidLat, record.centroidLng, { limit: 1 })
     if (match.primary) {
-      record.defaultChamberSlug = match.primary.chamberSlug
-      record.defaultChamberName = match.primary.chamberName
+      record.defaultChamberSlug = match.primary.communitySlug
+      record.defaultChamberName = match.primary.communityName
     }
   }
 }

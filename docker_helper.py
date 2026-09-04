@@ -376,6 +376,7 @@ def command_deploy(compose_cmd: list[str], overrides: Mapping[str, str]) -> None
             "worker",
             "push",
             "meeting-rtc",
+            "turn",
             "nginx",
         ],
         overrides,

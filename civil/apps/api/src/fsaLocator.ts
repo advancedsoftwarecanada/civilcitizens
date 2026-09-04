@@ -18,8 +18,8 @@ type CachedFsa = {
   defaultCommunitySlug: string | null
   defaultCommunityName: string | null
   centroid: { lat: number; lng: number } | null
-  feature: Feature<Polygon | MultiPolygon>
-  bbox: [number, number, number, number]
+  feature: Feature<Polygon | MultiPolygon> | null
+  bbox: [number, number, number, number] | null
 }
 
 type FsaCache = {
@@ -118,19 +118,19 @@ async function buildFsaCache(): Promise<FsaCache> {
 
   for (const row of rows) {
     const reprojected = statsCanGeometryToWgs84(row.geometry as any)
-    if (!reprojected) continue
-    const geoFeature =
-      reprojected.type === 'Polygon'
+    const geoFeature = reprojected
+      ? reprojected.type === 'Polygon'
         ? (polygon(reprojected.coordinates) as Feature<Polygon>)
         : (multiPolygon(reprojected.coordinates) as Feature<MultiPolygon>)
-    let bbox: [number, number, number, number]
+      : null
+    let bbox: [number, number, number, number] | null = null
     try {
-      bbox = normalizeBBox(extendBBox(reprojected.coordinates))
+      bbox = reprojected ? normalizeBBox(extendBBox(reprojected.coordinates)) : null
     } catch {
-      continue
+      bbox = null
     }
     let centroidPoint = statsCanPointToWgs84(row.centroidLat, row.centroidLng)
-    if (!centroidPoint) {
+    if (!centroidPoint && geoFeature) {
       try {
         const derived = turfCentroid(geoFeature as any)
         const coords = derived.geometry?.coordinates
@@ -141,6 +141,7 @@ async function buildFsaCache(): Promise<FsaCache> {
         /* ignore */
       }
     }
+    if (!geoFeature && !centroidPoint) continue
     features.push({
       code: row.code,
       provinceCode: row.provinceCode ?? null,
@@ -200,12 +201,22 @@ export async function locateFsaFromPoint(lat: number, lng: number, options: Loca
   let nearestMatch: Candidate | null = null
 
   for (const entry of features) {
-    if (!pointWithinExpandedBBox(entry.bbox, lng, lat, padding)) continue
     let distance = Number.POSITIVE_INFINITY
     let inside = false
     try {
-      distance = pointToPolygonDistance(targetPoint as any, entry.feature as any, { units: 'kilometers' })
-      inside = distance <= tolerance || booleanPointInPolygon(targetPoint as any, entry.feature as any)
+      if (entry.feature && entry.bbox) {
+        if (!pointWithinExpandedBBox(entry.bbox, lng, lat, padding)) continue
+        distance = pointToPolygonDistance(targetPoint as any, entry.feature as any, { units: 'kilometers' })
+        inside = distance <= tolerance || booleanPointInPolygon(targetPoint as any, entry.feature as any)
+      } else if (entry.centroid) {
+        const dLat = lat - entry.centroid.lat
+        const dLng = lng - entry.centroid.lng
+        const avgLat = ((lat + entry.centroid.lat) / 2) * (Math.PI / 180)
+        distance = Math.sqrt(
+          Math.pow(dLat * 111.32, 2) +
+          Math.pow(dLng * 111.32 * Math.cos(avgLat), 2),
+        )
+      }
     } catch {
       continue
     }

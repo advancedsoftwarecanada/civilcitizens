@@ -14,11 +14,13 @@ services:
       - ./ops/nginx.conf:/etc/nginx/conf.d/default.conf:ro
       - ../ssl:/etc/nginx/ssl:ro
       - ../ssl/acme-challenge:/var/www/certbot:ro
+      - /home/andre/sites/wp_advancedsoftware:/var/www/advancedsoftware_wp:ro
+      - /home/andre/civilcitizens/static-sites/civil-citizens-for-canada-party/dist:/var/www/civilcitizenscanada:ro
     ports:
       - "${NGINX_HTTP_PORT:-80}:80"
       - "${NGINX_HTTPS_PORT:-443}:443"
     healthcheck:
-      test: ["CMD-SHELL", "wget --header='Host: dev.civilcitizens.ca' -qO- http://127.0.0.1/nginx-health >/dev/null 2>&1 || exit 1"]
+      test: ["CMD-SHELL", "wget --header='Host: localhost' -qO- http://127.0.0.1/nginx-health >/dev/null 2>&1 || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -149,6 +151,34 @@ services:
       timeout: 5s
       retries: 5
       start_period: 5s
+
+  # STUN/TURN relay for WebRTC NAT traversal. Ports are published explicitly
+  # (not network_mode: host) because this stack runs under Docker Desktop,
+  # where host networking is scoped to the Desktop VM and isn't reachable
+  # from outside without published ports. nginx/Cloudflare cannot proxy this
+  # traffic - clients connect directly to TURN_EXTERNAL_IP:3478.
+  turn:
+    profiles: [app]
+    image: coturn/coturn:4.6.2
+    restart: unless-stopped
+    ports:
+      - "3478:3478/tcp"
+      - "3478:3478/udp"
+      - "${TURN_MIN_PORT:-49160}-${TURN_MAX_PORT:-49200}:${TURN_MIN_PORT:-49160}-${TURN_MAX_PORT:-49200}/udp"
+      - "${TURN_MIN_PORT:-49160}-${TURN_MAX_PORT:-49200}:${TURN_MIN_PORT:-49160}-${TURN_MAX_PORT:-49200}/tcp"
+    command:
+      - "-n"
+      - "--log-file=stdout"
+      - "--listening-port=3478"
+      - "--min-port=${TURN_MIN_PORT:-49160}"
+      - "--max-port=${TURN_MAX_PORT:-49200}"
+      - "--realm=${TURN_REALM:-civilcitizens.ca}"
+      - "--user=${TURN_USERNAME:-civil-prod-turn}:${TURN_PASSWORD:-changeme}"
+      - "--lt-cred-mech"
+      - "--fingerprint"
+      - "--no-multicast-peers"
+      - "--external-ip=${TURN_EXTERNAL_IP:-}"
+      - "--no-cli"
 
   worker:
     profiles: [app]
