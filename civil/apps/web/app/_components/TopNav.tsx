@@ -4,20 +4,16 @@ import Image from 'next/image'
 import Link from 'next/link'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import clsx from 'clsx'
-import { usePathname, useSearchParams } from 'next/navigation'
+import { usePathname } from 'next/navigation'
 import {
   HiOutlineBell,
   HiOutlineChatBubbleOvalLeft,
-  HiOutlineMagnifyingGlass,
-  HiOutlineShoppingCart,
-  HiOutlineXMark,
 } from 'react-icons/hi2'
 import { buildApiUrl } from '../_lib/api'
 import { redirectToAuthModal } from '../_lib/authModal'
 import { clearAuthSession } from '../_lib/authSession'
 import { getStoredToken } from '../_lib/tokenStorage'
 import { useViewerStore } from '../_lib/viewerStore'
-import { readMarketCart } from '../market/_lib/cart'
 import { NotificationCard } from './notifications/NotificationCard'
 import type { FriendActionState, NotificationItem } from './notifications/notificationUtils'
 import {
@@ -33,14 +29,9 @@ import {
 } from './notifications/notificationEvents'
 import { isNotificationPayload, subscribeToNotificationsStream, type NotificationRealtimeData, type RealtimePayload } from './notifications/notificationStream'
 import { pushNotificationToast, pushToast } from './useToasts'
-import { SearchResults, type SearchResultsLoadingState } from './search/SearchResults'
 const MAX_VISIBLE_NOTIFICATIONS = 7
 
 const NOTIFICATION_TOAST_DEDUPE_WINDOW_MS = 5000
-
-function normalizeSearchInputValue(value: string | null) {
-  return value?.trim() ?? ''
-}
 
 function shouldShowNotificationToast(notificationId: string): boolean {
   if (typeof window === 'undefined') return true
@@ -60,42 +51,20 @@ function shouldShowNotificationToast(notificationId: string): boolean {
 
 export default function TopNav() {
   const pathname = usePathname()
-  const searchParams = useSearchParams()
-  const searchParamsKey = searchParams.toString()
   const viewer = useViewerStore((s) => s.me)
   const familyView = useViewerStore((s) => s.familyView)
   const isFamilyLockedSession = Boolean(familyView) || viewer?.accountType === 'family_member'
-  const showSearch = !pathname?.startsWith('/welcome')
   const [dropdownOpen, setDropdownOpen] = useState(false)
   const [notifications, setNotifications] = useState<NotificationItem[]>([])
   const [unreadCount, setUnreadCount] = useState(0)
   const [messageUnreadCount, setMessageUnreadCount] = useState(0)
   const [marketChatUnreadCount, setMarketChatUnreadCount] = useState(0)
   const [orgChannelUnreadCount, setOrgChannelUnreadCount] = useState(0)
-  const [marketCartCount, setMarketCartCount] = useState(0)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const dropdownRef = useRef<HTMLDivElement | null>(null)
-  const searchBlurTimeout = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [friendActionState, setFriendActionState] = useState<FriendActionState | null>(null)
-  const [searchQuery, setSearchQuery] = useState('')
-  const [searchFocused, setSearchFocused] = useState(false)
-  const [searchLoadingState, setSearchLoadingState] = useState<SearchResultsLoadingState>({ active: false, label: 'Searching Civil' })
-  const searchInputRef = useRef<HTMLInputElement | null>(null)
-  const trimmedSearchQuery = searchQuery.trim()
-  const showSearchResults = searchFocused && trimmedSearchQuery.length >= 2
   const unifiedMessageUnreadCount = Math.max(messageUnreadCount, orgChannelUnreadCount) + marketChatUnreadCount
-
-  useEffect(() => () => {
-    if (searchBlurTimeout.current) clearTimeout(searchBlurTimeout.current)
-  }, [])
-
-  useEffect(() => {
-    const nextQuery = normalizeSearchInputValue(searchParams.get('q'))
-      || normalizeSearchInputValue(searchParams.get('label'))
-      || normalizeSearchInputValue(searchParams.get('address'))
-    setSearchQuery(nextQuery)
-  }, [pathname, searchParamsKey])
 
   const applyLocalReadState = useCallback(() => {
     const timestamp = new Date().toISOString()
@@ -339,34 +308,6 @@ export default function TopNav() {
   }, [fetchNotifications, fetchMessageUnreadCount, fetchMarketChatUnreadCount, fetchOrgChannelUnreadCount, isFamilyLockedSession])
 
   useEffect(() => {
-    if (typeof window === 'undefined') return undefined
-
-    const refreshCount = () => {
-      const total = readMarketCart().reduce((sum, item) => sum + item.quantity, 0)
-      setMarketCartCount(total)
-    }
-
-    refreshCount()
-
-    const handleStorage = (event: StorageEvent) => {
-      if (event.key && event.key !== 'civil_market_cart') return
-      refreshCount()
-    }
-
-    const handleLocalCartChanged = () => {
-      refreshCount()
-    }
-
-    window.addEventListener('storage', handleStorage)
-    window.addEventListener('civil:market-cart-changed', handleLocalCartChanged)
-
-    return () => {
-      window.removeEventListener('storage', handleStorage)
-      window.removeEventListener('civil:market-cart-changed', handleLocalCartChanged)
-    }
-  }, [])
-
-  useEffect(() => {
     if (!dropdownOpen) return undefined
     const handleClick = (event: MouseEvent) => {
       if (!dropdownRef.current) return
@@ -391,17 +332,7 @@ export default function TopNav() {
     }
   }, [dropdownOpen])
 
-  const collapseSearch = useCallback(() => {
-    if (searchBlurTimeout.current) {
-      clearTimeout(searchBlurTimeout.current)
-      searchBlurTimeout.current = null
-    }
-    setSearchFocused(false)
-    searchInputRef.current?.blur()
-  }, [])
-
   const handleToggleDropdown = useCallback(() => {
-    collapseSearch()
     if (isFamilyLockedSession) {
       pushToast('Notifications are unavailable while this device is locked to a family account.', 'info')
       return
@@ -420,7 +351,7 @@ export default function TopNav() {
       await fetchNotifications()
       await acknowledgeNotifications()
     })()
-  }, [acknowledgeNotifications, collapseSearch, dropdownOpen, fetchNotifications, isFamilyLockedSession])
+  }, [acknowledgeNotifications, dropdownOpen, fetchNotifications, isFamilyLockedSession])
 
   useEffect(() => {
     if (typeof window === 'undefined') return undefined
@@ -468,31 +399,6 @@ export default function TopNav() {
     const unsubscribe = subscribeToNotificationsStream(handleRealtimeNotification)
     return unsubscribe
   }, [handleRealtimeNotification, isFamilyLockedSession])
-
-  const handleSearchFocus = useCallback(() => {
-    if (searchBlurTimeout.current) {
-      clearTimeout(searchBlurTimeout.current)
-      searchBlurTimeout.current = null
-    }
-    setSearchFocused(true)
-  }, [])
-
-  const handleSearchBlur = useCallback(() => {
-    if (searchBlurTimeout.current) clearTimeout(searchBlurTimeout.current)
-    searchBlurTimeout.current = setTimeout(() => {
-      setSearchFocused(false)
-    }, 150)
-  }, [])
-
-  const handleClearSearch = useCallback(() => {
-    setSearchQuery('')
-    setSearchFocused(false)
-    searchInputRef.current?.focus()
-  }, [])
-
-  const handleSearchLoadingStateChange = useCallback((state: SearchResultsLoadingState) => {
-    setSearchLoadingState(state)
-  }, [])
 
   const handleNotificationRequestAction = useCallback(
     async (notification: NotificationItem, action: 'accept' | 'reject', options?: { reciprocalRelationship?: string }) => {
@@ -616,84 +522,17 @@ export default function TopNav() {
       <div className="mx-auto flex w-full max-w-[1800px] items-center gap-2 px-4 py-3 sm:gap-4 sm:px-6 xl:px-10">
         <Link
           href="/home"
-          onClick={collapseSearch}
           className="inline-flex items-center gap-2 text-slate-800 transition hover:opacity-90"
-          aria-label="Civil home"
+          aria-label="MapleRides home"
         >
-          <Image src="/favicon.png" alt="Civil" width={32} height={32} className="h-8 w-8 md:hidden" priority />
-          <Image src="/logo.svg" alt="Civil" width={144} height={42} className="hidden h-9 w-auto md:block lg:h-10" priority />
+          <Image src="/Maple-Rides.png" alt="MapleRides" width={164} height={52} className="h-10 w-auto lg:h-11" priority />
         </Link>
 
-        {showSearch ? (
-          <div className="flex flex-1 justify-center px-2">
-            <div className="relative w-full max-w-2xl rounded-full border border-slate-200 bg-white shadow-sm transition focus-within:border-[var(--cc-primary)]">
-              {searchLoadingState.active ? (
-                <span className="pointer-events-none absolute left-4 top-1/2 inline-flex h-4 w-4 -translate-y-1/2 animate-spin rounded-full border-2 border-slate-300 border-t-[var(--cc-primary)]" aria-hidden="true" />
-              ) : (
-                <HiOutlineMagnifyingGlass className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
-              )}
-              <form action="/search" method="GET" autoComplete="off">
-                <input
-                  ref={searchInputRef}
-                  type="search"
-                  name="q"
-                  autoComplete="off"
-                  autoCorrect="off"
-                  autoCapitalize="off"
-                  spellCheck={false}
-                  placeholder="Search"
-                  className="w-full rounded-full bg-white py-2.5 pl-11 pr-11 text-sm text-slate-800 focus:outline-none placeholder:text-slate-500"
-                  value={searchQuery}
-                  onChange={(event) => setSearchQuery(event.target.value)}
-                  onFocus={handleSearchFocus}
-                  onBlur={handleSearchBlur}
-                />
-              </form>
-              {searchLoadingState.active ? (
-                <div className="pointer-events-none absolute inset-x-12 bottom-[-1.35rem] hidden truncate px-2 text-center text-[11px] font-medium text-slate-500 lg:block">
-                  {searchLoadingState.label}
-                </div>
-              ) : null}
-              {searchQuery.length > 0 ? (
-                <button
-                  type="button"
-                  aria-label="Clear search"
-                  className="absolute right-3 top-1/2 -translate-y-1/2 rounded-full p-1 text-slate-400 transition hover:bg-slate-100 hover:text-slate-600"
-                  onMouseDown={(event) => event.preventDefault()}
-                  onClick={handleClearSearch}
-                >
-                  <HiOutlineXMark className="h-4 w-4" />
-                </button>
-              ) : null}
-              <SearchResults
-                query={searchQuery}
-                open={showSearchResults}
-                onResultSelect={collapseSearch}
-                onLoadingStateChange={handleSearchLoadingStateChange}
-              />
-            </div>
-          </div>
-        ) : (
-          <div className="flex-1" aria-hidden="true" />
-        )}
+        <div className="flex-1" aria-hidden="true" />
 
         <div className="ml-auto flex items-center gap-2 sm:gap-3">
           <Link
-            href="/market/cart"
-            onClick={collapseSearch}
-            className="relative inline-flex h-11 w-11 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-500 shadow-sm transition hover:border-[var(--cc-primary)] hover:text-[var(--cc-primary)]"
-            aria-label="Cart"
-          >
-            <HiOutlineShoppingCart className="text-xl" />
-            {marketCartCount > 0 ? (
-              <span className="absolute -right-0.5 -top-0.5 min-w-[1.5rem] rounded-full bg-[var(--cc-primary)] px-1.5 py-0.5 text-center text-[10px] font-semibold uppercase tracking-wide text-white">
-                {marketCartCount > 99 ? '99+' : marketCartCount}
-              </span>
-            ) : null}
-          </Link>
-          <Link
             href="/messages"
-            onClick={collapseSearch}
             className="relative inline-flex h-11 w-11 items-center justify-center rounded-full border border-slate-200 bg-white text-slate-500 shadow-sm transition hover:border-[var(--cc-primary)] hover:text-[var(--cc-primary)]"
             aria-label="Messages"
           >
@@ -750,7 +589,6 @@ export default function TopNav() {
                   href="/notifications"
                   className="mt-4 inline-flex w-full items-center justify-center rounded-2xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-[var(--cc-primary)] transition hover:border-[var(--cc-primary)]/60"
                   onClick={() => {
-                    collapseSearch()
                     setDropdownOpen(false)
                   }}
                 >

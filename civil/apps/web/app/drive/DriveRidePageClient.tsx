@@ -125,7 +125,7 @@ export default function DriveRidePageClient() {
 
   const handleExitDriverMode = () => {
     exitDriverMode()
-    router.push('/drive')
+    router.push('/ride')
   }
 
   async function handleSubmitOffer(ride: DriveRideRequestItem, perKmFeeCents: number) {

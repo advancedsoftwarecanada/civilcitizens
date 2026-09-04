@@ -94,10 +94,13 @@ const ACTIVE_NAV_FOLLOW_DURATION_MS = 220
 const LIVE_MARKER_ANIMATION_MS = 900
 const ACTIVE_NAV_MARKER_ANIMATION_MS = 180
 const ROUTE_LINE_PULSE_DURATION_MS = 2200
+const ROUTE_INDICATOR_TRAVEL_DURATION_MS = 3200
 const ROUTE_LINE_BASE_RGB = { red: 37, green: 99, blue: 235 }
 const ROUTE_LINE_PULSE_RGB = { red: 96, green: 165, blue: 250 }
 const ROUTE_LINE_STATIC_COLOR = '#2563eb'
 const ROUTE_LINE_WIDTH = 7
+const ROUTE_INDICATOR_COLOR = '#ffffff'
+const ROUTE_INDICATOR_STROKE_COLOR = '#2563eb'
 const RIDER_ROUTE_LINE_WIDTH = 5
 const RIDER_ROUTE_LINE_COLOR = '#10b981'
 const APPROACH_ROUTE_LINE_WIDTH = 6
@@ -235,6 +238,50 @@ function offsetPointAlongBearing(point: { latitude: number; longitude: number },
   const eastMeters = Math.sin(radians) * distanceMeters
   const northMeters = Math.cos(radians) * distanceMeters
   return offsetPointByMeters(point, eastMeters, northMeters)
+}
+
+function interpolateCoordinatePair(start: [number, number], end: [number, number], progress: number): [number, number] {
+  return [start[0] + (end[0] - start[0]) * progress, start[1] + (end[1] - start[1]) * progress]
+}
+
+function resolveRouteIndicatorCoordinate(route: Array<[number, number]> | null | undefined, progress: number) {
+  if (!route?.length) return null
+  if (route.length === 1) return route[0] ?? null
+
+  let totalDistanceMeters = 0
+  const segments: Array<{ start: [number, number]; end: [number, number]; lengthMeters: number }> = []
+
+  for (let index = 1; index < route.length; index += 1) {
+    const start = route[index - 1]
+    const end = route[index]
+    if (!start || !end) continue
+    const lengthMeters = calculateDistanceMeters(
+      { latitude: start[1], longitude: start[0] },
+      { latitude: end[1], longitude: end[0] },
+    )
+    if (!Number.isFinite(lengthMeters) || lengthMeters <= 0) continue
+    segments.push({ start, end, lengthMeters })
+    totalDistanceMeters += lengthMeters
+  }
+
+  if (!segments.length || totalDistanceMeters <= 0) {
+    return route[0] ?? null
+  }
+
+  const clampedProgress = Math.max(0, Math.min(1, progress))
+  const targetDistanceMeters = totalDistanceMeters * clampedProgress
+  let traversedMeters = 0
+
+  for (const segment of segments) {
+    const segmentEndMeters = traversedMeters + segment.lengthMeters
+    if (targetDistanceMeters <= segmentEndMeters) {
+      const segmentProgress = (targetDistanceMeters - traversedMeters) / segment.lengthMeters
+      return interpolateCoordinatePair(segment.start, segment.end, segmentProgress)
+    }
+    traversedMeters = segmentEndMeters
+  }
+
+  return segments[segments.length - 1]?.end ?? route[route.length - 1] ?? null
 }
 
 function resolveShortestMapBearing(currentBearing: number | null | undefined, targetBearing: number) {
@@ -936,6 +983,14 @@ export const AddressDirectionsMap = forwardRef<AddressDirectionsMapHandle, Addre
           },
         })
 
+        map.addSource('address-route-indicator', {
+          type: 'geojson',
+          data: {
+            type: 'FeatureCollection',
+            features: [],
+          },
+        })
+
         map.addLayer({
           id: 'address-point-rings',
           type: 'circle',
@@ -1003,6 +1058,31 @@ export const AddressDirectionsMap = forwardRef<AddressDirectionsMapHandle, Addre
           },
         })
 
+        map.addLayer({
+          id: 'address-route-indicator-halo',
+          type: 'circle',
+          source: 'address-route-indicator',
+          paint: {
+            'circle-radius': 12,
+            'circle-color': ROUTE_INDICATOR_STROKE_COLOR,
+            'circle-opacity': 0.28,
+            'circle-blur': 0.3,
+          },
+        })
+
+        map.addLayer({
+          id: 'address-route-indicator-core',
+          type: 'circle',
+          source: 'address-route-indicator',
+          paint: {
+            'circle-radius': 5,
+            'circle-color': ROUTE_INDICATOR_COLOR,
+            'circle-stroke-width': 2,
+            'circle-stroke-color': ROUTE_INDICATOR_STROKE_COLOR,
+            'circle-opacity': 0.96,
+          },
+        })
+
         setMapReady(true)
       })
     })()
@@ -1050,6 +1130,9 @@ export const AddressDirectionsMap = forwardRef<AddressDirectionsMapHandle, Addre
     map.setPaintProperty?.('address-approach-route-line', 'line-color', APPROACH_ROUTE_LINE_COLOR)
     map.setPaintProperty?.('address-approach-route-line', 'line-width', APPROACH_ROUTE_LINE_WIDTH)
     map.setPaintProperty?.('address-approach-route-line', 'line-opacity', 0.92)
+    map.setPaintProperty?.('address-route-indicator-halo', 'circle-opacity', 0.28)
+    map.setPaintProperty?.('address-route-indicator-halo', 'circle-radius', 12)
+    map.setPaintProperty?.('address-route-indicator-core', 'circle-opacity', 0.96)
 
     const animateRouteLine = (timestamp: number) => {
       if (cancelled) return
@@ -1072,6 +1155,36 @@ export const AddressDirectionsMap = forwardRef<AddressDirectionsMapHandle, Addre
         map.setPaintProperty?.('address-approach-route-line', 'line-width', APPROACH_ROUTE_LINE_WIDTH)
         map.setPaintProperty?.('address-approach-route-line', 'line-opacity', 0.92)
       }
+
+      const routeIndicatorSource = map.getSource('address-route-indicator')
+      const routeIndicatorCoordinate = resolveRouteIndicatorCoordinate(
+        activeRouteCoordinates,
+        (timestamp % ROUTE_INDICATOR_TRAVEL_DURATION_MS) / ROUTE_INDICATOR_TRAVEL_DURATION_MS,
+      )
+
+      routeIndicatorSource?.setData?.({
+        type: 'FeatureCollection',
+        features: routeIndicatorCoordinate
+          ? [{
+              type: 'Feature',
+              geometry: {
+                type: 'Point',
+                coordinates: routeIndicatorCoordinate,
+              },
+              properties: {},
+            }]
+          : [],
+      })
+
+      if (routeIndicatorCoordinate) {
+        map.setPaintProperty?.('address-route-indicator-halo', 'circle-radius', 10 + cycleProgress * 8)
+        map.setPaintProperty?.('address-route-indicator-halo', 'circle-opacity', 0.18 + cycleProgress * 0.28)
+        map.setPaintProperty?.('address-route-indicator-core', 'circle-opacity', 0.82 + cycleProgress * 0.18)
+      } else {
+        map.setPaintProperty?.('address-route-indicator-halo', 'circle-opacity', 0)
+        map.setPaintProperty?.('address-route-indicator-core', 'circle-opacity', 0)
+      }
+
       routeLinePulseAnimationRef.current = window.requestAnimationFrame(animateRouteLine)
     }
 
@@ -1084,7 +1197,7 @@ export const AddressDirectionsMap = forwardRef<AddressDirectionsMapHandle, Addre
         routeLinePulseAnimationRef.current = null
       }
     }
-  }, [mapReady, pulseApproachRoute, pulseRouteLine])
+  }, [activeRouteCoordinates, mapReady, pulseApproachRoute, pulseRouteLine])
 
   useEffect(() => {
     if (typeof document === 'undefined') return undefined
@@ -1194,7 +1307,8 @@ export const AddressDirectionsMap = forwardRef<AddressDirectionsMapHandle, Addre
     const routeSource = map.getSource('address-route')
     const riderRouteSource = map.getSource('address-rider-route')
     const approachRouteSource = map.getSource('address-approach-route')
-    if (!pointSource || !routeSource || !riderRouteSource || !approachRouteSource) return
+    const routeIndicatorSource = map.getSource('address-route-indicator')
+    if (!pointSource || !routeSource || !riderRouteSource || !approachRouteSource || !routeIndicatorSource) return
 
     const showLiveProfileMarker = Boolean(activeOrigin) && (navStatus === 'active' || navStatus === 'starting' || showOriginAvatar)
 
@@ -1293,6 +1407,21 @@ export const AddressDirectionsMap = forwardRef<AddressDirectionsMapHandle, Addre
     approachRouteSource.setData({
       type: 'FeatureCollection',
       features: approachRouteFeature,
+    })
+
+    const routeIndicatorCoordinate = resolveRouteIndicatorCoordinate(activeRouteCoordinates, 0)
+    routeIndicatorSource.setData({
+      type: 'FeatureCollection',
+      features: routeIndicatorCoordinate
+        ? [{
+            type: 'Feature' as const,
+            geometry: {
+              type: 'Point' as const,
+              coordinates: routeIndicatorCoordinate,
+            },
+            properties: {},
+          }]
+        : [],
     })
 
     const mapLibre = mapLibreRef.current

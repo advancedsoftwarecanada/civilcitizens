@@ -3,6 +3,7 @@ import { useMemo, useState } from 'react'
 import type { FormEvent } from 'react'
 import Link from 'next/link'
 import { useRouter, useSearchParams } from 'next/navigation'
+import AutoRedirect from '../_components/AutoRedirect'
 import { pushToast } from '../_components/useToasts'
 import { buildHandleBase } from '@civil/shared'
 import { buildApiUrl, parseApiResponse } from '../_lib/api'
@@ -30,16 +31,26 @@ type RegisterErrorResponse = {
   message?: string
 }
 
-type LegalDocumentKey = 'terms' | 'privacy' | 'safety'
+type LegalDocumentKey = 'terms' | 'privacy'
 
 const LEGAL_DOCUMENTS: Record<LegalDocumentKey, { title: string; href: string }> = {
   terms: { title: 'Terms of Service', href: '/terms' },
   privacy: { title: 'Privacy Policy', href: '/privacy' },
-  safety: { title: 'Child Safety & Protection Standards', href: '/safety' },
 }
 
 const isValidEmail = (value: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value)
 const ORG_INVITE_TOKEN_KEY = 'civil.orgInviteToken'
+
+function buildPreviewHandleBase(firstName: string, lastName: string) {
+  const trimmedFirstName = firstName.trim()
+  const trimmedLastName = lastName.trim()
+
+  if (trimmedFirstName || trimmedLastName) {
+    return buildHandleBase(trimmedFirstName, trimmedLastName)
+  }
+
+  return buildHandleBase('first', 'last')
+}
 
 export default function RegisterPage() {
   const router = useRouter()
@@ -54,7 +65,7 @@ export default function RegisterPage() {
   const [fieldErrors, setFieldErrors] = useState<FieldErrors>({})
   const [isSubmitting, setIsSubmitting] = useState(false)
 
-  const previewHandle = useMemo(() => buildHandleBase(firstName, lastName), [firstName, lastName])
+  const previewHandle = useMemo(() => buildPreviewHandleBase(firstName, lastName), [firstName, lastName])
   const activeLegalDocument = legalDocument ? LEGAL_DOCUMENTS[legalDocument] : null
 
   const hasFieldError = (key: string) => Array.isArray(fieldErrors[key]) && fieldErrors[key].length > 0
@@ -199,7 +210,7 @@ export default function RegisterPage() {
   const footer = (
     <div className="space-y-2">
       <p>
-        Already have an account?{' '}
+        Already have a MapleRides account?{' '}
         <Link href="/login" className="font-semibold text-[var(--cc-primary)]">
           Sign in
         </Link>
@@ -215,13 +226,13 @@ export default function RegisterPage() {
 
   return (
     <>
+      <AutoRedirect targetPath="/home" />
       <AppleInstallRedirect source="register" />
       <AuthScreen
-        title="Create your Civil account"
-        subtitle="Reserve your handle, pick your home city, and get access to Canada’s civic operating system."
+        title="Create your MapleRides account"
+        subtitle="Sign up to book rides, manage your account, and get ready to drive with MapleRides."
         footer={footer}
         hideSidePanel
-        useWallpaper
       >
         <form onSubmit={handleSubmit} className="space-y-5" autoCapitalize="none" autoCorrect="off" spellCheck={false}>
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
@@ -237,7 +248,7 @@ export default function RegisterPage() {
             </label>
           </div>
           <div className="rounded-2xl border border-dashed border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
-            Your Civil handle will be <span className="font-semibold text-slate-900">@{previewHandle}</span>. If it&apos;s taken, we&apos;ll make a tiny tweak to keep it unique.
+            Your MapleRides handle will be <span className="font-semibold text-slate-900">@{previewHandle}</span>. If it&apos;s taken, we&apos;ll make a tiny tweak to keep it unique.
           </div>
           <label className="block text-sm font-medium text-slate-700">
             Email
@@ -267,10 +278,6 @@ export default function RegisterPage() {
               and{' '}
               <button type="button" className="underline underline-offset-2" onClick={() => setLegalDocument('privacy')}>
                 Privacy Policy
-              </button>{' '}
-              and{' '}
-              <button type="button" className="underline underline-offset-2" onClick={() => setLegalDocument('safety')}>
-                Child Safety &amp; Protection Standards
               </button>
             </div>
           </div>
@@ -304,7 +311,7 @@ export default function RegisterPage() {
                   onClick={() => setLegalDocument(null)}
                   className="rounded-2xl bg-[var(--cc-primary)] px-4 py-2 text-sm font-semibold text-white transition hover:bg-[var(--cc-primary-700)]"
                 >
-                  Back to registration
+                  Back to sign up
                 </button>
               </div>
             </div>

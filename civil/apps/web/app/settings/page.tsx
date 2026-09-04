@@ -8,24 +8,19 @@ import {
   HiOutlineArrowRightOnRectangle,
   HiOutlineBell,
   HiOutlineChatBubbleLeftRight,
-  HiOutlineBuildingLibrary,
-  HiOutlineBuildingOffice2,
   HiOutlineCog8Tooth,
   HiOutlineDocumentText,
   HiOutlineHomeModern,
   HiOutlineMapPin,
   HiOutlineShoppingBag,
   HiOutlineTrash,
-  HiOutlineUserGroup,
   HiOutlineUserCircle,
 } from 'react-icons/hi2'
 import type { IconType } from 'react-icons'
 import clsx from 'clsx'
 import DashboardShell from '../_components/DashboardShell'
 import Modal from '../_components/Modal'
-import { RightRail } from '../_components/RightRail'
 import type { MeResponse } from '../_lib/me'
-import { hasHomeCommunity } from '../_lib/me'
 import { buildApiUrl } from '../_lib/api'
 import { isSuperAdmin } from '../_lib/admin'
 import { clearAuthSession } from '../_lib/authSession'
@@ -521,8 +516,6 @@ export default function SettingsPage() {
   const isWebPushSupported = canEnableWebPush()
   const viewerDisplayName = useMemo(() => viewer?.name?.trim() || viewer?.handle || 'Civil Citizen', [viewer?.handle, viewer?.name])
   const isAdminViewer = useMemo(() => isSuperAdmin(viewer), [viewer])
-  const showManageOrganizations = useMemo(() => hasHomeCommunity(viewer), [viewer])
-  const manageOrganizationsHref = showManageOrganizations ? '/organizations/manager' : null
   const deleteVerificationValue = useMemo(() => {
     const fullName = viewer?.name?.trim()
     if (fullName) return fullName
@@ -551,7 +544,7 @@ export default function SettingsPage() {
       {
         key: 'profile',
         label: 'Profile',
-        description: 'Edit your bio, cover photo, profile photo, and civic identity.',
+        description: 'Edit your bio, profile photo, and civic identity.',
         href: '/profile/edit',
         icon: HiOutlineUserCircle,
       },
@@ -561,20 +554,6 @@ export default function SettingsPage() {
         description: 'Manage your saved pickup, destination, and shipping addresses.',
         href: '/settings/addresses',
         icon: HiOutlineMapPin,
-      },
-      {
-        key: 'communities',
-        label: 'Chambers of Citizens',
-        description: 'Set your home riding and manage the chambers of citizens you follow.',
-        href: '/chambers/settings',
-        icon: HiOutlineBuildingOffice2,
-      },
-      {
-        key: 'family',
-        label: 'Guardian Mode',
-        description: 'Enable supervised profiles for children, adolescents, and youth, and prepare devices for guardian-managed accounts.',
-        href: '/settings/guardian',
-        icon: HiOutlineUserGroup,
       },
       {
         key: 'commerce',
@@ -629,16 +608,6 @@ export default function SettingsPage() {
       },
     ]
 
-    if (manageOrganizationsHref) {
-      items.splice(2, 0, {
-        key: 'organizations',
-        label: 'Organizations',
-        description: 'Manage organizations you own, follow, or help operate.',
-        href: manageOrganizationsHref,
-        icon: HiOutlineBuildingLibrary,
-      })
-    }
-
     if (isAdminViewer) {
       items.push({
         key: 'admin',
@@ -651,7 +620,7 @@ export default function SettingsPage() {
     }
 
     return items
-  }, [isAdminViewer, launcherActive, manageOrganizationsHref, openDeleteAccountFlow, showLauncherControl])
+  }, [isAdminViewer, launcherActive, openDeleteAccountFlow, showLauncherControl])
 
   const closeDeleteAccountFlow = useCallback(() => {
     if (deleteBusy) return
@@ -716,7 +685,6 @@ export default function SettingsPage() {
     <DashboardShell
       className="bg-slate-50"
       mainClassName="space-y-6"
-      rightRail={<RightRail showOrganizations showRsvps />}
     >
       <SettingsPanelSection
         id="notifications"

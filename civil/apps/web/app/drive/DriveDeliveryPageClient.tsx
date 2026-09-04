@@ -247,7 +247,7 @@ export default function DriveDeliveryPageClient() {
 
   const handleExitDriverMode = () => {
     exitDriverMode()
-    router.push('/drive')
+    router.push('/ride')
   }
 
   const managePickupUrl = useMemo(() => buildMapSearchUrl(selectedManageItem?.pickupAddressLabel), [selectedManageItem?.pickupAddressLabel])

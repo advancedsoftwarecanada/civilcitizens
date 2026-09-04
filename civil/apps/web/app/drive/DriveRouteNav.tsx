@@ -18,7 +18,7 @@ type DriveNavItem = {
 }
 
 const REQUESTER_NAV_ITEMS: DriveNavItem[] = [
-  { href: '/drive', label: 'My Rides', icon: HiOutlineClock, aliases: ['/drive/ride/request', '/drive/myrides/'] },
+  { href: '/ride', label: 'My Rides', icon: HiOutlineClock, aliases: ['/drive/ride/request', '/drive/myrides/'] },
   { href: '/delivery/my', label: 'My Deliveries', icon: HiOutlineTruck, aliases: ['/delivery/contracts/my'] },
   { href: '/drive/drivers', label: 'My Drivers', icon: HiOutlineUserCircle, aliases: ['/drive/driver/'] },
 ]
@@ -32,8 +32,8 @@ const DRIVER_NAV_ITEMS: DriveNavItem[] = [
 function isActivePath(pathname: string | null, href: string, aliases?: string[]) {
   if (!pathname) return false
   if (pathname === href) return true
-  if (href === '/drive' && /^\/drive\/[^/]+\/contract(?:\/|$)/.test(pathname)) return true
-  if (href !== '/drive' && pathname.startsWith(`${href}/`)) return true
+  if (href === '/ride' && /^\/drive\/ride\/request(?:\/|$)/.test(pathname)) return true
+  if (href !== '/ride' && pathname.startsWith(`${href}/`)) return true
   return Boolean(aliases?.some((alias) => pathname === alias || pathname.startsWith(alias)))
 }
 

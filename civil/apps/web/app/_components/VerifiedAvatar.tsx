@@ -1,5 +1,6 @@
 "use client"
 
+import { useEffect, useState } from 'react'
 import Image from 'next/image'
 import Link from 'next/link'
 import clsx from 'clsx'
@@ -47,10 +48,13 @@ export default function VerifiedAvatar({
   roundedClassName,
   imageClassName,
 }: VerifiedAvatarProps) {
+  const [imageFailed, setImageFailed] = useState(false)
   const resolvedWidth = Math.max(24, Math.round(width ?? size))
   const resolvedHeight = Math.max(24, Math.round(height ?? size))
   const dimension = Math.max(resolvedWidth, resolvedHeight)
   const fallback = deriveInitials(initials ?? alt)
+  const normalizedSrc = typeof src === 'string' && src.trim() ? src.trim() : null
+  const imageSrc = imageFailed ? null : (normalizedSrc ?? '/guest.png')
   const textSize = Math.round(dimension / 2.4)
   const pinSize = badgeSize ?? Math.max(16, Math.round(dimension * 0.45))
   const shapeClassName = roundedClassName ?? 'rounded-full'
@@ -69,6 +73,10 @@ export default function VerifiedAvatar({
         ? 'Self-verified Canadian citizen badge'
         : undefined
 
+  useEffect(() => {
+    setImageFailed(false)
+  }, [normalizedSrc])
+
   const wrapperProps = {
     className: clsx('relative inline-flex items-center justify-center', shapeClassName, className),
     style: { width: resolvedWidth, height: resolvedHeight },
@@ -83,14 +91,15 @@ export default function VerifiedAvatar({
           ringClass || undefined,
         )}
       >
-        {src ? (
+        {imageSrc ? (
           <Image
-            src={src}
+            src={imageSrc}
             alt={alt}
             width={resolvedWidth}
             height={resolvedHeight}
             unoptimized
             className={clsx('h-full w-full object-cover', imageClassName)}
+            onError={() => setImageFailed(true)}
           />
         ) : (
           <span className="select-none font-semibold" style={{ fontSize: `${textSize}px` }}>

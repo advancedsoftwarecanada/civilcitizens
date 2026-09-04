@@ -4,26 +4,19 @@ import Link from 'next/link'
 import { useMemo, type CSSProperties } from 'react'
 import clsx from 'clsx'
 import { usePathname } from 'next/navigation'
-import { FaBroadcastTower, FaCarSide, FaHouseUser, FaPlayCircle, FaPodcast, FaPrayingHands, FaUserTie, FaWallet } from 'react-icons/fa'
+import { FaCarSide, FaWallet } from 'react-icons/fa'
 import {
-  HiOutlineChatBubbleOvalLeft,
-  HiOutlineCurrencyDollar,
   HiOutlineHome,
-  HiOutlineCalendarDays,
-  HiOutlineShoppingCart,
-  HiOutlineTag,
+  HiOutlineMap,
   HiOutlineUserCircle,
-  HiOutlineUsers,
 } from 'react-icons/hi2'
 import type { IconType } from 'react-icons'
-import { RiCommunityLine } from 'react-icons/ri'
-import { VscOrganization } from 'react-icons/vsc'
-import CivilCard from './CivilCard'
 import { getFamilyLockedCardIdentity } from '../_lib/familyIdentity'
 import { formatDisplayName } from '../_lib/text'
 import { useViewerStore } from '../_lib/viewerStore'
 import { type FamilyModeSummary, type MeResponse } from '../_lib/me'
 import type { FamilyViewState } from '../_lib/familyView'
+import VerifiedAvatar from './VerifiedAvatar'
 
 type SidebarViewer = {
   name?: string | null
@@ -52,50 +45,24 @@ export type SidebarNavItem = {
 }
 
 export const PRIMARY_NAV: SidebarNavItem[] = [
-  { key: 'home', label: 'Civil Pulse', href: '/home', icon: HiOutlineHome },
-  { key: 'messages', label: 'Messages', href: '/messages', icon: HiOutlineChatBubbleOvalLeft },
-  { key: 'friends', label: 'Friends', href: '/friends', icon: HiOutlineUsers },
-  { key: 'network', label: 'Network', href: '/network', icon: FaUserTie },
-  { key: 'communities', label: 'Chambers of Citizens', href: '/chambers', icon: RiCommunityLine },
-  { key: 'organizations', label: 'Organizations', href: '/organizations', icon: VscOrganization },
-  { key: 'topics', label: 'Topics', href: '/topics', icon: HiOutlineTag },
-  { key: 'events', label: 'Events', href: '/events', icon: HiOutlineCalendarDays },
-  { key: 'market', label: 'Market', href: '/market', icon: HiOutlineShoppingCart },
-  { key: 'live', label: 'Live', href: '/live', icon: FaBroadcastTower },
-  { key: 'video', label: 'Video', href: '/video', icon: FaPlayCircle },
-  { key: 'podcasts', label: 'Podcasts', href: '/podcasts', icon: FaPodcast },
-  { key: 'work', label: 'Work', href: '/work', icon: HiOutlineCurrencyDollar },
+  { key: 'home', label: 'Home', href: '/home', icon: HiOutlineHome },
+  { key: 'ride', label: 'Ride', href: '/ride', icon: HiOutlineMap },
   { key: 'drive', label: 'Drive', href: '/drive', icon: FaCarSide },
-  { key: 'causes', label: 'Causes', href: '/causes', icon: FaPrayingHands },
   { key: 'wallet', label: 'Wallet', href: '/wallet', icon: FaWallet },
-  // TODO(app-store): restore News and Music nav items once those product areas are ready.
-  { key: 'account', label: 'Account Settings', href: '/settings', icon: HiOutlineUserCircle },
+  { key: 'account', label: 'Account', href: '/settings', icon: HiOutlineUserCircle },
 ]
 
 const FAMILY_CHILD_NAV: SidebarNavItem[] = [
   { key: 'home', label: 'Family & Friends', href: '/home', icon: HiOutlineHome },
-  { key: 'messages', label: 'Messages', href: '/messages', icon: HiOutlineChatBubbleOvalLeft },
-  { key: 'friends', label: 'My Friends', href: '/friends', icon: HiOutlineUsers },
-  { key: 'account', label: 'Settings', href: '/settings/guardian/settings', icon: HiOutlineUserCircle },
+  { key: 'account', label: 'Account', href: '/settings/guardian/settings', icon: HiOutlineUserCircle },
 ]
 
 export function getSidebarNavItems(
   familyView: FamilyViewState | null | undefined,
-  me?: Pick<MeResponse, 'accountType' | 'familyMode'> | null,
+  _me?: Pick<MeResponse, 'accountType' | 'familyMode'> | null,
 ): SidebarNavItem[] {
+  void _me
   if (!familyView) {
-    if (me?.accountType === 'user') {
-      const [homeItem, messagesItem, friendsItem] = PRIMARY_NAV
-      if (!homeItem || !messagesItem || !friendsItem) return PRIMARY_NAV
-
-      return [
-        homeItem,
-        messagesItem,
-        { key: 'family', label: 'Family', href: '/family', icon: FaHouseUser },
-        friendsItem,
-        ...PRIMARY_NAV.slice(3),
-      ]
-    }
     return PRIMARY_NAV
   }
   return FAMILY_CHILD_NAV
@@ -103,24 +70,39 @@ export function getSidebarNavItems(
 
 function navItemClasses(active: boolean) {
   return clsx(
-    'group flex h-[var(--nav-item-h)] min-h-[36px] items-center gap-2.5 rounded-[var(--nav-radius)] px-[var(--nav-pad-x)] py-[var(--nav-pad-y)] text-[12.5px] font-semibold leading-tight transition-all',
+    'group relative flex min-h-[72px] items-center gap-3 overflow-hidden rounded-[1.35rem] px-3.5 py-3 text-[13px] font-semibold leading-tight transition-all',
     active
-      ? 'bg-[var(--cc-primary)] text-white shadow-lg shadow-[var(--cc-primary)]/20'
-      : 'text-slate-700 hover:bg-slate-100 hover:text-slate-900',
+      ? 'bg-[linear-gradient(135deg,#dc2626_0%,#ef4444_58%,#fb7185_100%)] text-white shadow-[0_20px_45px_rgba(220,38,38,0.28)]'
+      : 'border border-slate-200/90 bg-white text-slate-700 shadow-[0_10px_24px_rgba(15,23,42,0.06)] hover:-translate-y-0.5 hover:border-red-200 hover:bg-[linear-gradient(135deg,rgba(255,255,255,1)_0%,rgba(254,242,242,1)_100%)] hover:text-slate-950 hover:shadow-[0_14px_30px_rgba(220,38,38,0.10)]',
   )
+}
+
+function matchesSidebarPath(item: SidebarNavItem, pathname: string | null) {
+  if (!pathname) return false
+  if (pathname === item.href || pathname.startsWith(`${item.href}/`)) return true
+  if (item.key === 'ride') {
+    return pathname === '/delivery/my' || pathname.startsWith('/delivery/my/') || pathname.startsWith('/drive/ride/request')
+  }
+  if (item.key === 'drive') {
+    return pathname.startsWith('/drive/') || pathname.startsWith('/delivery/')
+  }
+  return false
 }
 
 function SidebarProfileCardSkeleton() {
   return (
     <div
       aria-hidden="true"
-      className="relative mt-[var(--profile-card-gap)] h-[82px] overflow-hidden rounded-[1.7rem] border border-slate-200 bg-slate-800 shadow-sm animate-pulse"
+      className="relative mt-[var(--profile-card-gap)] overflow-hidden rounded-[1.7rem] border border-slate-200 bg-[linear-gradient(135deg,#0f172a_0%,#111827_65%,#1f2937_100%)] p-4 shadow-sm animate-pulse"
     >
-      <div className="absolute inset-y-0 left-0 w-1/4 bg-slate-200" />
-      <div className="absolute inset-y-0 right-0 left-1/4 bg-[linear-gradient(120deg,#0f172a_0%,#020617_58%,#0b1228_100%)]" />
-      <div className="absolute inset-y-0 right-0 left-1/4 bg-[linear-gradient(90deg,rgba(2,6,23,0.88)_0%,rgba(2,6,23,0.72)_18%,rgba(2,6,23,0.52)_42%,rgba(2,6,23,0.28)_100%)]" />
-      <div className="absolute inset-y-0 left-1/4 right-0 flex items-center justify-center px-5">
-        <div className="h-[42px] w-[68%] max-w-[190px] rounded-[1.2rem] border border-white/12 bg-slate-900/20 shadow-[0_16px_36px_rgba(15,23,42,0.16)]" />
+      <div className="absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(239,68,68,0.22),transparent_42%)]" />
+      <div className="relative flex items-center gap-3">
+        <div className="h-14 w-14 shrink-0 rounded-full bg-slate-300/90" />
+        <div className="min-w-0 flex-1 space-y-2">
+          <div className="h-3 w-20 rounded-full bg-white/18" />
+          <div className="h-5 w-[70%] rounded-full bg-white/16" />
+          <div className="h-3 w-[48%] rounded-full bg-white/12" />
+        </div>
       </div>
     </div>
   )
@@ -135,68 +117,57 @@ export default function Sidebar({ me, active }: SidebarProps) {
   const familyCardIdentity = getFamilyLockedCardIdentity(effectiveMe, familyView)
   const pathname = usePathname()
   const normalizedActive = active === 'profile' || active === 'settings' ? 'account' : active
-  const displayName = (familyCardIdentity?.name ?? formatDisplayName(effectiveMe?.name ?? null)) || 'Civil Citizen'
-  const avatarInitials = (familyCardIdentity?.avatarInitials ?? displayName) || effectiveMe?.handle || 'C'
-  const profileHref = familyCardIdentity?.href ?? (effectiveMe?.handle ? `/u/${effectiveMe.handle}` : '/profile/edit')
-  const verified = familyCardIdentity?.isVerified ?? Boolean(effectiveMe?.isVerified)
-  const business = familyCardIdentity?.isBusiness ?? Boolean(effectiveMe?.isPremium)
-  const navItems = getSidebarNavItems(familyView, effectiveMe)
+  const displayName = (familyCardIdentity?.name ?? formatDisplayName(effectiveMe?.name ?? null)) || 'MapleRides Member'
+  const avatarInitials = (familyCardIdentity?.avatarInitials ?? displayName) || effectiveMe?.handle || 'M'
+  const profileHref = '/settings'
+  const navItems = getSidebarNavItems(familyView)
+  const primaryNavItems = navItems.filter((item) => item.key !== 'account')
+  const accountNavItem = navItems.find((item) => item.key === 'account') ?? null
   const isOnOwnProfile = Boolean(
     profileHref && pathname && (pathname === profileHref || pathname.startsWith(`${profileHref}/`)),
   )
-  const navCount = navItems.length
   const sidebarTopOffsetExpr = 'var(--cc-top-nav-offset)'
   const sidebarBottomPadPx = 10
-  const profileHeightPx = 82
-  const profileGapPx = 8
-  const navTopGapPx = 8
-  const navGapPx = 6
-  const totalNavGapPx = (navCount - 1) * navGapPx
-  const navAvailableHeightExpr = `var(--cc-viewport-height) - ${sidebarTopOffsetExpr} - ${sidebarBottomPadPx}px - ${profileHeightPx}px - ${profileGapPx}px - ${navTopGapPx}px - ${totalNavGapPx}px`
   const spacingVars = {
     '--sidebar-pad': '10px',
-    '--sidebar-gap': `${navGapPx}px`,
-    '--sidebar-top-gap': `${navTopGapPx}px`,
+    '--sidebar-gap': '10px',
+    '--sidebar-top-gap': '10px',
     '--profile-card-gap': '8px',
-    '--nav-pad-x': '10px',
-    '--nav-pad-y': '6px',
-    '--nav-icon-pad': '8px',
-    '--nav-icon-size': '20px',
-    '--nav-radius': '12px',
-    '--nav-item-h': `calc((${navAvailableHeightExpr}) / ${navCount})`,
   } as CSSProperties
   const sidebarBleedStyle: CSSProperties = {
     marginLeft: 0,
   }
   const derivedActiveKey = useMemo(() => {
     if (normalizedActive) return normalizedActive
-    return navItems.find((item) => (pathname ? pathname.startsWith(item.href) : false))?.key ?? null
+    return navItems.find((item) => matchesSidebarPath(item, pathname))?.key ?? null
   }, [navItems, normalizedActive, pathname])
   const showProfileCardSkeleton = !familyView && !effectiveMe && (!hydrated || hasStoredSession)
-
   const navContent = (items: SidebarNavItem[]) =>
     items.map((item) => {
       const Icon = item.icon
       const activeMatch = derivedActiveKey === item.key
       return (
         <Link key={item.key} href={item.href} className={navItemClasses(activeMatch)} aria-current={activeMatch ? 'page' : undefined}>
+          {activeMatch ? (
+            <span className="absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(255,255,255,0.26),transparent_38%)]" aria-hidden="true" />
+          ) : null}
           <span
             className={clsx(
-              'inline-flex items-center justify-center rounded-xl border p-[var(--nav-icon-pad)] text-[var(--nav-icon-size)] shadow-sm transition-all',
+              'relative inline-flex h-12 w-12 shrink-0 items-center justify-center rounded-[1rem] border text-[20px] shadow-sm transition-all',
               activeMatch
-                ? 'border-white/25 bg-white/18 text-white'
-                : 'border-slate-200 bg-white text-slate-500 group-hover:border-[var(--cc-primary)]/30 group-hover:bg-[var(--cc-primary)]/10 group-hover:text-[var(--cc-primary)]',
+                ? 'border-white/20 bg-white/14 text-white'
+                : 'border-slate-200 bg-slate-50 text-slate-500 group-hover:border-red-200 group-hover:bg-red-50 group-hover:text-red-600',
             )}
           >
-            <Icon className="h-[var(--nav-icon-size)] w-[var(--nav-icon-size)]" />
+            <Icon className="h-5 w-5" />
           </span>
-          <div className="flex-1">
-            <span className="block leading-tight">
-              {item.label}
-            </span>
+          <div className="relative min-w-0 flex-1">
+            <span className="block leading-tight">{item.label}</span>
           </div>
           {item.badge ? (
-            <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide text-slate-500">{item.badge}</span>
+            <span className={clsx('relative rounded-full px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide', activeMatch ? 'bg-white/18 text-white' : 'bg-slate-100 text-slate-500')}>
+              {item.badge}
+            </span>
           ) : null}
         </Link>
       )
@@ -213,23 +184,48 @@ export default function Sidebar({ me, active }: SidebarProps) {
       {showProfileCardSkeleton ? (
         <SidebarProfileCardSkeleton />
       ) : (
-        <CivilCard
+        <Link
           href={profileHref}
-          size="md"
-          name={displayName}
-          subtitle={familyView || isOnOwnProfile ? undefined : familyCardIdentity?.subtitle}
-          avatarAlt={familyCardIdentity?.avatarAlt ?? displayName}
-          avatarInitials={avatarInitials}
-          avatarSrc={familyCardIdentity?.avatarSrc ?? effectiveMe?.avatarUrl ?? null}
-          coverUrl={familyCardIdentity?.coverUrl ?? effectiveMe?.coverUrl ?? null}
-          isVerified={verified}
-          isBusiness={business}
-          className="mt-[var(--profile-card-gap)]"
-        />
+          className="group relative mt-[var(--profile-card-gap)] overflow-hidden rounded-[1.7rem] border border-slate-200 bg-[linear-gradient(135deg,#0f172a_0%,#111827_64%,#1f2937_100%)] p-4 text-white shadow-[0_18px_45px_rgba(15,23,42,0.18)] transition-all hover:-translate-y-0.5 hover:shadow-[0_22px_55px_rgba(15,23,42,0.22)]"
+          aria-current={isOnOwnProfile ? 'page' : undefined}
+        >
+          <span className="absolute inset-0 bg-[radial-gradient(circle_at_top_left,rgba(239,68,68,0.24),transparent_44%)] opacity-90" aria-hidden="true" />
+          <span className="absolute inset-0 bg-[linear-gradient(135deg,rgba(255,255,255,0.06),transparent_42%,rgba(255,255,255,0.03)_72%,transparent_100%)]" aria-hidden="true" />
+          <div className="relative flex items-center gap-3">
+            <div className="relative shrink-0">
+              <span className="absolute inset-0 rounded-full bg-red-500/20 blur-md" aria-hidden="true" />
+              <VerifiedAvatar
+                src={familyCardIdentity?.avatarSrc ?? effectiveMe?.avatarUrl ?? null}
+                alt={familyCardIdentity?.avatarAlt ?? displayName}
+                initials={avatarInitials}
+                size={56}
+                className="relative shadow-[0_12px_28px_rgba(15,23,42,0.28)]"
+                roundedClassName="rounded-full"
+                hideBadge
+              />
+            </div>
+            <div className="min-w-0 flex-1">
+              <p className="text-[10px] font-semibold uppercase tracking-[0.26em] text-red-100/80">MapleRides Account</p>
+              <p className="mt-1 truncate text-lg font-semibold leading-tight text-white">{displayName}</p>
+            </div>
+          </div>
+        </Link>
       )}
 
-      <nav className="mt-[var(--sidebar-top-gap)] flex min-h-0 flex-1 flex-col gap-[var(--sidebar-gap)] overflow-y-auto pr-1 [scrollbar-gutter:stable]">
-        {navContent(navItems)}
+      <nav className="mt-[var(--sidebar-top-gap)] flex min-h-0 flex-1 flex-col overflow-y-auto pr-1 [scrollbar-gutter:stable]">
+        <div className="rounded-[1.7rem] border border-slate-200 bg-[linear-gradient(180deg,#fff_0%,#f8fafc_100%)] p-2 shadow-[0_18px_40px_rgba(15,23,42,0.06)]">
+          <div className="space-y-[var(--sidebar-gap)]">
+            {navContent(primaryNavItems)}
+          </div>
+        </div>
+
+        {accountNavItem ? (
+          <div className="mt-auto pt-4">
+            <div className="rounded-[1.7rem] border border-slate-200 bg-[linear-gradient(180deg,#fff_0%,#fef2f2_100%)] p-2 shadow-[0_18px_42px_rgba(15,23,42,0.05)]">
+              {navContent([accountNavItem])}
+            </div>
+          </div>
+        ) : null}
       </nav>
     </aside>
   )

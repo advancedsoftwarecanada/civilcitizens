@@ -189,6 +189,7 @@ function MineRideHistoryCard({
   const canEdit = canEditDriveRideStatus(item.status) && Boolean(editHref)
   const offersHref = getOffersHref?.(item) ?? null
   const rideIsTerminal = isTerminalRideStatus(item.status)
+  const isAwaitingDriver = ['open', 'bid_pending'].includes(item.status.trim().toLowerCase())
   const hasAcceptedOffer = item.viewerRole === 'requester' && Boolean(item.acceptedOfferId) && Boolean(offersHref) && !rideIsTerminal
   const hasOffers = item.offerCount > 0 && Boolean(offersHref)
   const offersLabel = rideIsTerminal ? 'View Ride' : hasAcceptedOffer ? 'Accepted' : item.offerCount === 1 ? 'View 1 offer' : `View ${item.offerCount} offers`
@@ -213,8 +214,8 @@ function MineRideHistoryCard({
               fallbackIcon={<HiOutlineMapPin className="h-9 w-9" />}
             />
             <div className="min-w-0">
-              <h3 className="text-xl font-semibold text-slate-950">{pickupLabel}</h3>
-              <p className="mt-2 text-sm leading-6 text-slate-500">To {dropoffLabel}</p>
+              <h3 className="text-xl font-semibold leading-tight text-slate-950">To: {dropoffLabel}</h3>
+              <p className="mt-1 text-sm leading-6 text-slate-500">From: {pickupLabel}</p>
               <div className="mt-3 flex flex-wrap items-center gap-2 text-xs text-slate-500">
                 <span className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 font-semibold text-slate-700">
                   {item.viewerRole === 'driver' ? 'Drive job' : 'Your ride'}
@@ -227,6 +228,18 @@ function MineRideHistoryCard({
           </div>
 
           <div className="flex flex-wrap items-center justify-end gap-2">
+            {canEdit && editHref ? (
+              <Link
+                href={editHref}
+                className={`inline-flex rounded-full px-3 py-1.5 text-xs font-semibold transition ${
+                  isAwaitingDriver
+                    ? 'border border-sky-600 bg-sky-600 text-white shadow-[0_10px_22px_rgba(2,132,199,0.22)] hover:bg-sky-700 hover:border-sky-700'
+                    : 'border border-slate-200 bg-white text-slate-700 hover:border-slate-300 hover:text-slate-950'
+                }`}
+              >
+                Edit
+              </Link>
+            ) : null}
             {hasOffers && offersHref ? (
               <Link
                 href={offersHref}
@@ -241,7 +254,7 @@ function MineRideHistoryCard({
                 {offersLabel}
               </Link>
             ) : null}
-            <StatusBadge value={item.status} />
+            <StatusBadge value={item.status} toneOverride={isAwaitingDriver ? 'border-amber-200 bg-amber-50 text-amber-800' : undefined} />
             {item.viewerRole === 'requester' && rideIsTerminal && (item.tippedAmountCents ?? 0) > 0 ? (
               <span className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-semibold text-emerald-700">
                 Tipped {formatDriveMoney(item.tippedAmountCents)}
@@ -285,20 +298,16 @@ function MineRideHistoryCard({
                 {completingId === item.id ? 'Marking…' : 'Mark Complete'}
               </button>
             ) : null}
-            {canEdit && editHref ? (
-              <Link
-                href={editHref}
-                className="inline-flex rounded-full border border-slate-200 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 transition hover:border-slate-300 hover:text-slate-950"
-              >
-                Edit
-              </Link>
-            ) : null}
             {canCancel && onCancel ? (
               <button
                 type="button"
                 onClick={() => onCancel(item)}
                 disabled={cancelingId === item.id}
-                className="inline-flex rounded-full border border-rose-200 bg-white px-3 py-1.5 text-xs font-semibold text-rose-700 transition hover:bg-rose-50 disabled:cursor-not-allowed disabled:opacity-60"
+                className={`inline-flex rounded-full px-3 py-1.5 text-xs font-semibold transition disabled:cursor-not-allowed disabled:opacity-60 ${
+                  isAwaitingDriver
+                    ? 'border border-rose-600 bg-rose-600 text-white shadow-[0_10px_22px_rgba(225,29,72,0.22)] hover:bg-rose-700 hover:border-rose-700'
+                    : 'border border-rose-200 bg-white text-rose-700 hover:bg-rose-50'
+                }`}
               >
                 {cancelingId === item.id ? 'Cancelling…' : 'Cancel'}
               </button>
@@ -656,10 +665,16 @@ function getStatusIcon(value: string | null | undefined) {
   }
 }
 
-function StatusBadge({ value }: { value: string | null | undefined }) {
+function StatusBadge({
+  value,
+  toneOverride,
+}: {
+  value: string | null | undefined
+  toneOverride?: string
+}) {
   const Icon = getStatusIcon(value)
   return (
-    <span className={`inline-flex items-center gap-1.5 whitespace-nowrap rounded-full border px-3 py-1 text-xs font-semibold ${getDriveStatusTone(value)}`}>
+    <span className={`inline-flex items-center gap-1.5 whitespace-nowrap rounded-full border px-3 py-1 text-xs font-semibold ${toneOverride ?? getDriveStatusTone(value)}`}>
       <Icon className="h-4 w-4 shrink-0" />
       {formatDriveStatus(value)}
     </span>
@@ -681,7 +696,7 @@ export function DriveDriverAccessGate({ title, description }: { title: string; d
           <Link href="/drive/onboarding" className="inline-flex rounded-full bg-[var(--cc-primary)] px-5 py-2.5 text-sm font-semibold text-white transition hover:brightness-95">
             Drive and deliver for Civil
           </Link>
-          <Link href="/drive" className="inline-flex rounded-full border border-slate-200 bg-white px-5 py-2.5 text-sm font-semibold text-slate-700 transition hover:border-slate-300 hover:text-slate-900">
+          <Link href="/ride" className="inline-flex rounded-full border border-slate-200 bg-white px-5 py-2.5 text-sm font-semibold text-slate-700 transition hover:border-slate-300 hover:text-slate-900">
             Back to My Rides
           </Link>
         </div>

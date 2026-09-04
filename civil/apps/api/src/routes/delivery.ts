@@ -356,7 +356,6 @@ async function loadDriverEligibility(userId: string, deps: DeliveryDeps) {
       walletReady: Boolean(wallet.enabled && walletHasConnectPayoutsEnabled(wallet)),
       isCanadianCitizen: Boolean(deps.isSelfVerifiedCanadianCitizen(communityMeta)),
       hasProfilePhoto: Boolean(user.avatarUrl),
-      hasCoverPhoto: Boolean(user.coverUrl),
       hasHomeAddress: Boolean(homeAddress),
     },
     homeAddress,

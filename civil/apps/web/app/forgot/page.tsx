@@ -98,10 +98,9 @@ export default function ForgotPasswordPage() {
       <AppleInstallRedirect source="forgot" />
       <AuthScreen
         title="Reset your password"
-        subtitle="Enter your email or Civil handle and we’ll send you a secure reset link."
+        subtitle="Enter your email or MapleRides handle and we’ll send you a secure reset link."
         footer={footer}
         hideSidePanel
-        useWallpaper
       >
         <form onSubmit={handleSubmit} className="space-y-5" autoCapitalize="none" autoCorrect="off" spellCheck={false}>
           <label className="block text-sm font-medium text-slate-700">

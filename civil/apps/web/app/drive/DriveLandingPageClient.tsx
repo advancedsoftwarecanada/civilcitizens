@@ -59,7 +59,11 @@ function DriverModeLandingNav({
   )
 }
 
-export default function DriveLandingPageClient() {
+type DriveLandingPageClientProps = {
+  surfaceMode?: 'driver' | 'request'
+}
+
+export default function DriveLandingPageClient({ surfaceMode }: DriveLandingPageClientProps) {
   const router = useRouter()
   const {
     isDriverActive,
@@ -70,6 +74,7 @@ export default function DriveLandingPageClient() {
     enterDriverMode,
     exitDriverMode,
   } = useDriveViewerState()
+  const showDriverSurface = surfaceMode ? surfaceMode === 'driver' : isDriverMode
   const [loading, setLoading] = useState(true)
   const [reloadKey, setReloadKey] = useState(0)
   const [rides, setRides] = useState<FeedState<DriveRideRequestItem>>({ items: [], total: 0, error: null })
@@ -87,6 +92,20 @@ export default function DriveLandingPageClient() {
   const handleOpenDeliveryRequests = () => {
     enterDriverMode()
     router.push('/drive/delivery')
+  }
+
+  const handleEnterDriverSurface = () => {
+    enterDriverMode()
+    if (surfaceMode === 'request') {
+      router.push('/drive')
+    }
+  }
+
+  const handleExitDriverSurface = () => {
+    exitDriverMode()
+    if (surfaceMode === 'driver') {
+      router.push('/ride')
+    }
   }
 
   useEffect(() => {
@@ -398,20 +417,20 @@ export default function DriveLandingPageClient() {
     <DashboardShell
       rightRail={
         <div className="space-y-5">
-          {!isDriverMode ? <DriveRideRequestRail secondaryAction={isDriverActive ? { label: 'Enter Driver Mode', onClick: enterDriverMode } : undefined} /> : null}
-          {!isDriverActive || isDriverMode ? (
+          {!showDriverSurface ? <DriveRideRequestRail secondaryAction={isDriverActive ? { label: 'Enter Driver Mode', onClick: handleEnterDriverSurface } : undefined} /> : null}
+          {!isDriverActive || showDriverSurface ? (
             <DriveModeRail
               isDriverActive={isDriverActive}
-              isDriverMode={isDriverMode}
+              isDriverMode={showDriverSurface && isDriverActive}
               loading={viewerLoading}
               rideRequestCount={rideRequestCount}
               deliveryRequestCount={deliveryRequestCount}
-              onEnterDriverMode={enterDriverMode}
-              onExitDriverMode={exitDriverMode}
+              onEnterDriverMode={handleEnterDriverSurface}
+              onExitDriverMode={handleExitDriverSurface}
             />
           ) : null}
-          <DriveDriverEarningsRail enabled={isDriverMode} />
-          {isDriverMode ? <DriveContractHistoryRail rides={rides.items} delivery={delivery.items} activeRideIds={activeDriverContracts.map((item) => item.id)} /> : null}
+          <DriveDriverEarningsRail enabled={showDriverSurface} />
+          {showDriverSurface ? <DriveContractHistoryRail rides={rides.items} delivery={delivery.items} activeRideIds={activeDriverContracts.map((item) => item.id)} /> : null}
           <RightRail mode="drive" organizationLinkTarget="chat" showDriveCallout={false} />
         </div>
       }
@@ -419,9 +438,9 @@ export default function DriveLandingPageClient() {
       mainClassName="space-y-8 pb-12"
       rightRailClassName="pb-12"
     >
-      {isDriverMode ? <DriverModeLandingNav onOpenRideRequests={handleOpenRideRequests} onOpenDeliveryRequests={handleOpenDeliveryRequests} /> : <DriveRouteNav />}
+      {showDriverSurface ? <DriverModeLandingNav onOpenRideRequests={handleOpenRideRequests} onOpenDeliveryRequests={handleOpenDeliveryRequests} /> : <DriveRouteNav />}
 
-      {isDriverMode ? (
+      {showDriverSurface ? (
         activeDriverContracts.length ? (
           <section className="space-y-4">
             <div className="flex flex-wrap items-center justify-between gap-3">
