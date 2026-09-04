@@ -10,7 +10,7 @@ This deploy flow intentionally avoids CI/CD runners.
 
 Store these in this folder:
 
-- `user.txt` → SSH user (example: `andrewnormore`)
+- `user.txt` -> SSH user
 - `ssh.txt` → either:
   - full private key content, or
   - path to private key file
@@ -26,12 +26,12 @@ From repo root:
   - verifies remote host connectivity, key paths, docker presence, and service snapshot
 - `python3 _PROD.py prep`
   - ensures required remote directories exist:
-    - `/Users/andrewnormore/CIVIL`
-    - `/Users/andrewnormore/CIVIL_DATA/postgresql`
-    - `/Users/andrewnormore/CIVIL_DATA/redis`
+    - remote application directory
+    - remote PostgreSQL data directory
+    - remote Redis data directory
     - `/Volumes/CivilData/minio` (if `/Volumes/CivilData` is mounted)
 - `python3 _PROD.py`
-  - uploads repository to `/Users/andrewnormore/CIVIL`
+  - uploads repository to the configured production app directory
 - `python3 _PROD.py geodata`
   - uploads only required geodata archives (not full repo) and seeds production geodata from vendored local archives (no StatsCan download)
 - `python3 _PROD.py ssh`
@@ -43,8 +43,8 @@ From repo root:
 - `CIVIL_PROD_USER`
 - `CIVIL_PROD_PORT` (default `22`)
 - `CIVIL_PROD_IDENTITY_FILE`
-- `CIVIL_PROD_REMOTE_DIR` (default `/Users/andrewnormore/CIVIL`)
-- `CIVIL_PROD_DATA_DIR` (default `/Users/andrewnormore/CIVIL_DATA`)
+- `CIVIL_PROD_REMOTE_DIR`
+- `CIVIL_PROD_DATA_DIR`
 - `CIVIL_PROD_MINIO_DIR` (default `/Volumes/CivilData/minio`)
 - `CIVIL_PROD_PUBLIC_HOST` (default `civilcitizens.ca`)
 - `CIVIL_PROD_LARGEFILES_DIR` (default `<repo>/civilcitizens_largefiles/_geodata`)
@@ -75,8 +75,8 @@ with `STATSCAN_*_ZIP` env vars pointed at uploaded vendored archives.
 
 On production host:
 
-1. `cd /Users/andrewnormore/CIVIL/civil`
-2. `cat > .env.prod-runtime <<'EOF'\nPOSTGRES_DATA_DIR=/Users/andrewnormore/CIVIL_DATA/postgresql\nREDIS_DATA_DIR=/Users/andrewnormore/CIVIL_DATA/redis\nMINIO_DATA_DIR=/Volumes/CivilData/minio\nEOF`
+1. `cd /path/to/CIVIL/civil`
+2. `cat > .env.prod-runtime <<'EOF'\nPOSTGRES_DATA_DIR=/path/to/CIVIL_DATA/postgresql\nREDIS_DATA_DIR=/path/to/CIVIL_DATA/redis\nMINIO_DATA_DIR=/path/to/minio\nEOF`
 3. `docker compose --env-file .env.prod-runtime --profile infra up -d --no-recreate postgres redis minio minio-setup`
 4. `docker compose --env-file .env.prod-runtime --profile app up -d --build api web worker nginx`
 5. `docker compose --env-file .env.prod-runtime ps`
@@ -90,9 +90,9 @@ On production host:
 ## Data safety (important)
 
 - Persistent data lives on host bind mounts:
-  - `/Users/andrewnormore/CIVIL_DATA/postgresql`
-  - `/Users/andrewnormore/CIVIL_DATA/redis`
-  - `/Volumes/CivilData/minio`
+  - PostgreSQL data directory
+  - Redis data directory
+  - MinIO data directory
 - Do **not** run `docker compose down -v` in production.
 - Do **not** delete the above host directories unless intentionally wiping production data.
 - Current deploy flow starts infra with `--no-recreate` to reduce risk of accidental infra churn.

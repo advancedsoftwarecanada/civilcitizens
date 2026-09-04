@@ -1,6 +1,6 @@
 import type { MeResponse } from './me'
 
-const DEFAULT_ADMIN_EMAILS = (process.env.NEXT_PUBLIC_CIVIL_ADMIN_EMAILS || 'andrewnormore@gmail.com')
+const DEFAULT_ADMIN_EMAILS = (process.env.NEXT_PUBLIC_CIVIL_ADMIN_EMAILS || '')
   .split(/[,;]/)
   .map((email) => email.trim().toLowerCase())
   .filter(Boolean)

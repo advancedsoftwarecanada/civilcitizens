@@ -57,7 +57,7 @@ Or split variables:
 
 - `FCM_PROJECT_ID="<project-id>"`
 - `FCM_CLIENT_EMAIL="<service-account-email>"`
-- `FCM_PRIVATE_KEY="-----BEGIN PRIVATE KEY-----\n...\n-----END PRIVATE KEY-----\n"`
+- `FCM_PRIVATE_KEY="<escaped Firebase private key from the service account>"`
 
 ## 4) Run the standalone native push service (optional, for direct test sends)
 

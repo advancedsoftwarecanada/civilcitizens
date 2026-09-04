@@ -18,9 +18,9 @@ PROD_ENV_CANDIDATES = (
     ROOT_DIR / ".env.production",
     ROOT_DIR / ".env.production.googlecloud",
 )
-CIVIL_REMOTE_DATA_DIR = "/Users/andrewnormore/CIVIL_DATA"
-CIVIL_REMOTE_APP_DIR = "/Users/andrewnormore/CIVIL"
-CIVIL_REMOTE_MINIO_DIR = "/Volumes/CivilData/minio"
+CIVIL_REMOTE_DATA_DIR = "/opt/civil/CIVIL_DATA"
+CIVIL_REMOTE_APP_DIR = "/opt/civil/CIVIL"
+CIVIL_REMOTE_MINIO_DIR = "/opt/civil/minio"
 LOCAL_LARGEFILES_DIR = ROOT_DIR / "civilcitizens_largefiles" / "_geodata"
 
 

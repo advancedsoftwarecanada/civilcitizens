@@ -41,6 +41,16 @@ __pycache__/
 # Generated local Prisma env
 civil/packages/db/.env
 
+# Local environment files
+.env
+.env.*
+!.env.example
+!.env.*.example
+**/.env
+**/.env.*
+!**/.env.example
+!**/.env.*.example
+
 # OS/editor misc
 .DS_Store
 Thumbs.db
@@ -80,3 +90,12 @@ ssl/letsencrypt-lib/
 ssl/letsencrypt-log/
 ssl/*.crt
 ssl/*.key
+
+# Local deployment and signing secrets
+_production_server/ssh.txt
+_production_server/host.txt
+_production_server/user.txt
+_production_server/*.pem
+_production_server/*.key
+civil/secrets/
+builds/mobile/capacitor/android/app/google-services.json
