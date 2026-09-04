@@ -4,7 +4,7 @@
     {
       "id": "azure-civil-ai",
       "name": "Azure Foundry Civil AI",
-      "baseUrl": "https://civil-mnci8etp-eastus2.cognitiveservices.azure.com/openai",
+      "baseUrl": "https://REPLACE_ME.openai.azure.com/openai",
       "provider": "azure-openai",
       "defaultModel": "gpt-5.4-mini",
       "apiVersion": "2025-04-01-preview",

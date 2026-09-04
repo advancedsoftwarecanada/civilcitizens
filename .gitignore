@@ -100,3 +100,7 @@ _production_server/*.pem
 _production_server/*.key
 civil/secrets/
 builds/mobile/capacitor/android/app/google-services.json
+**/google-services.json
+**/GoogleService-Info.plist
+**/*.apk
+**/*.aab
